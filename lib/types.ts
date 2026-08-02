@@ -8,55 +8,77 @@ export type PlayerState = {
   moving: boolean;
   message?: string; // 直近の発言(吹き出し表示用)
   messageAt?: number; // 発言タイムスタンプ
-  inMeetingArea?: boolean; // ミーティングエリア内にいるか(音声通話の自動接続判定に使用)
+  meetingZoneId?: string | null; // 現在いるミーティングエリアのID(いなければnull)
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
 };
 
-export const MAP_WIDTH = 2500;
-export const MAP_HEIGHT = 2500;
+export const MAP_WIDTH = 1600;
+export const MAP_HEIGHT = 1000;
 export const AVATAR_RADIUS = 18;
 export const MOVE_SPEED = 220; // px / sec
 export const CHAT_BUBBLE_DURATION_MS = 60000; // 1分間表示。新しいメッセージが来ると上書きされる
 export const PROXIMITY_RADIUS = 45; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。マス目=40pxの約1マス分)
 
-// ミーティングエリアの矩形(画面表示のズーンと同じ座標)
-export const MEETING_AREA = {
-  x: 120,
-  y: 120,
-  width: 320,
-  height: 220,
-};
-
-export function isInMeetingArea(
-  x: number,
-  y: number,
-  area: { x: number; y: number; width: number; height: number } = MEETING_AREA,
-): boolean {
-  return (
-    x >= area.x &&
-    x <= area.x + area.width &&
-    y >= area.y &&
-    y <= area.y + area.height
-  );
-}
+export type Rect = { x: number; y: number; width: number; height: number };
 
 // マップ上の障害物(机・観葉植物・棚など)。歩いて通り抜けられないようにする。
-export type Obstacle = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  label: string;
-};
+export type Obstacle = Rect & { id: string; label: string };
 
-export const OBSTACLES: Obstacle[] = [
-  { x: 700, y: 260, width: 140, height: 60, label: "🪑 デスク" },
-  { x: 950, y: 480, width: 60, height: 60, label: "🪴" },
-  { x: 480, y: 620, width: 160, height: 40, label: "📚 棚" },
-  { x: 1100, y: 200, width: 100, height: 50, label: "🪑 デスク" },
+// ミーティングエリア(複数設置可能。同じエリアIDにいる人同士だけ自動で音声接続される)
+export type MeetingZone = Rect & { id: string; label: string };
+
+export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
+export const MIN_ITEM_SIZE = 40; // これより小さくはできない
+
+export const DEFAULT_OBSTACLES: Obstacle[] = [
+  {
+    id: "obstacle-1",
+    x: 700,
+    y: 260,
+    width: 140,
+    height: 60,
+    label: "🪑 デスク",
+  },
+  { id: "obstacle-2", x: 950, y: 480, width: 60, height: 60, label: "🪴" },
+  { id: "obstacle-3", x: 480, y: 620, width: 160, height: 40, label: "📚 棚" },
+  {
+    id: "obstacle-4",
+    x: 1100,
+    y: 200,
+    width: 100,
+    height: 50,
+    label: "🪑 デスク",
+  },
 ];
 
-// 円(アバター)と矩形(障害物)が重なっているかを判定する
+export const DEFAULT_MEETING_ZONES: MeetingZone[] = [
+  {
+    id: "meeting-default",
+    x: 120,
+    y: 120,
+    width: 320,
+    height: 220,
+    label: "ミーティングエリア",
+  },
+];
+
+export function randomItemId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// 座標(x, y)がどのミーティングエリアに含まれているかを判定し、そのIDを返す(なければnull)
+export function findMeetingZoneId(
+  x: number,
+  y: number,
+  zones: MeetingZone[],
+): string | null {
+  const zone = zones.find(
+    (z) => x >= z.x && x <= z.x + z.width && y >= z.y && y <= z.y + z.height,
+  );
+  return zone ? zone.id : null;
+}
+
+// 円(アバター)と矩形(障害物・エリア)が重なっているかを判定する
 export function circleIntersectsRect(
   cx: number,
   cy: number,
@@ -68,4 +90,32 @@ export function circleIntersectsRect(
   const dx = cx - closestX;
   const dy = cy - closestY;
   return dx * dx + dy * dy < radius * radius;
+}
+
+// 移動(位置変更)時、幅・高さは変えずにマップの外へ出ないようx,yを制限する
+export function clampPosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  return {
+    x: Math.min(Math.max(x, 0), Math.max(MAP_WIDTH - width, 0)),
+    y: Math.min(Math.max(y, 0), Math.max(MAP_HEIGHT - height, 0)),
+  };
+}
+
+// リサイズ時、x,yは変えずに幅・高さがマップの外へはみ出さないよう、かつ最小サイズを下回らないよう制限する
+export function clampSize(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  const maxWidth = Math.max(MAP_WIDTH - x, MIN_ITEM_SIZE);
+  const maxHeight = Math.max(MAP_HEIGHT - y, MIN_ITEM_SIZE);
+  return {
+    width: Math.min(Math.max(width, MIN_ITEM_SIZE), maxWidth),
+    height: Math.min(Math.max(height, MIN_ITEM_SIZE), maxHeight),
+  };
 }

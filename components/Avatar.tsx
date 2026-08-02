@@ -60,7 +60,7 @@ export default function Avatar({ player, isSelf }: Props) {
         />
 
         {/* ミーティングエリア在室バッジ */}
-        {player.inMeetingArea && (
+        {player.meetingZoneId && (
           <span className="absolute -right-1 -top-1 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] shadow">
             💬
           </span>
