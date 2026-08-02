@@ -29,7 +29,7 @@ export default function Avatar({ player, isSelf }: Props) {
   return (
     <div
       className={`absolute will-change-transform ${
-        isSelf ? "" : "transition-[left,top] duration-75 ease-linear"
+        isSelf ? "" : "transition-[left,top] duration-100 ease-linear"
       }`}
       style={{
         left: player.x - DISPLAY_SIZE / 2,

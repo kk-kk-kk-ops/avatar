@@ -6,14 +6,14 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
 if (!supabaseUrl || !supabaseAnonKey) {
   // eslint-disable-next-line no-console
   console.warn(
-    "Supabaseの環境変数が設定されていません。.env.local を確認してください。"
+    "Supabaseの環境変数が設定されていません。.env.local を確認してください。",
   );
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   realtime: {
     params: {
-      eventsPerSecond: 20,
+      eventsPerSecond: 30,
     },
   },
 });

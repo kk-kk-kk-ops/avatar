@@ -99,6 +99,7 @@ export default function AvatarSpace({ initialName }: Props) {
   );
   const lastTrackedZoneId = useRef<string | null>(null);
   const wasMovingRef = useRef(false);
+  const lastMoveSentAt = useRef(0);
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -745,12 +746,20 @@ export default function AvatarSpace({ initialName }: Props) {
         // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
         // 止まった瞬間を送らないと、相手の画面では最後に動いていた位置のまま
         // 止まって見えてしまい、キーを離してから反映されるようなラグに感じられる。
-        if ((moving || wasMovingRef.current) && channelRef.current) {
-          channelRef.current.send({
-            type: "broadcast",
-            event: "move",
-            payload: self,
-          });
+        // 移動中の送信は約20回/秒に間引く(Supabase Realtimeの送信上限に対して
+        // 余裕を持たせ、間引かれることによるガクつきを防ぐ)。止まった瞬間だけは
+        // 間引かずに必ず送る。
+        const justStopped = !moving && wasMovingRef.current;
+        const intervalElapsed = time - lastMoveSentAt.current >= 50; // 約20回/秒
+        if ((moving && intervalElapsed) || justStopped) {
+          if (channelRef.current) {
+            channelRef.current.send({
+              type: "broadcast",
+              event: "move",
+              payload: self,
+            });
+            lastMoveSentAt.current = time;
+          }
         }
         wasMovingRef.current = moving;
       }
