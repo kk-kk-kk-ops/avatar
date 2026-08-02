@@ -79,6 +79,7 @@ export default function AvatarSpace({ initialName }: Props) {
   const [chatInput, setChatInput] = useState("");
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const playersRef = useRef<Record<string, PlayerState>>({});
+  const remoteScreenStreamsRef = useRef<Record<string, MediaStream>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
   const [micEnabled, setMicEnabled] = useState(false);
@@ -154,6 +155,10 @@ export default function AvatarSpace({ initialName }: Props) {
   useEffect(() => {
     playersRef.current = players;
   }, [players]);
+
+  useEffect(() => {
+    remoteScreenStreamsRef.current = remoteScreenStreams;
+  }, [remoteScreenStreams]);
 
   // ---- 入室処理 ----
   const handleJoin = useCallback(() => {
@@ -592,11 +597,19 @@ export default function AvatarSpace({ initialName }: Props) {
           if (!purpose) {
             // 目印(videoTrackPurposes)がまだ届いていない場合の保険。
             // 相手の在室情報(presence)から種類を推測する。
+            // 「すでに画面共有の映像を受信済み」であれば、今回届いた別の
+            // トラックはビデオ通話である可能性が高いと判断する
+            // (画面共有とビデオ通話を両方ONにしている場合の誤判定を防ぐ)。
             const peerState = playersRef.current[peerId];
-            purpose =
-              peerState?.inCall && !peerState?.sharingScreen
-                ? "camera"
-                : "screen";
+            const alreadyHasScreen = !!remoteScreenStreamsRef.current[peerId];
+            if (
+              peerState?.inCall &&
+              (alreadyHasScreen || !peerState?.sharingScreen)
+            ) {
+              purpose = "camera";
+            } else {
+              purpose = "screen";
+            }
           }
           const setter =
             purpose === "camera"
@@ -1007,9 +1020,17 @@ export default function AvatarSpace({ initialName }: Props) {
           videoTrackPurposes?: Record<string, "screen" | "camera">;
         };
         if (to !== selfId.current) return;
-        // ontrackが発火する前に、映像の種類を判定できるようにしておく
-        if (videoTrackPurposes)
-          peerVideoPurposes.current.set(from, videoTrackPurposes);
+        // ontrackが発火する前に、映像の種類を判定できるようにしておく。
+        // 上書きではなく追記(マージ)することで、タイミングによって
+        // 一部の情報が抜けたメッセージが来ても、以前分かっていた情報を
+        // 失わないようにする。
+        if (videoTrackPurposes) {
+          const existing = peerVideoPurposes.current.get(from) || {};
+          peerVideoPurposes.current.set(from, {
+            ...existing,
+            ...videoTrackPurposes,
+          });
+        }
         const pc = getOrCreatePeerConnection(from);
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
         await flushPendingCandidates(from, pc);
@@ -1036,9 +1057,14 @@ export default function AvatarSpace({ initialName }: Props) {
           videoTrackPurposes?: Record<string, "screen" | "camera">;
         };
         if (to !== selfId.current) return;
-        // ontrackが発火する前に、映像の種類を判定できるようにしておく
-        if (videoTrackPurposes)
-          peerVideoPurposes.current.set(from, videoTrackPurposes);
+        // ontrackが発火する前に、映像の種類を判定できるようにしておく(こちらも追記)
+        if (videoTrackPurposes) {
+          const existing = peerVideoPurposes.current.get(from) || {};
+          peerVideoPurposes.current.set(from, {
+            ...existing,
+            ...videoTrackPurposes,
+          });
+        }
         const pc = peerConnections.current.get(from);
         if (!pc) return;
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
