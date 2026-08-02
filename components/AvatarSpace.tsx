@@ -112,9 +112,6 @@ export default function AvatarSpace({ initialName }: Props) {
   const lastTrackedZoneId = useRef<string | null>(null);
   const wasMovingRef = useRef(false);
   const lastMoveSentAt = useRef(0);
-  const resubscribeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -791,28 +788,13 @@ export default function AvatarSpace({ initialName }: Props) {
         if (status === "SUBSCRIBED" && selfState.current) {
           await channel.track(selfState.current);
         }
-        if (
-          status === "CHANNEL_ERROR" ||
-          status === "TIMED_OUT" ||
-          status === "CLOSED"
-        ) {
-          // Wi-Fiの瞬断などで切れた場合、少し待ってから自動で再購読を試みる。
-          // 短時間に何度も切断イベントが来ても、予約するタイマーは1つだけにする。
-          if (resubscribeTimerRef.current) return;
-          resubscribeTimerRef.current = setTimeout(() => {
-            resubscribeTimerRef.current = null;
-            if (channelRef.current === channel) {
-              channel.subscribe();
-            }
-          }, 2000);
-        }
+        // Supabase Realtimeはソケット切断時に自動で再接続・チャンネル再参加を
+        // 行うため、ここで自前でchannel.subscribe()を呼び直す必要はない。
+        // 同じチャンネルに対して2回目のsubscribe()を呼ぶと
+        // 「tried to join multiple times」エラーになり、かえって不安定になる。
       });
 
     return () => {
-      if (resubscribeTimerRef.current) {
-        clearTimeout(resubscribeTimerRef.current);
-        resubscribeTimerRef.current = null;
-      }
       channel.unsubscribe();
       channelRef.current = null;
     };
