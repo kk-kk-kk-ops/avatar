@@ -1006,7 +1006,8 @@ export default function AvatarSpace() {
               <span className="text-[11px] text-slate-300">休憩エリア</span>
             </div>
 
-            {/* 障害物(机・観葉植物・棚など)。編集モード中はドラッグで移動・リサイズ・削除できる */}
+            {/* 障害物(机・観葉植物・棚など)。編集モード中はドラッグで移動・リサイズ・削除できる。
+                非編集時は見た目に出さず、当たり判定だけの透明な壁として機能する */}
             {obstacles.map((o) => (
               <div
                 key={o.id}
@@ -1015,10 +1016,10 @@ export default function AvatarSpace() {
                 }
                 onPointerMove={handleLayoutDragMove}
                 onPointerUp={handleLayoutDragEnd}
-                className={`absolute flex items-center justify-center rounded-md border text-[10px] shadow-inner ${
+                className={`absolute flex items-center justify-center rounded-md text-[10px] ${
                   editMode
-                    ? "cursor-move border-dashed border-amber-400 bg-amber-800/70 text-amber-50"
-                    : "border-amber-800/50 bg-amber-900/50 text-amber-100"
+                    ? "cursor-move border border-dashed border-amber-400 bg-amber-800/70 text-amber-50 shadow-inner"
+                    : "border-none bg-transparent text-transparent"
                 }`}
                 style={{
                   left: o.x,
@@ -1028,7 +1029,7 @@ export default function AvatarSpace() {
                   touchAction: editMode ? "none" : undefined,
                 }}
               >
-                {o.label}
+                {editMode && o.label}
                 {editMode && (
                   <>
                     <button
