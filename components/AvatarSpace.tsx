@@ -14,7 +14,15 @@ import Avatar from "./Avatar";
 import TouchControls from "./TouchControls";
 
 const ROOM_NAME = "avatar-room-main";
-const COLORS = ["#F97316", "#3B82F6", "#22C55E", "#EC4899", "#A855F7", "#EAB308", "#14B8A6"];
+const COLORS = [
+  "#F97316",
+  "#3B82F6",
+  "#22C55E",
+  "#EC4899",
+  "#A855F7",
+  "#EAB308",
+  "#14B8A6",
+];
 
 function randomId() {
   return Math.random().toString(36).slice(2, 10);
@@ -30,6 +38,7 @@ export default function AvatarSpace() {
   const [chatInput, setChatInput] = useState("");
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
+  const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -154,8 +163,14 @@ export default function AvatarSpace() {
           dx = (dx / len) * MOVE_SPEED * dt;
           dy = (dy / len) * MOVE_SPEED * dt;
 
-          self.x = Math.min(Math.max(self.x + dx, AVATAR_RADIUS), MAP_WIDTH - AVATAR_RADIUS);
-          self.y = Math.min(Math.max(self.y + dy, AVATAR_RADIUS), MAP_HEIGHT - AVATAR_RADIUS);
+          self.x = Math.min(
+            Math.max(self.x + dx, AVATAR_RADIUS),
+            MAP_WIDTH - AVATAR_RADIUS,
+          );
+          self.y = Math.min(
+            Math.max(self.y + dy, AVATAR_RADIUS),
+            MAP_HEIGHT - AVATAR_RADIUS,
+          );
 
           if (Math.abs(dx) > Math.abs(dy)) {
             self.dir = dx > 0 ? "right" : "left";
@@ -187,6 +202,22 @@ export default function AvatarSpace() {
     };
   }, [joined]);
 
+  // ---- 表示領域(ビューポート)のサイズを監視(カメラ追従の計算に使用) ----
+  useEffect(() => {
+    if (!joined) return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    const update = () => {
+      setViewport({ width: el.clientWidth, height: el.clientHeight });
+    };
+    update();
+
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [joined]);
+
   // ---- スマホ用タッチ操作(既存のkeysDownセットに仮想キーを追加/削除するだけ) ----
   const handleTouchPress = useCallback((key: string) => {
     keysDown.current.add(key);
@@ -200,10 +231,17 @@ export default function AvatarSpace() {
     const message = chatInput.trim();
     if (!message || !selfState.current) return;
     const id = selfState.current.id;
+    const messageAt = Date.now();
+
+    // selfState自体にもmessageを持たせる。移動ループが毎フレーム
+    // selfStateの内容でplayersを上書きするため、ここに含めないと
+    // 自分の吹き出しだけ次のフレームで消えてしまう。
+    selfState.current.message = message;
+    selfState.current.messageAt = messageAt;
 
     setPlayers((prev) => ({
       ...prev,
-      [id]: { ...prev[id], message, messageAt: Date.now() },
+      [id]: { ...prev[id], message, messageAt },
     }));
 
     channelRef.current?.send({
@@ -223,8 +261,12 @@ export default function AvatarSpace() {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-slate-900">
         <div className="w-80 rounded-xl bg-white p-6 shadow-xl">
-          <h1 className="mb-1 text-lg font-bold text-slate-800">アバタースペースに入室</h1>
-          <p className="mb-4 text-sm text-slate-500">表示する名前を入力してください</p>
+          <h1 className="mb-1 text-lg font-bold text-slate-800">
+            アバタースペースに入室
+          </h1>
+          <p className="mb-4 text-sm text-slate-500">
+            表示する名前を入力してください
+          </p>
           <input
             autoFocus
             value={nameInput}
@@ -246,13 +288,26 @@ export default function AvatarSpace() {
 
   const playerList = Object.values(players);
 
+  // ---- カメラ計算:自分を画面中央に固定し、端では止めてアイコン側が動くようにする ----
+  const selfPlayer = players[selfId.current];
+  const maxCameraX = Math.max(MAP_WIDTH - viewport.width, 0);
+  const maxCameraY = Math.max(MAP_HEIGHT - viewport.height, 0);
+  const cameraX = selfPlayer
+    ? Math.min(Math.max(selfPlayer.x - viewport.width / 2, 0), maxCameraX)
+    : 0;
+  const cameraY = selfPlayer
+    ? Math.min(Math.max(selfPlayer.y - viewport.height / 2, 0), maxCameraY)
+    : 0;
+
   return (
     <div className="flex h-screen w-screen flex-col bg-slate-800">
       {/* ヘッダー */}
       <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <span className="text-sm font-semibold">アバタースペース</span>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-300">オンライン: {playerList.length}人</span>
+          <span className="text-xs text-slate-300">
+            オンライン: {playerList.length}人
+          </span>
           {/* スマホのみ表示するハンバーガーボタン */}
           <button
             onClick={() => setShowParticipants((v) => !v)}
@@ -267,16 +322,17 @@ export default function AvatarSpace() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* マップ */}
+        {/* マップ:表示領域は固定し、中の世界をtransformで動かしてカメラ追従を実現 */}
         <div
           ref={containerRef}
-          className="relative flex-1 overflow-auto bg-slate-700"
+          className="relative flex-1 overflow-hidden bg-slate-700"
         >
           <div
-            className="relative"
+            className="absolute left-0 top-0"
             style={{
               width: MAP_WIDTH,
               height: MAP_HEIGHT,
+              transform: `translate(${-cameraX}px, ${-cameraY}px)`,
               backgroundImage:
                 "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
               backgroundSize: "40px 40px",
@@ -285,7 +341,9 @@ export default function AvatarSpace() {
           >
             {/* 簡易的なゾーン(会議スペースのイメージ) */}
             <div className="absolute left-[120px] top-[120px] h-[220px] w-[320px] rounded-xl bg-slate-600/60 border border-slate-500 flex items-start p-2">
-              <span className="text-[11px] text-slate-300">ミーティングエリア</span>
+              <span className="text-[11px] text-slate-300">
+                ミーティングエリア
+              </span>
             </div>
             <div className="absolute right-[120px] bottom-[100px] h-[180px] w-[260px] rounded-xl bg-slate-600/60 border border-slate-500 flex items-start p-2">
               <span className="text-[11px] text-slate-300">休憩エリア</span>
@@ -356,7 +414,10 @@ export default function AvatarSpace() {
       </div>
 
       {/* スマホ用移動ボタン(sm以上の画面では非表示) */}
-      <TouchControls onPress={handleTouchPress} onRelease={handleTouchRelease} />
+      <TouchControls
+        onPress={handleTouchPress}
+        onRelease={handleTouchRelease}
+      />
     </div>
   );
 }
