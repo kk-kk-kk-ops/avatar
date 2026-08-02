@@ -134,6 +134,19 @@ export default function AvatarSpace({ initialName }: Props) {
   const rafRef = useRef<number | null>(null);
   const lastFrameTime = useRef<number>(performance.now());
 
+  // 画面共有・ビデオ通話のエラーメッセージは5秒で自動的に消す
+  useEffect(() => {
+    if (!shareError) return;
+    const timer = setTimeout(() => setShareError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [shareError]);
+
+  useEffect(() => {
+    if (!callError) return;
+    const timer = setTimeout(() => setCallError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [callError]);
+
   // ---- 入室処理 ----
   const handleJoin = useCallback(() => {
     const name = nameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
@@ -1021,6 +1034,28 @@ export default function AvatarSpace({ initialName }: Props) {
     return () => clearInterval(interval);
   }, [joined]);
 
+  // ---- タブがバックグラウンドから復帰した際、即座に再同期する ----
+  // スマホでアプリを切り替えたりロック画面から戻った際、requestAnimationFrameが
+  // 一時停止するため、その間の位置更新が相手に届いていないことがある。
+  // 復帰した瞬間にpresenceの再trackと最新位置の送信を行い、素早く復旧させる。
+  useEffect(() => {
+    if (!joined) return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (selfState.current && channelRef.current) {
+        channelRef.current.track(selfState.current);
+        channelRef.current.send({
+          type: "broadcast",
+          event: "move",
+          payload: selfState.current,
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [joined]);
+
   // ---- キーボード入力 ----
   useEffect(() => {
     if (!joined) return;
@@ -1117,10 +1152,13 @@ export default function AvatarSpace({ initialName }: Props) {
         // 止まって見えてしまい、キーを離してから反映されるようなラグに感じられる。
         // 移動中の送信は約14回/秒に間引く(複数人が同時に動いても送信上限に
         // 余裕を持たせ、回線が不安定になって再接続が走るのを防ぐ)。止まった
-        // 瞬間だけは間引かずに必ず送る。
+        // 瞬間だけは間引かずに必ず送る。さらに、静止中でも3秒おきに現在位置を
+        // 送る(ハートビート)。何らかの理由で相手に届いていなかった場合でも、
+        // 数秒以内に自然と復旧するようにするため。
         const justStopped = !moving && wasMovingRef.current;
+        const heartbeatDue = !moving && time - lastMoveSentAt.current >= 3000;
         const intervalElapsed = time - lastMoveSentAt.current >= 70; // 約14回/秒
-        if ((moving && intervalElapsed) || justStopped) {
+        if ((moving && intervalElapsed) || justStopped || heartbeatDue) {
           if (channelRef.current) {
             channelRef.current.send({
               type: "broadcast",
