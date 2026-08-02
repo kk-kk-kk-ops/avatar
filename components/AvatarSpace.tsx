@@ -29,6 +29,7 @@ export default function AvatarSpace() {
   const [nameInput, setNameInput] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
+  const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -250,7 +251,19 @@ export default function AvatarSpace() {
       {/* ヘッダー */}
       <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <span className="text-sm font-semibold">アバタースペース</span>
-        <span className="text-xs text-slate-300">オンライン: {playerList.length}人</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-300">オンライン: {playerList.length}人</span>
+          {/* スマホのみ表示するハンバーガーボタン */}
+          <button
+            onClick={() => setShowParticipants((v) => !v)}
+            className="rounded p-1.5 hover:bg-white/10 sm:hidden"
+            aria-label="参加者一覧を開く"
+          >
+            <span className="mb-1 block h-0.5 w-5 bg-white" />
+            <span className="mb-1 block h-0.5 w-5 bg-white" />
+            <span className="block h-0.5 w-5 bg-white" />
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -284,9 +297,30 @@ export default function AvatarSpace() {
           </div>
         </div>
 
-        {/* サイドバー:オンラインリスト */}
-        <div className="w-52 shrink-0 border-l border-slate-700 bg-slate-900 p-3 text-white overflow-y-auto">
-          <h2 className="mb-2 text-xs font-semibold text-slate-400">参加者</h2>
+        {/* スマホ表示時の背景オーバーレイ(タップで閉じる) */}
+        {showParticipants && (
+          <div
+            className="fixed inset-0 z-30 bg-black/50 sm:hidden"
+            onClick={() => setShowParticipants(false)}
+          />
+        )}
+
+        {/* サイドバー:オンラインリスト(スマホはドロワー表示) */}
+        <div
+          className={`${
+            showParticipants ? "flex" : "hidden"
+          } fixed inset-y-0 right-0 z-40 w-64 flex-col overflow-y-auto border-l border-slate-700 bg-slate-900 p-3 text-white sm:static sm:z-auto sm:flex sm:w-52 sm:shrink-0`}
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-slate-400">参加者</h2>
+            <button
+              onClick={() => setShowParticipants(false)}
+              className="text-slate-400 hover:text-white sm:hidden"
+              aria-label="閉じる"
+            >
+              ✕
+            </button>
+          </div>
           <ul className="space-y-1">
             {playerList.map((p) => (
               <li key={p.id} className="flex items-center gap-2 text-sm">
