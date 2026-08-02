@@ -902,15 +902,42 @@ export default function AvatarSpace({ initialName }: Props) {
         // syncイベントは複数人が同時に在室状況を更新した際、瞬間的に
         // 不完全なスナップショットが届くことがある。そのタイミングで
         // 「いなくなった」と判断して消してしまうと、実際にはまだ在室している
-        // 相手を誤って消してしまうことがあるため、ここでは追加のみ行う。
-        // 削除は正確な情報が来るleaveイベントと、下の定期的な自己修復に任せる。
+        // 相手を誤って消してしまうことがあるため、ここでは削除は行わない
+        // (削除は正確な情報が来るleaveイベントと、下の定期的な自己修復に任せる)。
+        //
+        // ただし、名前・アバター画像・マイク状態などは track() が呼ばれた
+        // 瞬間にしか更新されないため、既に把握している相手であっても
+        // これらの「見た目」情報だけは反映する。位置情報(x, y, 向きなど)は
+        // 移動のbroadcastの方が新しいので、そちらは上書きしない。
         setPlayers((prev) => {
           let changed = false;
           const next = { ...prev };
           Object.values(state).forEach((entries) => {
             const p = entries[0] as unknown as PlayerState;
-            if (!next[p.id]) {
+            if (p.id === selfId.current) return;
+            const current = next[p.id];
+            if (!current) {
               next[p.id] = p;
+              changed = true;
+              return;
+            }
+            if (
+              current.name !== p.name ||
+              current.color !== p.color ||
+              current.avatarImage !== p.avatarImage ||
+              current.micOn !== p.micOn ||
+              current.sharingScreen !== p.sharingScreen ||
+              current.inCall !== p.inCall
+            ) {
+              next[p.id] = {
+                ...current,
+                name: p.name,
+                color: p.color,
+                avatarImage: p.avatarImage,
+                micOn: p.micOn,
+                sharingScreen: p.sharingScreen,
+                inCall: p.inCall,
+              };
               changed = true;
             }
           });
