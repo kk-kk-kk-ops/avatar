@@ -540,29 +540,31 @@ export default function AvatarSpace({ initialName }: Props) {
     channel
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState<PlayerState>();
-        const presentIds = new Set<string>();
-        Object.values(state).forEach((entries) => {
-          const p = entries[0] as unknown as PlayerState;
-          presentIds.add(p.id);
-        });
 
+        // syncイベントは複数人が同時に在室状況を更新した際、瞬間的に
+        // 不完全なスナップショットが届くことがある。そのタイミングで
+        // 「いなくなった」と判断して消してしまうと、実際にはまだ在室している
+        // 相手を誤って消してしまうことがあるため、ここでは追加のみ行う。
+        // 削除は正確な情報が来るleaveイベントと、下の定期的な自己修復に任せる。
         setPlayers((prev) => {
-          const next: Record<string, PlayerState> = {};
-          // すでに把握している相手は、broadcastで届いている最新の位置情報を
-          // 失わないよう、在室が確認できている間はそのまま引き継ぐ
-          Object.entries(prev).forEach(([id, p]) => {
-            if (id === selfId.current || presentIds.has(id)) {
-              next[id] = p;
-            }
-          });
-          // presence上は在室しているのに、まだこちらで把握できていない相手を追加
+          let changed = false;
+          const next = { ...prev };
           Object.values(state).forEach((entries) => {
             const p = entries[0] as unknown as PlayerState;
-            if (!next[p.id]) next[p.id] = p;
+            if (!next[p.id]) {
+              next[p.id] = p;
+              changed = true;
+            }
           });
           // 自分の最新状態は selfState を優先(presence syncのタイムラグ対策)
-          if (selfState.current) next[selfState.current.id] = selfState.current;
-          return next;
+          if (
+            selfState.current &&
+            next[selfState.current.id] !== selfState.current
+          ) {
+            next[selfState.current.id] = selfState.current;
+            changed = true;
+          }
+          return changed ? next : prev;
         });
       })
       .on("presence", { event: "leave" }, ({ key }) => {
@@ -673,6 +675,9 @@ export default function AvatarSpace({ initialName }: Props) {
   // 何らかの理由でpresenceのsync/leaveイベントを取りこぼした場合に備え、
   // 数秒おきに実際の在室状況と突き合わせて、いない人を消す・見えていない人を
   // 追加する。既存の位置情報(broadcastで得た最新の座標)は上書きしない。
+  // 「いない」判定は瞬間的な取得タイミングのズレで誤検知することがあるため、
+  // 2回連続で確認できてから削除する(1回だけの不在は様子見)。
+  const suspectedGoneRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!joined) return;
     const interval = setInterval(() => {
@@ -688,14 +693,20 @@ export default function AvatarSpace({ initialName }: Props) {
       setPlayers((prev) => {
         let changed = false;
         const next = { ...prev };
+        const stillSuspected = new Set<string>();
 
-        // 実際には退室しているのに残ってしまっている相手を削除
         Object.keys(next).forEach((id) => {
-          if (id !== selfId.current && !presentIds.has(id)) {
+          if (id === selfId.current || presentIds.has(id)) return;
+          if (suspectedGoneRef.current.has(id)) {
+            // 前回に続き2回連続で不在を確認できたので削除する
             delete next[id];
             changed = true;
+          } else {
+            // 今回が初めての不在確認。次回も不在なら削除する
+            stillSuspected.add(id);
           }
         });
+        suspectedGoneRef.current = stillSuspected;
 
         // 実際には在室しているのに、こちらで把握できていない相手を追加
         Object.values(state).forEach((entries) => {
