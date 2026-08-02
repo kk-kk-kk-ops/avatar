@@ -1,12 +1,21 @@
-"use client";
+import { createClient } from "@/lib/supabase/server";
+import AvatarSpaceLoader from "@/components/AvatarSpaceLoader";
 
-import dynamic from "next/dynamic";
+export default async function Home() {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-// canvasやwindow/keyboardイベントを使うためSSRを無効化
-const AvatarSpace = dynamic(() => import("@/components/AvatarSpace"), {
-  ssr: false,
-});
+  let initialName: string | undefined;
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("display_name")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    initialName = profile?.display_name ?? undefined;
+  }
 
-export default function Home() {
-  return <AvatarSpace />;
+  return <AvatarSpaceLoader initialName={initialName} />;
 }

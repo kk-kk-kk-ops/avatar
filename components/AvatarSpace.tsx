@@ -58,9 +58,13 @@ type DragState = {
   originHeight: number;
 };
 
-export default function AvatarSpace() {
+type Props = {
+  initialName?: string;
+};
+
+export default function AvatarSpace({ initialName }: Props) {
   const [joined, setJoined] = useState(false);
-  const [nameInput, setNameInput] = useState("");
+  const [nameInput, setNameInput] = useState(initialName ?? "");
   const [chatInput, setChatInput] = useState("");
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
