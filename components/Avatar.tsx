@@ -40,13 +40,8 @@ export default function Avatar({ player, isSelf }: Props) {
       )}
 
       <div className="relative flex items-center justify-center">
-        {/* アバター画像(背景なしでそのまま表示) */}
-        <div
-          className={
-            isSelf ? "rounded-full ring-2 ring-offset-2 ring-black" : ""
-          }
-          style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}
-        >
+        {/* アバター画像(背景・枠なしでそのまま表示) */}
+        <div style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={avatarImage}
