@@ -12,6 +12,7 @@ import {
 } from "@/lib/types";
 import Avatar from "./Avatar";
 import TouchControls from "./TouchControls";
+import MicButton from "./MicButton";
 
 const ROOM_NAME = "avatar-room-main";
 const COLORS = [
@@ -39,6 +40,10 @@ export default function AvatarSpace() {
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
+  const [micEnabled, setMicEnabled] = useState(false);
+  const [micError, setMicError] = useState<string | null>(null);
+
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -218,6 +223,42 @@ export default function AvatarSpace() {
     return () => ro.disconnect();
   }, [joined]);
 
+  // ---- マイクのON/OFF切り替え ----
+  // 初回クリック時にブラウザへマイク使用の許可をリクエストする。
+  // 実際に他の人へ音声を届ける処理(WebRTC接続)は次のステップで実装予定。
+  // 現時点ではマイクの取得とミュート/ミュート解除だけを行う。
+  const toggleMic = useCallback(async () => {
+    setMicError(null);
+    try {
+      if (!localStreamRef.current) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        localStreamRef.current = stream;
+        setMicEnabled(true);
+        return;
+      }
+      const next = !micEnabled;
+      localStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = next;
+      });
+      setMicEnabled(next);
+    } catch (err) {
+      setMicError(
+        "マイクを使用できませんでした。ブラウザのアドレスバー付近のマイク許可設定を確認してください。",
+      );
+    }
+  }, [micEnabled]);
+
+  // 退室時にマイクを解放(録音状態のまま残らないようにする)
+  useEffect(() => {
+    if (!joined) return;
+    return () => {
+      localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    };
+  }, [joined]);
+
   // ---- スマホ用タッチ操作(既存のkeysDownセットに仮想キーを追加/削除するだけ) ----
   const handleTouchPress = useCallback((key: string) => {
     keysDown.current.add(key);
@@ -308,6 +349,7 @@ export default function AvatarSpace() {
           <span className="text-xs text-slate-300">
             オンライン: {playerList.length}人
           </span>
+          <MicButton enabled={micEnabled} onClick={toggleMic} />
           {/* スマホのみ表示するハンバーガーボタン */}
           <button
             onClick={() => setShowParticipants((v) => !v)}
@@ -320,6 +362,13 @@ export default function AvatarSpace() {
           </button>
         </div>
       </div>
+
+      {/* マイク許可エラーの通知 */}
+      {micError && (
+        <div className="bg-red-900/80 px-4 py-2 text-center text-xs text-red-100">
+          {micError}
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden">
         {/* マップ:表示領域は固定し、中の世界をtransformで動かしてカメラ追従を実現 */}
