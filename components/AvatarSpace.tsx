@@ -10,6 +10,9 @@ import {
   AVATAR_RADIUS,
   MOVE_SPEED,
   isInMeetingArea,
+  OBSTACLES,
+  circleIntersectsRect,
+  PROXIMITY_RADIUS,
 } from "@/lib/types";
 import Avatar from "./Avatar";
 import TouchControls from "./TouchControls";
@@ -380,14 +383,26 @@ export default function AvatarSpace() {
           dx = (dx / len) * MOVE_SPEED * dt;
           dy = (dy / len) * MOVE_SPEED * dt;
 
-          self.x = Math.min(
+          const nextX = Math.min(
             Math.max(self.x + dx, AVATAR_RADIUS),
             MAP_WIDTH - AVATAR_RADIUS,
           );
-          self.y = Math.min(
+          const nextY = Math.min(
             Math.max(self.y + dy, AVATAR_RADIUS),
             MAP_HEIGHT - AVATAR_RADIUS,
           );
+
+          // 障害物との当たり判定。X軸・Y軸を別々に判定することで、
+          // 障害物に斜めから近づいても壁沿いに滑るように移動できる。
+          const blockedX = OBSTACLES.some((o) =>
+            circleIntersectsRect(nextX, self.y, AVATAR_RADIUS, o),
+          );
+          const blockedY = OBSTACLES.some((o) =>
+            circleIntersectsRect(self.x, nextY, AVATAR_RADIUS, o),
+          );
+
+          if (!blockedX) self.x = nextX;
+          if (!blockedY) self.y = nextY;
 
           if (Math.abs(dx) > Math.abs(dy)) {
             self.dir = dx > 0 ? "right" : "left";
@@ -457,6 +472,10 @@ export default function AvatarSpace() {
         });
         localStreamRef.current = stream;
         setMicEnabled(true);
+        if (selfState.current) {
+          selfState.current.micOn = true;
+          channelRef.current?.track(selfState.current);
+        }
         await attachMicToExistingConnections();
         return;
       }
@@ -465,6 +484,10 @@ export default function AvatarSpace() {
         track.enabled = next;
       });
       setMicEnabled(next);
+      if (selfState.current) {
+        selfState.current.micOn = next;
+        channelRef.current?.track(selfState.current);
+      }
     } catch (err) {
       setMicError(
         "マイクを使用できませんでした。ブラウザのアドレスバー付近のマイク許可設定を確認してください。",
@@ -481,17 +504,28 @@ export default function AvatarSpace() {
     };
   }, [joined]);
 
-  // ---- 音声通話:接続すべき相手(自分も相手もミーティングエリア内)を計算 ----
-  const selfPlayerForVoice = players[selfId.current];
-  const selfInMeetingAreaNow = !!selfPlayerForVoice?.inMeetingArea;
+  // ---- 音声通話:接続すべき相手を計算 ----
+  // 条件は「ミーティングエリアで二人とも一緒にいる」か「一定距離より近い(近接ボイスチャット)」。
+  // 距離判定には少し余裕(ヒステリシス)を持たせ、境界線上での接続/切断の
+  // チラつきを防いでいる(接続済みの相手は少し離れても切れにくくする)。
   const eligiblePeerIds = useMemo(() => {
-    if (!selfInMeetingAreaNow) return [] as string[];
+    const self = players[selfId.current];
+    if (!self) return [] as string[];
     return Object.values(players)
-      .filter((p) => p.id !== selfId.current && p.inMeetingArea)
+      .filter((p) => {
+        if (p.id === selfId.current) return false;
+        if (self.inMeetingArea && p.inMeetingArea) return true;
+        const dist = Math.hypot(p.x - self.x, p.y - self.y);
+        const alreadyConnected = peerConnections.current.has(p.id);
+        const threshold = alreadyConnected
+          ? PROXIMITY_RADIUS + 60
+          : PROXIMITY_RADIUS;
+        return dist <= threshold;
+      })
       .map((p) => p.id)
       .sort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [players, selfInMeetingAreaNow]);
+  }, [players]);
   const eligibleKey = eligiblePeerIds.join(",");
 
   // ---- 音声通話:対象の増減に合わせて接続を作成/破棄 ----
@@ -618,9 +652,9 @@ export default function AvatarSpace() {
           <span className="text-xs text-slate-300">
             オンライン: {playerList.length}人
           </span>
-          {selfInMeetingAreaNow && (
+          {eligiblePeerIds.length > 0 && (
             <span className="rounded-full bg-emerald-600/80 px-2 py-0.5 text-[10px] font-semibold text-white">
-              🎧 ミーティングエリア通話中
+              🎧 音声通話中({eligiblePeerIds.length}人)
             </span>
           )}
           <MicButton enabled={micEnabled} onClick={toggleMic} />
@@ -671,6 +705,35 @@ export default function AvatarSpace() {
             <div className="absolute right-[120px] bottom-[100px] h-[180px] w-[260px] rounded-xl bg-slate-600/60 border border-slate-500 flex items-start p-2">
               <span className="text-[11px] text-slate-300">休憩エリア</span>
             </div>
+
+            {/* 障害物(机・観葉植物・棚など) */}
+            {OBSTACLES.map((o, i) => (
+              <div
+                key={i}
+                className="absolute flex items-center justify-center rounded-md border border-amber-800/50 bg-amber-900/50 text-[10px] text-amber-100 shadow-inner"
+                style={{
+                  left: o.x,
+                  top: o.y,
+                  width: o.width,
+                  height: o.height,
+                }}
+              >
+                {o.label}
+              </div>
+            ))}
+
+            {/* 自分の音声が届く範囲の目安(マイクON時のみ表示) */}
+            {selfPlayer && micEnabled && (
+              <div
+                className="pointer-events-none absolute rounded-full border border-emerald-400/40"
+                style={{
+                  left: selfPlayer.x - PROXIMITY_RADIUS,
+                  top: selfPlayer.y - PROXIMITY_RADIUS,
+                  width: PROXIMITY_RADIUS * 2,
+                  height: PROXIMITY_RADIUS * 2,
+                }}
+              />
+            )}
 
             {playerList.map((p) => (
               <Avatar key={p.id} player={p} isSelf={p.id === selfId.current} />
