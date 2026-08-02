@@ -1,11 +1,14 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { SESSION_MAX_AGE } from "./constants";
 
 // 認証不要でアクセスできるパス
 const PUBLIC_PATHS = ["/login", "/auth/callback"];
 
 function isPublicPath(pathname: string) {
-  return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  return PUBLIC_PATHS.some(
+    (path) => pathname === path || pathname.startsWith(`${path}/`),
+  );
 }
 
 export async function updateSession(request: NextRequest) {
@@ -23,16 +26,25 @@ export async function updateSession(request: NextRequest) {
         },
         set(name: string, value: string, options: CookieOptions) {
           request.cookies.set({ name, value, ...options });
-          response = NextResponse.next({ request: { headers: request.headers } });
-          response.cookies.set({ name, value, ...options });
+          response = NextResponse.next({
+            request: { headers: request.headers },
+          });
+          response.cookies.set({
+            name,
+            value,
+            ...options,
+            maxAge: SESSION_MAX_AGE,
+          });
         },
         remove(name: string, options: CookieOptions) {
           request.cookies.set({ name, value: "", ...options });
-          response = NextResponse.next({ request: { headers: request.headers } });
+          response = NextResponse.next({
+            request: { headers: request.headers },
+          });
           response.cookies.set({ name, value: "", ...options });
         },
       },
-    }
+    },
   );
 
   const {
