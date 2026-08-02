@@ -191,12 +191,36 @@ export default function AvatarSpace() {
     [],
   );
 
+  // ---- 現在画面に表示されているマップ上の中心座標を取得(新規アイテムの設置位置に使用) ----
+  const getViewportCenter = useCallback(() => {
+    const self = players[selfId.current];
+    const maxX = Math.max(MAP_WIDTH - viewport.width, 0);
+    const maxY = Math.max(MAP_HEIGHT - viewport.height, 0);
+    const camX = self
+      ? Math.min(Math.max(self.x - viewport.width / 2, 0), maxX)
+      : 0;
+    const camY = self
+      ? Math.min(Math.max(self.y - viewport.height / 2, 0), maxY)
+      : 0;
+    return {
+      x: camX + viewport.width / 2,
+      y: camY + viewport.height / 2,
+    };
+  }, [players, viewport]);
+
   // ---- マップ編集:障害物・ミーティングエリアの追加 ----
   const addObstacle = useCallback(() => {
+    const center = getViewportCenter();
+    const pos = clampPosition(
+      Math.round(center.x - NEW_ITEM_SIZE / 2),
+      Math.round(center.y - NEW_ITEM_SIZE / 2),
+      NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE,
+    );
     const item: Obstacle = {
       id: randomItemId("obstacle"),
-      x: Math.round(MAP_WIDTH / 2 - NEW_ITEM_SIZE / 2),
-      y: Math.round(MAP_HEIGHT / 2 - NEW_ITEM_SIZE / 2),
+      x: pos.x,
+      y: pos.y,
       width: NEW_ITEM_SIZE,
       height: NEW_ITEM_SIZE,
       label: "🧱 障害物",
@@ -208,13 +232,20 @@ export default function AvatarSpace() {
       saveLayout(next, meetingZonesRef.current);
       return next;
     });
-  }, [saveLayout]);
+  }, [saveLayout, getViewportCenter]);
 
   const addMeetingZone = useCallback(() => {
+    const center = getViewportCenter();
+    const pos = clampPosition(
+      Math.round(center.x - NEW_ITEM_SIZE / 2),
+      Math.round(center.y - NEW_ITEM_SIZE / 2),
+      NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE,
+    );
     const item: MeetingZone = {
       id: randomItemId("meeting"),
-      x: Math.round(MAP_WIDTH / 2 - NEW_ITEM_SIZE / 2),
-      y: Math.round(MAP_HEIGHT / 2 - NEW_ITEM_SIZE / 2),
+      x: pos.x,
+      y: pos.y,
       width: NEW_ITEM_SIZE,
       height: NEW_ITEM_SIZE,
       label: "ミーティングエリア",
@@ -226,7 +257,7 @@ export default function AvatarSpace() {
       saveLayout(obstaclesRef.current, next);
       return next;
     });
-  }, [saveLayout]);
+  }, [saveLayout, getViewportCenter]);
 
   // ---- マップ編集:削除 ----
   const removeObstacle = useCallback(
