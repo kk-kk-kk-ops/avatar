@@ -539,14 +539,30 @@ export default function AvatarSpace({ initialName }: Props) {
     channel
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState<PlayerState>();
-        const next: Record<string, PlayerState> = {};
+        const presentIds = new Set<string>();
         Object.values(state).forEach((entries) => {
           const p = entries[0] as unknown as PlayerState;
-          next[p.id] = p;
+          presentIds.add(p.id);
         });
-        // 自分の最新状態は selfState を優先(presence syncのタイムラグ対策)
-        if (selfState.current) next[selfState.current.id] = selfState.current;
-        setPlayers(next);
+
+        setPlayers((prev) => {
+          const next: Record<string, PlayerState> = {};
+          // すでに把握している相手は、broadcastで届いている最新の位置情報を
+          // 失わないよう、在室が確認できている間はそのまま引き継ぐ
+          Object.entries(prev).forEach(([id, p]) => {
+            if (id === selfId.current || presentIds.has(id)) {
+              next[id] = p;
+            }
+          });
+          // presence上は在室しているのに、まだこちらで把握できていない相手を追加
+          Object.values(state).forEach((entries) => {
+            const p = entries[0] as unknown as PlayerState;
+            if (!next[p.id]) next[p.id] = p;
+          });
+          // 自分の最新状態は selfState を優先(presence syncのタイムラグ対策)
+          if (selfState.current) next[selfState.current.id] = selfState.current;
+          return next;
+        });
       })
       .on("presence", { event: "leave" }, ({ key }) => {
         setPlayers((prev) => {
@@ -651,6 +667,50 @@ export default function AvatarSpace({ initialName }: Props) {
       channelRef.current = null;
     };
   }, [joined, getOrCreatePeerConnection, flushPendingCandidates]);
+
+  // ---- 在室状況の自己修復 ----
+  // 何らかの理由でpresenceのsync/leaveイベントを取りこぼした場合に備え、
+  // 数秒おきに実際の在室状況と突き合わせて、いない人を消す・見えていない人を
+  // 追加する。既存の位置情報(broadcastで得た最新の座標)は上書きしない。
+  useEffect(() => {
+    if (!joined) return;
+    const interval = setInterval(() => {
+      const channel = channelRef.current;
+      if (!channel) return;
+      const state = channel.presenceState<PlayerState>();
+      const presentIds = new Set<string>();
+      Object.values(state).forEach((entries) => {
+        const p = entries[0] as unknown as PlayerState;
+        presentIds.add(p.id);
+      });
+
+      setPlayers((prev) => {
+        let changed = false;
+        const next = { ...prev };
+
+        // 実際には退室しているのに残ってしまっている相手を削除
+        Object.keys(next).forEach((id) => {
+          if (id !== selfId.current && !presentIds.has(id)) {
+            delete next[id];
+            changed = true;
+          }
+        });
+
+        // 実際には在室しているのに、こちらで把握できていない相手を追加
+        Object.values(state).forEach((entries) => {
+          const p = entries[0] as unknown as PlayerState;
+          if (p.id !== selfId.current && !next[p.id]) {
+            next[p.id] = p;
+            changed = true;
+          }
+        });
+
+        return changed ? next : prev;
+      });
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [joined]);
 
   // ---- キーボード入力 ----
   useEffect(() => {
