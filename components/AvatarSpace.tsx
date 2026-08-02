@@ -31,6 +31,7 @@ import MicButton from "./MicButton";
 import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import ScreenShareButton from "./ScreenShareButton";
+import VideoCallButton from "./VideoCallButton";
 import LogoutButton from "./auth/LogoutButton";
 
 const ROOM_NAME = "avatar-room-main";
@@ -89,9 +90,15 @@ export default function AvatarSpace({ initialName }: Props) {
   const [remoteScreenStreams, setRemoteScreenStreams] = useState<
     Record<string, MediaStream>
   >({});
-  const [expandedScreenPeerId, setExpandedScreenPeerId] = useState<
-    string | null
-  >(null);
+  const [inCall, setInCall] = useState(false);
+  const [callError, setCallError] = useState<string | null>(null);
+  const [remoteCallStreams, setRemoteCallStreams] = useState<
+    Record<string, MediaStream>
+  >({});
+  const [expandedMedia, setExpandedMedia] = useState<{
+    peerId: string;
+    kind: "screen" | "camera";
+  } | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [obstacles, setObstacles] = useState<Obstacle[]>(DEFAULT_OBSTACLES);
@@ -105,6 +112,12 @@ export default function AvatarSpace({ initialName }: Props) {
 
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  // 相手から届く映像トラックが「画面共有」か「ビデオ通話」かを見分けるための対応表。
+  // trackのidをキーに、送信側から知らされた種類を記録する(相手ごとに保持)。
+  const peerVideoPurposes = useRef<
+    Map<string, Record<string, "screen" | "camera">>
+  >(new Map());
   const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(
     new Map(),
@@ -416,6 +429,24 @@ export default function AvatarSpace({ initialName }: Props) {
     [],
   );
 
+  // 現在自分が送っている映像トラック(画面共有・カメラ)の種類を、
+  // トラックIDをキーにしたマップとして組み立てる。相手側へofferと一緒に
+  // 送ることで、相手は届いた映像が「画面共有」か「ビデオ通話」かを区別できる。
+  const buildVideoTrackPurposes = useCallback((): Record<
+    string,
+    "screen" | "camera"
+  > => {
+    const map: Record<string, "screen" | "camera"> = {};
+    screenStreamRef.current?.getVideoTracks().forEach((t) => {
+      map[t.id] = "screen";
+    });
+    cameraStreamRef.current?.getVideoTracks().forEach((t) => {
+      map[t.id] = "camera";
+    });
+    return map;
+  }, []);
+
+  // 一時的な回線の乱れで切れた場合、自動で再接続を試みる
   // 接続が不安定になった際、自分がofferを送る側(IDが小さい方)だけが
   // iceRestartオプション付きで再接続を試みる(双方が同時に送ると衝突するため)
   const restartIce = useCallback(async (peerId: string) => {
@@ -427,7 +458,12 @@ export default function AvatarSpace({ initialName }: Props) {
       channelRef.current?.send({
         type: "broadcast",
         event: "webrtc-offer",
-        payload: { from: selfId.current, to: peerId, sdp: offer },
+        payload: {
+          from: selfId.current,
+          to: peerId,
+          sdp: offer,
+          videoTrackPurposes: buildVideoTrackPurposes(),
+        },
       });
     } catch {
       // 失敗した場合は次回の切断検知時に再度試みる
@@ -463,6 +499,13 @@ export default function AvatarSpace({ initialName }: Props) {
         });
       }
 
+      // すでにビデオ通話中の場合も同様に含める
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => {
+          pc.addTrack(track, cameraStreamRef.current as MediaStream);
+        });
+      }
+
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           channelRef.current?.send({
@@ -479,12 +522,15 @@ export default function AvatarSpace({ initialName }: Props) {
 
       pc.ontrack = (e) => {
         if (e.track.kind === "video") {
-          setRemoteScreenStreams((prev) => ({
-            ...prev,
-            [peerId]: e.streams[0],
-          }));
+          const purposes = peerVideoPurposes.current.get(peerId) || {};
+          const purpose = purposes[e.track.id] ?? "screen"; // 不明な場合は画面共有扱い
+          const setter =
+            purpose === "camera"
+              ? setRemoteCallStreams
+              : setRemoteScreenStreams;
+          setter((prev) => ({ ...prev, [peerId]: e.streams[0] }));
           e.track.onended = () => {
-            setRemoteScreenStreams((prev) => {
+            setter((prev) => {
               if (!(peerId in prev)) return prev;
               const next = { ...prev };
               delete next[peerId];
@@ -520,10 +566,15 @@ export default function AvatarSpace({ initialName }: Props) {
       channelRef.current?.send({
         type: "broadcast",
         event: "webrtc-offer",
-        payload: { from: selfId.current, to: peerId, sdp: offer },
+        payload: {
+          from: selfId.current,
+          to: peerId,
+          sdp: offer,
+          videoTrackPurposes: buildVideoTrackPurposes(),
+        },
       });
     },
-    [getOrCreatePeerConnection],
+    [getOrCreatePeerConnection, buildVideoTrackPurposes],
   );
 
   const closePeerConnection = useCallback((peerId: string) => {
@@ -545,6 +596,13 @@ export default function AvatarSpace({ initialName }: Props) {
       delete next[peerId];
       return next;
     });
+    setRemoteCallStreams((prev) => {
+      if (!(peerId in prev)) return prev;
+      const next = { ...prev };
+      delete next[peerId];
+      return next;
+    });
+    peerVideoPurposes.current.delete(peerId);
   }, []);
 
   // マイクを後から許可した場合に、既に接続済みの相手へ音声トラックを追加して再送信を開始する
@@ -583,14 +641,20 @@ export default function AvatarSpace({ initialName }: Props) {
       channelRef.current?.send({
         type: "broadcast",
         event: "webrtc-offer",
-        payload: { from: selfId.current, to: peerId, sdp: offer },
+        payload: {
+          from: selfId.current,
+          to: peerId,
+          sdp: offer,
+          videoTrackPurposes: buildVideoTrackPurposes(),
+        },
       });
     }
-  }, []);
+  }, [buildVideoTrackPurposes]);
 
   const stopScreenShare = useCallback(async () => {
     const stream = screenStreamRef.current;
     if (!stream) return;
+    const trackIds = new Set(stream.getTracks().map((t) => t.id));
     stream.getTracks().forEach((track) => track.stop());
     screenStreamRef.current = null;
     setScreenSharing(false);
@@ -600,22 +664,27 @@ export default function AvatarSpace({ initialName }: Props) {
       channelRef.current?.track(selfState.current);
     }
 
-    // 各接続から映像トラックを外し、再ネゴシエーションして相手側の映像も消す
+    // 各接続から「画面共有の」映像トラックだけを外す(ビデオ通話中の映像は残す)
     for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
-      const videoSenders = pc
+      const targetSenders = pc
         .getSenders()
-        .filter((s) => s.track?.kind === "video");
-      videoSenders.forEach((s) => pc.removeTrack(s));
-      if (videoSenders.length === 0) continue;
+        .filter((s) => s.track && trackIds.has(s.track.id));
+      targetSenders.forEach((s) => pc.removeTrack(s));
+      if (targetSenders.length === 0) continue;
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       channelRef.current?.send({
         type: "broadcast",
         event: "webrtc-offer",
-        payload: { from: selfId.current, to: peerId, sdp: offer },
+        payload: {
+          from: selfId.current,
+          to: peerId,
+          sdp: offer,
+          videoTrackPurposes: buildVideoTrackPurposes(),
+        },
       });
     }
-  }, []);
+  }, [buildVideoTrackPurposes]);
 
   const startScreenShare = useCallback(async () => {
     setShareError(null);
@@ -664,6 +733,101 @@ export default function AvatarSpace({ initialName }: Props) {
       startScreenShare();
     }
   }, [screenSharing, stopScreenShare, startScreenShare]);
+
+  // ---- ビデオ通話(画面共有と同じ仕組みで、カメラ映像を使う) ----
+  const attachCameraToExistingConnections = useCallback(async () => {
+    if (!cameraStreamRef.current) return;
+    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
+      const senders = pc.getSenders();
+      cameraStreamRef.current.getTracks().forEach((track) => {
+        const alreadyAttached = senders.some((s) => s.track === track);
+        if (!alreadyAttached)
+          pc.addTrack(track, cameraStreamRef.current as MediaStream);
+      });
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: {
+          from: selfId.current,
+          to: peerId,
+          sdp: offer,
+          videoTrackPurposes: buildVideoTrackPurposes(),
+        },
+      });
+    }
+  }, [buildVideoTrackPurposes]);
+
+  const stopVideoCall = useCallback(async () => {
+    const stream = cameraStreamRef.current;
+    if (!stream) return;
+    const trackIds = new Set(stream.getTracks().map((t) => t.id));
+    stream.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setInCall(false);
+
+    if (selfState.current) {
+      selfState.current.inCall = false;
+      channelRef.current?.track(selfState.current);
+    }
+
+    // 各接続から「ビデオ通話の」映像トラックだけを外す(画面共有中の映像は残す)
+    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
+      const targetSenders = pc
+        .getSenders()
+        .filter((s) => s.track && trackIds.has(s.track.id));
+      targetSenders.forEach((s) => pc.removeTrack(s));
+      if (targetSenders.length === 0) continue;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: {
+          from: selfId.current,
+          to: peerId,
+          sdp: offer,
+          videoTrackPurposes: buildVideoTrackPurposes(),
+        },
+      });
+    }
+  }, [buildVideoTrackPurposes]);
+
+  const startVideoCall = useCallback(async () => {
+    setCallError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      setInCall(true);
+
+      if (selfState.current) {
+        selfState.current.inCall = true;
+        channelRef.current?.track(selfState.current);
+      }
+
+      stream.getVideoTracks()[0].addEventListener("ended", () => {
+        stopVideoCall();
+      });
+
+      await attachCameraToExistingConnections();
+    } catch {
+      setCallError(
+        "カメラを使用できませんでした。ブラウザのカメラ許可設定を確認してください。",
+      );
+    }
+  }, [attachCameraToExistingConnections, stopVideoCall]);
+
+  const toggleVideoCall = useCallback(() => {
+    if (inCall) {
+      stopVideoCall();
+    } else {
+      startVideoCall();
+    }
+  }, [inCall, stopVideoCall, startVideoCall]);
 
   // ---- Supabase Realtimeチャンネルの接続 ----
   useEffect(() => {
@@ -735,12 +899,16 @@ export default function AvatarSpace({ initialName }: Props) {
         if (newZones) setMeetingZones(newZones);
       })
       .on("broadcast", { event: "webrtc-offer" }, async ({ payload }) => {
-        const { from, to, sdp } = payload as {
+        const { from, to, sdp, videoTrackPurposes } = payload as {
           from: string;
           to: string;
           sdp: RTCSessionDescriptionInit;
+          videoTrackPurposes?: Record<string, "screen" | "camera">;
         };
         if (to !== selfId.current) return;
+        // ontrackが発火する前に、映像の種類を判定できるようにしておく
+        if (videoTrackPurposes)
+          peerVideoPurposes.current.set(from, videoTrackPurposes);
         const pc = getOrCreatePeerConnection(from);
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
         await flushPendingCandidates(from, pc);
@@ -1034,6 +1202,8 @@ export default function AvatarSpace({ initialName }: Props) {
       localStreamRef.current = null;
       screenStreamRef.current?.getTracks().forEach((track) => track.stop());
       screenStreamRef.current = null;
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
     };
   }, [joined]);
 
@@ -1098,17 +1268,22 @@ export default function AvatarSpace({ initialName }: Props) {
       peerConnections.current.forEach((pc) => pc.close());
       peerConnections.current.clear();
       pendingCandidates.current.clear();
+      peerVideoPurposes.current.clear();
       setRemoteStreams({});
       setRemoteScreenStreams({});
+      setRemoteCallStreams({});
     };
   }, [joined]);
 
-  // 画面共有相手から離れて映像が届かなくなったら、開いていた全画面表示も自動的に閉じる
+  // 相手から離れて映像が届かなくなったら、開いていた全画面表示も自動的に閉じる
   useEffect(() => {
-    if (expandedScreenPeerId && !remoteScreenStreams[expandedScreenPeerId]) {
-      setExpandedScreenPeerId(null);
+    if (!expandedMedia) return;
+    const streamMap =
+      expandedMedia.kind === "screen" ? remoteScreenStreams : remoteCallStreams;
+    if (!streamMap[expandedMedia.peerId]) {
+      setExpandedMedia(null);
     }
-  }, [expandedScreenPeerId, remoteScreenStreams]);
+  }, [expandedMedia, remoteScreenStreams, remoteCallStreams]);
 
   // ---- スマホ用タッチ操作(既存のkeysDownセットに仮想キーを追加/削除するだけ) ----
   const handleTouchPress = useCallback((key: string) => {
@@ -1217,6 +1392,15 @@ export default function AvatarSpace({ initialName }: Props) {
       remoteScreenStreams[p.id],
   );
 
+  // 近くにいて、かつビデオ通話中の人の一覧
+  const visibleVideoCalls = playerList.filter(
+    (p) =>
+      p.id !== selfId.current &&
+      p.inCall &&
+      eligibleSetForScreen.has(p.id) &&
+      remoteCallStreams[p.id],
+  );
+
   // ---- カメラ計算:自分を画面中央に固定し、端では止めてアイコン側が動くようにする ----
   // スマホ(画面幅が狭い)場合は少し縮小(ズームアウト)して周囲が見えるようにする。
   const selfPlayer = players[selfId.current];
@@ -1267,6 +1451,7 @@ export default function AvatarSpace({ initialName }: Props) {
             enabled={screenSharing}
             onClick={toggleScreenShare}
           />
+          <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
           <button
             onClick={openSettings}
             className="rounded p-1.5 text-sm hover:bg-white/10"
@@ -1299,9 +1484,17 @@ export default function AvatarSpace({ initialName }: Props) {
           {shareError}
         </div>
       )}
+      {callError && (
+        <div className="bg-red-900/80 px-4 py-2 text-center text-xs text-red-100">
+          {callError}
+        </div>
+      )}
 
-      {/* 画面共有プレビュー(自分・近くにいる相手)を画面上部に並べて表示 */}
-      {(screenSharing || visibleScreenShares.length > 0) && (
+      {/* 画面共有・ビデオ通話のプレビュー(自分・近くにいる相手)を画面上部に並べて表示 */}
+      {(screenSharing ||
+        inCall ||
+        visibleScreenShares.length > 0 ||
+        visibleVideoCalls.length > 0) && (
         <div className="flex flex-wrap gap-2 bg-slate-900/80 px-3 py-2">
           {screenSharing && screenStreamRef.current && (
             <div className="relative">
@@ -1322,10 +1515,29 @@ export default function AvatarSpace({ initialName }: Props) {
             </div>
           )}
 
+          {inCall && cameraStreamRef.current && (
+            <div className="relative">
+              <RemoteVideo
+                stream={cameraStreamRef.current}
+                className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
+              />
+              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                あなたのカメラ
+              </span>
+              <button
+                onClick={stopVideoCall}
+                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                aria-label="ビデオ通話を終了"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {visibleScreenShares.map((p) => (
             <button
-              key={p.id}
-              onClick={() => setExpandedScreenPeerId(p.id)}
+              key={`screen-${p.id}`}
+              onClick={() => setExpandedMedia({ peerId: p.id, kind: "screen" })}
               className="relative"
               aria-label={`${p.name}の画面を全画面表示`}
             >
@@ -1335,6 +1547,23 @@ export default function AvatarSpace({ initialName }: Props) {
               />
               <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
                 {p.name}の画面
+              </span>
+            </button>
+          ))}
+
+          {visibleVideoCalls.map((p) => (
+            <button
+              key={`call-${p.id}`}
+              onClick={() => setExpandedMedia({ peerId: p.id, kind: "camera" })}
+              className="relative"
+              aria-label={`${p.name}とのビデオ通話を全画面表示`}
+            >
+              <RemoteVideo
+                stream={remoteCallStreams[p.id]}
+                className="h-20 w-32 rounded-md border border-slate-500 bg-black object-cover"
+              />
+              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                {p.name}
               </span>
             </button>
           ))}
@@ -1602,22 +1831,35 @@ export default function AvatarSpace({ initialName }: Props) {
         <RemoteAudio key={peerId} stream={stream} />
       ))}
 
-      {/* 画面共有:全画面表示 */}
-      {expandedScreenPeerId && remoteScreenStreams[expandedScreenPeerId] && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
-          <RemoteVideo
-            stream={remoteScreenStreams[expandedScreenPeerId]}
-            className="h-full w-full object-contain"
-          />
-          <button
-            onClick={() => setExpandedScreenPeerId(null)}
-            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
-            aria-label="全画面表示を閉じる"
-          >
-            ✕
-          </button>
-        </div>
-      )}
+      {/* 画面共有・ビデオ通話:全画面表示 */}
+      {expandedMedia &&
+        (() => {
+          const streamMap =
+            expandedMedia.kind === "screen"
+              ? remoteScreenStreams
+              : remoteCallStreams;
+          const stream = streamMap[expandedMedia.peerId];
+          if (!stream) return null;
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
+              <RemoteVideo
+                stream={stream}
+                className={`h-full w-full ${
+                  expandedMedia.kind === "screen"
+                    ? "object-contain"
+                    : "object-cover"
+                }`}
+              />
+              <button
+                onClick={() => setExpandedMedia(null)}
+                className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
+                aria-label="全画面表示を閉じる"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })()}
 
       {/* アバター・名前の変更モーダル */}
       {settingsOpen && (

@@ -11,6 +11,7 @@ export type PlayerState = {
   meetingZoneId?: string | null; // 現在いるミーティングエリアのID(いなければnull)
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
+  inCall?: boolean; // ビデオ通話中かどうか(相手にも表示する)
   avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)
 };
 
