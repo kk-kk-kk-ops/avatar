@@ -303,7 +303,7 @@ export default function AvatarSpace() {
       <div className="flex h-screen w-screen items-center justify-center bg-slate-900">
         <div className="w-80 rounded-xl bg-white p-6 shadow-xl">
           <h1 className="mb-1 text-lg font-bold text-slate-800">
-            アバタースペースに入室
+            Grovina Officeに入室
           </h1>
           <p className="mb-4 text-sm text-slate-500">
             表示する名前を入力してください
@@ -344,7 +344,7 @@ export default function AvatarSpace() {
     <div className="flex h-screen w-screen flex-col bg-slate-800">
       {/* ヘッダー */}
       <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
-        <span className="text-sm font-semibold">アバタースペース</span>
+        <span className="text-sm font-semibold">Grovina Office</span>
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-300">
             オンライン: {playerList.length}人
