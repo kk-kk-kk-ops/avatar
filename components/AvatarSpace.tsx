@@ -113,6 +113,9 @@ export default function AvatarSpace({ initialName }: Props) {
   const lastTrackedZoneId = useRef<string | null>(null);
   const wasMovingRef = useRef(false);
   const lastMoveSentAt = useRef(0);
+  const resubscribeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -782,8 +785,11 @@ export default function AvatarSpace({ initialName }: Props) {
           status === "TIMED_OUT" ||
           status === "CLOSED"
         ) {
-          // Wi-Fiの瞬断などで切れた場合、少し待ってから自動で再購読を試みる
-          setTimeout(() => {
+          // Wi-Fiの瞬断などで切れた場合、少し待ってから自動で再購読を試みる。
+          // 短時間に何度も切断イベントが来ても、予約するタイマーは1つだけにする。
+          if (resubscribeTimerRef.current) return;
+          resubscribeTimerRef.current = setTimeout(() => {
+            resubscribeTimerRef.current = null;
             if (channelRef.current === channel) {
               channel.subscribe();
             }
@@ -792,6 +798,10 @@ export default function AvatarSpace({ initialName }: Props) {
       });
 
     return () => {
+      if (resubscribeTimerRef.current) {
+        clearTimeout(resubscribeTimerRef.current);
+        resubscribeTimerRef.current = null;
+      }
       channel.unsubscribe();
       channelRef.current = null;
     };
@@ -845,7 +855,7 @@ export default function AvatarSpace({ initialName }: Props) {
 
         return changed ? next : prev;
       });
-    }, 4000);
+    }, 2500);
 
     return () => clearInterval(interval);
   }, [joined]);
@@ -944,11 +954,11 @@ export default function AvatarSpace({ initialName }: Props) {
         // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
         // 止まった瞬間を送らないと、相手の画面では最後に動いていた位置のまま
         // 止まって見えてしまい、キーを離してから反映されるようなラグに感じられる。
-        // 移動中の送信は約20回/秒に間引く(Supabase Realtimeの送信上限に対して
-        // 余裕を持たせ、間引かれることによるガクつきを防ぐ)。止まった瞬間だけは
-        // 間引かずに必ず送る。
+        // 移動中の送信は約14回/秒に間引く(複数人が同時に動いても送信上限に
+        // 余裕を持たせ、回線が不安定になって再接続が走るのを防ぐ)。止まった
+        // 瞬間だけは間引かずに必ず送る。
         const justStopped = !moving && wasMovingRef.current;
-        const intervalElapsed = time - lastMoveSentAt.current >= 50; // 約20回/秒
+        const intervalElapsed = time - lastMoveSentAt.current >= 70; // 約14回/秒
         if ((moving && intervalElapsed) || justStopped) {
           if (channelRef.current) {
             channelRef.current.send({
