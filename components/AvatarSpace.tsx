@@ -1899,7 +1899,7 @@ export default function AvatarSpace({ initialName }: Props) {
           );
         })()}
 
-      {/* アバター・名前の変更モーダル */}
+      {/* アバター・名前の変更モーダルa */}
       {settingsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
