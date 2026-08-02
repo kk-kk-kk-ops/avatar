@@ -39,6 +39,10 @@ export default function Avatar({ player, isSelf }: Props) {
         </div>
       )}
 
+      <span className="mb-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white whitespace-nowrap">
+        {player.name}
+      </span>
+
       <div className="relative flex items-center justify-center">
         {/* アバター画像(背景・枠なしでそのまま表示) */}
         <div style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}>
@@ -68,10 +72,6 @@ export default function Avatar({ player, isSelf }: Props) {
           </span>
         )}
       </div>
-
-      <span className="mt-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white whitespace-nowrap">
-        {player.name}
-      </span>
     </div>
   );
 }
