@@ -29,6 +29,7 @@ import AvatarPicker from "./AvatarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
 import RemoteAudio from "./RemoteAudio";
+import LogoutButton from "./auth/LogoutButton";
 
 const ROOM_NAME = "avatar-room-main";
 const COLORS = [
@@ -1425,6 +1426,10 @@ export default function AvatarSpace({ initialName }: Props) {
               >
                 保存する
               </button>
+            </div>
+
+            <div className="mt-4 border-t border-slate-200 pt-4">
+              <LogoutButton className="w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100" />
             </div>
           </div>
         </div>
