@@ -12,8 +12,8 @@ export type PlayerState = {
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
 };
 
-export const MAP_WIDTH = 2500;
-export const MAP_HEIGHT = 2500;
+export const MAP_WIDTH = 1900;
+export const MAP_HEIGHT = 1900;
 export const AVATAR_RADIUS = 18;
 export const MOVE_SPEED = 220; // px / sec
 export const CHAT_BUBBLE_DURATION_MS = 60000; // 1分間表示。新しいメッセージが来ると上書きされる
