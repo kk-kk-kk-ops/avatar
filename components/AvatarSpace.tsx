@@ -1135,10 +1135,27 @@ export default function AvatarSpace({ initialName }: Props) {
 
         return changed ? next : prev;
       });
+
+      // 壊れた・古くなったWebRTC接続を検知して閉じる。
+      // 「片方の画面では繋がったままになっているのに、もう片方はすでに
+      // 接続を作り直している」というズレが起きると、再接続してもプレビューが
+      // 出ないことがあるため、定期的に接続状態を確認し、正常でないものは
+      // 一度閉じて次の機会に作り直せるようにする。
+      peerConnections.current.forEach((pc, peerId) => {
+        const isEligibleNow = presentIds.has(peerId);
+        const unhealthy =
+          pc.connectionState === "failed" ||
+          pc.connectionState === "closed" ||
+          (pc.connectionState === "disconnected" && !isEligibleNow);
+        if (unhealthy) {
+          closePeerConnection(peerId);
+        }
+      });
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [joined]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined, closePeerConnection]);
 
   // ---- タブがバックグラウンドから復帰した際、即座に再同期する ----
   // スマホでアプリを切り替えたりロック画面から戻った際、requestAnimationFrameが
