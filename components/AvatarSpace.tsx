@@ -694,9 +694,10 @@ export default function AvatarSpace() {
               width: MAP_WIDTH,
               height: MAP_HEIGHT,
               transform: `translate(${-cameraX}px, ${-cameraY}px)`,
-              backgroundImage:
-                "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
-              backgroundSize: "40px 40px",
+              backgroundImage: "url('/map-background.png')",
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              backgroundRepeat: "no-repeat",
               backgroundColor: "#334155",
             }}
           >
