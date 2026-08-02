@@ -1076,7 +1076,7 @@ export default function AvatarSpace({ initialName }: Props) {
         const dist = Math.hypot(p.x - self.x, p.y - self.y);
         const alreadyConnected = peerConnections.current.has(p.id);
         const threshold = alreadyConnected
-          ? PROXIMITY_RADIUS + 250
+          ? PROXIMITY_RADIUS + 20
           : PROXIMITY_RADIUS;
         return dist <= threshold;
       })
