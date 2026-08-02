@@ -11,6 +11,7 @@ import {
   MOVE_SPEED,
   findMeetingZoneId,
   circleIntersectsRect,
+  resolveSpawnPosition,
   clampPosition,
   clampSize,
   randomItemId,
@@ -99,19 +100,25 @@ export default function AvatarSpace() {
   // ---- 入室処理 ----
   const handleJoin = useCallback(() => {
     const name = nameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
+    // マップ中央が障害物と重なっていたら、その障害物の上端のすぐ上へ押し出す
+    const spawn = resolveSpawnPosition(
+      MAP_WIDTH / 2,
+      MAP_HEIGHT / 2,
+      obstacles,
+    );
     const initial: PlayerState = {
       id: selfId.current,
       name,
       color: randomColor(),
-      x: MAP_WIDTH / 2,
-      y: MAP_HEIGHT / 2,
+      x: spawn.x,
+      y: spawn.y,
       dir: "down",
       moving: false,
     };
     selfState.current = initial;
     setPlayers((prev) => ({ ...prev, [initial.id]: initial }));
     setJoined(true);
-  }, [nameInput]);
+  }, [nameInput, obstacles]);
 
   // ---- マップレイアウト:refをstateと同期(移動ループなど、effect外から常に最新値を読むため) ----
   useEffect(() => {
@@ -144,6 +151,25 @@ export default function AvatarSpace() {
           }),
         );
         setObstacles(loaded);
+
+        // 保存済みの障害物と自分の初期位置が重なっていたら、上端のすぐ上へ押し出す
+        if (selfState.current) {
+          const resolved = resolveSpawnPosition(
+            selfState.current.x,
+            selfState.current.y,
+            loaded,
+          );
+          if (
+            resolved.x !== selfState.current.x ||
+            resolved.y !== selfState.current.y
+          ) {
+            selfState.current.x = resolved.x;
+            selfState.current.y = resolved.y;
+            const updated = selfState.current;
+            setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
+            channelRef.current?.track(updated);
+          }
+        }
       }
 
       // 過去バージョンは単一オブジェクトで保存していたため、配列に正規化する

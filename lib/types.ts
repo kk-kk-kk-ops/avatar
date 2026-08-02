@@ -92,6 +92,20 @@ export function circleIntersectsRect(
   return dx * dx + dy * dy < radius * radius;
 }
 
+// 指定した位置(x, y)が障害物と重なっていた場合、その障害物の上端のすぐ上へ押し出した位置を返す。
+// 重なっていなければそのままの位置を返す。
+export function resolveSpawnPosition(
+  x: number,
+  y: number,
+  obstaclesList: Rect[],
+  radius: number = AVATAR_RADIUS,
+): { x: number; y: number } {
+  const hit = obstaclesList.find((o) => circleIntersectsRect(x, y, radius, o));
+  if (!hit) return { x, y };
+  const adjustedY = Math.max(hit.y - radius, radius);
+  return { x, y: adjustedY };
+}
+
 // 移動(位置変更)時、幅・高さは変えずにマップの外へ出ないようx,yを制限する
 export function clampPosition(
   x: number,
