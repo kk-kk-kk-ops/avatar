@@ -1066,10 +1066,7 @@ export default function AvatarSpace() {
               </div>
             ))}
 
-            {/* 休憩エリア(固定・編集非対応) */}
-            <div className="absolute right-[120px] bottom-[100px] h-[180px] w-[260px] rounded-xl bg-slate-600/60 border border-slate-500 flex items-start p-2">
-              <span className="text-[11px] text-slate-300">休憩エリア</span>
-            </div>
+            {/* 休憩エリアは削除しました */}
 
             {/* 障害物(机・観葉植物・棚など)。編集モード中はドラッグで移動・リサイズ・削除できる。
                 非編集時は見た目に出さず、当たり判定だけの透明な壁として機能する */}
