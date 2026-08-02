@@ -29,6 +29,8 @@ import AvatarPicker from "./AvatarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
 import RemoteAudio from "./RemoteAudio";
+import RemoteVideo from "./RemoteVideo";
+import ScreenShareButton from "./ScreenShareButton";
 import LogoutButton from "./auth/LogoutButton";
 
 const ROOM_NAME = "avatar-room-main";
@@ -82,6 +84,15 @@ export default function AvatarSpace({ initialName }: Props) {
   const [remoteStreams, setRemoteStreams] = useState<
     Record<string, MediaStream>
   >({});
+  const [screenSharing, setScreenSharing] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [remoteScreenStreams, setRemoteScreenStreams] = useState<
+    Record<string, MediaStream>
+  >({});
+  const [expandedScreenPeerId, setExpandedScreenPeerId] = useState<
+    string | null
+  >(null);
   const [editMode, setEditMode] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [obstacles, setObstacles] = useState<Obstacle[]>(DEFAULT_OBSTACLES);
@@ -94,6 +105,7 @@ export default function AvatarSpace({ initialName }: Props) {
   const dragStateRef = useRef<DragState | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
   const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(
     new Map(),
@@ -445,6 +457,13 @@ export default function AvatarSpace({ initialName }: Props) {
         pc.addTransceiver("audio", { direction: "recvonly" });
       }
 
+      // すでに画面共有中の場合は、新しく繋がる相手にもその映像を含める
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((track) => {
+          pc.addTrack(track, screenStreamRef.current as MediaStream);
+        });
+      }
+
       pc.onicecandidate = (e) => {
         if (e.candidate) {
           channelRef.current?.send({
@@ -460,7 +479,22 @@ export default function AvatarSpace({ initialName }: Props) {
       };
 
       pc.ontrack = (e) => {
-        setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
+        if (e.track.kind === "video") {
+          setRemoteScreenStreams((prev) => ({
+            ...prev,
+            [peerId]: e.streams[0],
+          }));
+          e.track.onended = () => {
+            setRemoteScreenStreams((prev) => {
+              if (!(peerId in prev)) return prev;
+              const next = { ...prev };
+              delete next[peerId];
+              return next;
+            });
+          };
+        } else {
+          setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
+        }
       };
 
       // 一時的な回線の乱れで切れた場合、自動で再接続を試みる
@@ -506,6 +540,12 @@ export default function AvatarSpace({ initialName }: Props) {
       delete next[peerId];
       return next;
     });
+    setRemoteScreenStreams((prev) => {
+      if (!(peerId in prev)) return prev;
+      const next = { ...prev };
+      delete next[peerId];
+      return next;
+    });
   }, []);
 
   // マイクを後から許可した場合に、既に接続済みの相手へ音声トラックを追加して再送信を開始する
@@ -527,6 +567,92 @@ export default function AvatarSpace({ initialName }: Props) {
       });
     }
   }, []);
+
+  // ---- 画面共有 ----
+  // 開始:すでに接続中の相手へ映像トラックを追加して再送信を開始する
+  const attachScreenToExistingConnections = useCallback(async () => {
+    if (!screenStreamRef.current) return;
+    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
+      const senders = pc.getSenders();
+      screenStreamRef.current.getTracks().forEach((track) => {
+        const alreadyAttached = senders.some((s) => s.track === track);
+        if (!alreadyAttached)
+          pc.addTrack(track, screenStreamRef.current as MediaStream);
+      });
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: { from: selfId.current, to: peerId, sdp: offer },
+      });
+    }
+  }, []);
+
+  const stopScreenShare = useCallback(async () => {
+    const stream = screenStreamRef.current;
+    if (!stream) return;
+    stream.getTracks().forEach((track) => track.stop());
+    screenStreamRef.current = null;
+    setScreenSharing(false);
+
+    if (selfState.current) {
+      selfState.current.sharingScreen = false;
+      channelRef.current?.track(selfState.current);
+    }
+
+    // 各接続から映像トラックを外し、再ネゴシエーションして相手側の映像も消す
+    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
+      const videoSenders = pc
+        .getSenders()
+        .filter((s) => s.track?.kind === "video");
+      videoSenders.forEach((s) => pc.removeTrack(s));
+      if (videoSenders.length === 0) continue;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: { from: selfId.current, to: peerId, sdp: offer },
+      });
+    }
+  }, []);
+
+  const startScreenShare = useCallback(async () => {
+    setShareError(null);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+      screenStreamRef.current = stream;
+      setScreenSharing(true);
+      setShareModalOpen(false);
+
+      if (selfState.current) {
+        selfState.current.sharingScreen = true;
+        channelRef.current?.track(selfState.current);
+      }
+
+      // ブラウザ標準の「共有を停止」ボタンが押された場合にも終了処理を行う
+      stream.getVideoTracks()[0].addEventListener("ended", () => {
+        stopScreenShare();
+      });
+
+      await attachScreenToExistingConnections();
+    } catch {
+      // 選択画面でキャンセルした場合などはここに来る。エラー扱いにはしない。
+      setShareModalOpen(false);
+    }
+  }, [attachScreenToExistingConnections, stopScreenShare]);
+
+  const toggleScreenShare = useCallback(() => {
+    if (screenSharing) {
+      stopScreenShare();
+    } else {
+      setShareModalOpen(true);
+    }
+  }, [screenSharing, stopScreenShare]);
 
   // ---- Supabase Realtimeチャンネルの接続 ----
   useEffect(() => {
@@ -903,6 +1029,8 @@ export default function AvatarSpace({ initialName }: Props) {
     return () => {
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
+      screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current = null;
     };
   }, [joined]);
 
@@ -966,8 +1094,16 @@ export default function AvatarSpace({ initialName }: Props) {
       peerConnections.current.clear();
       pendingCandidates.current.clear();
       setRemoteStreams({});
+      setRemoteScreenStreams({});
     };
   }, [joined]);
+
+  // 画面共有相手から離れて映像が届かなくなったら、開いていた全画面表示も自動的に閉じる
+  useEffect(() => {
+    if (expandedScreenPeerId && !remoteScreenStreams[expandedScreenPeerId]) {
+      setExpandedScreenPeerId(null);
+    }
+  }, [expandedScreenPeerId, remoteScreenStreams]);
 
   // ---- スマホ用タッチ操作(既存のkeysDownセットに仮想キーを追加/削除するだけ) ----
   const handleTouchPress = useCallback((key: string) => {
@@ -1066,6 +1202,16 @@ export default function AvatarSpace({ initialName }: Props) {
 
   const playerList = Object.values(players);
 
+  // 近く(音声通話が繋がっている相手)にいて、かつ画面共有中の人の一覧
+  const eligibleSetForScreen = new Set(eligiblePeerIds);
+  const visibleScreenShares = playerList.filter(
+    (p) =>
+      p.id !== selfId.current &&
+      p.sharingScreen &&
+      eligibleSetForScreen.has(p.id) &&
+      remoteScreenStreams[p.id],
+  );
+
   // ---- カメラ計算:自分を画面中央に固定し、端では止めてアイコン側が動くようにする ----
   // スマホ(画面幅が狭い)場合は少し縮小(ズームアウト)して周囲が見えるようにする。
   const selfPlayer = players[selfId.current];
@@ -1112,6 +1258,10 @@ export default function AvatarSpace({ initialName }: Props) {
             </span>
           )}
           <MicButton enabled={micEnabled} onClick={toggleMic} />
+          <ScreenShareButton
+            enabled={screenSharing}
+            onClick={toggleScreenShare}
+          />
           <button
             onClick={openSettings}
             className="rounded p-1.5 text-sm hover:bg-white/10"
@@ -1137,6 +1287,52 @@ export default function AvatarSpace({ initialName }: Props) {
       {micError && (
         <div className="bg-red-900/80 px-4 py-2 text-center text-xs text-red-100">
           {micError}
+        </div>
+      )}
+      {shareError && (
+        <div className="bg-red-900/80 px-4 py-2 text-center text-xs text-red-100">
+          {shareError}
+        </div>
+      )}
+
+      {/* 画面共有プレビュー(自分・近くにいる相手)を画面上部に並べて表示 */}
+      {(screenSharing || visibleScreenShares.length > 0) && (
+        <div className="flex flex-wrap gap-2 bg-slate-900/80 px-3 py-2">
+          {screenSharing && screenStreamRef.current && (
+            <div className="relative">
+              <RemoteVideo
+                stream={screenStreamRef.current}
+                className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
+              />
+              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                あなたの画面
+              </span>
+              <button
+                onClick={stopScreenShare}
+                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                aria-label="画面共有を終了"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {visibleScreenShares.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setExpandedScreenPeerId(p.id)}
+              className="relative"
+              aria-label={`${p.name}の画面を全画面表示`}
+            >
+              <RemoteVideo
+                stream={remoteScreenStreams[p.id]}
+                className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
+              />
+              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                {p.name}の画面
+              </span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -1400,6 +1596,51 @@ export default function AvatarSpace({ initialName }: Props) {
       {Object.entries(remoteStreams).map(([peerId, stream]) => (
         <RemoteAudio key={peerId} stream={stream} />
       ))}
+
+      {/* 画面共有:開始前の確認モーダル */}
+      {shareModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <h2 className="mb-2 text-base font-bold text-slate-800">
+              画面を共有しますか?
+            </h2>
+            <p className="mb-6 text-sm text-slate-500">
+              共有するとブラウザの選択画面が表示されます。共有した画面は、近くにいる人だけに見えます。
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShareModalOpen(false)}
+                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={startScreenShare}
+                className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+              >
+                共有する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 画面共有:全画面表示 */}
+      {expandedScreenPeerId && remoteScreenStreams[expandedScreenPeerId] && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
+          <RemoteVideo
+            stream={remoteScreenStreams[expandedScreenPeerId]}
+            className="h-full w-full object-contain"
+          />
+          <button
+            onClick={() => setExpandedScreenPeerId(null)}
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
+            aria-label="全画面表示を閉じる"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* アバター・名前の変更モーダル */}
       {settingsOpen && (
