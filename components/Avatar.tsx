@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  PlayerState,
-  AVATAR_RADIUS,
-  CHAT_BUBBLE_DURATION_MS,
-} from "@/lib/types";
+import { PlayerState, AVATAR_RADIUS, CHAT_BUBBLE_DURATION_MS } from "@/lib/types";
 
 type Props = {
   player: PlayerState;
@@ -13,9 +9,7 @@ type Props = {
 
 export default function Avatar({ player, isSelf }: Props) {
   const showBubble =
-    player.message &&
-    player.messageAt &&
-    Date.now() - player.messageAt < CHAT_BUBBLE_DURATION_MS;
+    player.message && player.messageAt && Date.now() - player.messageAt < CHAT_BUBBLE_DURATION_MS;
 
   return (
     <div
@@ -35,7 +29,7 @@ export default function Avatar({ player, isSelf }: Props) {
       )}
 
       <div
-        className={`flex items-center justify-center rounded-full text-white text-xs font-bold shadow-md ${
+        className={`relative flex items-center justify-center rounded-full text-white text-xs font-bold shadow-md ${
           isSelf ? "ring-2 ring-offset-2 ring-black" : ""
         }`}
         style={{
@@ -45,6 +39,11 @@ export default function Avatar({ player, isSelf }: Props) {
         }}
       >
         {player.name.slice(0, 1).toUpperCase()}
+        {player.inMeetingArea && (
+          <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] shadow">
+            🎤
+          </span>
+        )}
       </div>
 
       <span className="mt-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white whitespace-nowrap">

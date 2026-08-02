@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import {
@@ -9,10 +9,12 @@ import {
   MAP_HEIGHT,
   AVATAR_RADIUS,
   MOVE_SPEED,
+  isInMeetingArea,
 } from "@/lib/types";
 import Avatar from "./Avatar";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
+import RemoteAudio from "./RemoteAudio";
 
 const ROOM_NAME = "avatar-room-main";
 const COLORS = [
@@ -42,8 +44,16 @@ export default function AvatarSpace() {
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<
+    Record<string, MediaStream>
+  >({});
 
   const localStreamRef = useRef<MediaStream | null>(null);
+  const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const pendingCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(
+    new Map(),
+  );
+  const lastTrackedInArea = useRef(false);
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -69,6 +79,111 @@ export default function AvatarSpace() {
     setPlayers((prev) => ({ ...prev, [initial.id]: initial }));
     setJoined(true);
   }, [nameInput]);
+
+  // ---- WebRTC:音声接続のヘルパー関数群 ----
+  const flushPendingCandidates = useCallback(
+    async (peerId: string, pc: RTCPeerConnection) => {
+      const list = pendingCandidates.current.get(peerId);
+      if (!list || list.length === 0) return;
+      for (const candidate of list) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch {
+          // 無効な候補はスキップ
+        }
+      }
+      pendingCandidates.current.delete(peerId);
+    },
+    [],
+  );
+
+  const getOrCreatePeerConnection = useCallback((peerId: string) => {
+    const existing = peerConnections.current.get(peerId);
+    if (existing) return existing;
+
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    });
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        pc.addTrack(track, localStreamRef.current as MediaStream);
+      });
+    } else {
+      // まだマイクを許可していない場合でも、相手の声だけは聞けるようにしておく
+      pc.addTransceiver("audio", { direction: "recvonly" });
+    }
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        channelRef.current?.send({
+          type: "broadcast",
+          event: "webrtc-ice",
+          payload: {
+            from: selfId.current,
+            to: peerId,
+            candidate: e.candidate.toJSON(),
+          },
+        });
+      }
+    };
+
+    pc.ontrack = (e) => {
+      setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
+    };
+
+    peerConnections.current.set(peerId, pc);
+    return pc;
+  }, []);
+
+  const startCall = useCallback(
+    async (peerId: string) => {
+      const pc = getOrCreatePeerConnection(peerId);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: { from: selfId.current, to: peerId, sdp: offer },
+      });
+    },
+    [getOrCreatePeerConnection],
+  );
+
+  const closePeerConnection = useCallback((peerId: string) => {
+    const pc = peerConnections.current.get(peerId);
+    if (pc) {
+      pc.close();
+      peerConnections.current.delete(peerId);
+    }
+    pendingCandidates.current.delete(peerId);
+    setRemoteStreams((prev) => {
+      if (!(peerId in prev)) return prev;
+      const next = { ...prev };
+      delete next[peerId];
+      return next;
+    });
+  }, []);
+
+  // マイクを後から許可した場合に、既に接続済みの相手へ音声トラックを追加して再送信を開始する
+  const attachMicToExistingConnections = useCallback(async () => {
+    if (!localStreamRef.current) return;
+    for (const [peerId, pc] of peerConnections.current.entries()) {
+      const senders = pc.getSenders();
+      localStreamRef.current.getTracks().forEach((track) => {
+        const alreadyAttached = senders.some((s) => s.track === track);
+        if (!alreadyAttached)
+          pc.addTrack(track, localStreamRef.current as MediaStream);
+      });
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: { from: selfId.current, to: peerId, sdp: offer },
+      });
+    }
+  }, []);
 
   // ---- Supabase Realtimeチャンネルの接続 ----
   useEffect(() => {
@@ -113,6 +228,56 @@ export default function AvatarSpace() {
           };
         });
       })
+      .on("broadcast", { event: "webrtc-offer" }, async ({ payload }) => {
+        const { from, to, sdp } = payload as {
+          from: string;
+          to: string;
+          sdp: RTCSessionDescriptionInit;
+        };
+        if (to !== selfId.current) return;
+        const pc = getOrCreatePeerConnection(from);
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        await flushPendingCandidates(from, pc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        channelRef.current?.send({
+          type: "broadcast",
+          event: "webrtc-answer",
+          payload: { from: selfId.current, to: from, sdp: answer },
+        });
+      })
+      .on("broadcast", { event: "webrtc-answer" }, async ({ payload }) => {
+        const { from, to, sdp } = payload as {
+          from: string;
+          to: string;
+          sdp: RTCSessionDescriptionInit;
+        };
+        if (to !== selfId.current) return;
+        const pc = peerConnections.current.get(from);
+        if (!pc) return;
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        await flushPendingCandidates(from, pc);
+      })
+      .on("broadcast", { event: "webrtc-ice" }, async ({ payload }) => {
+        const { from, to, candidate } = payload as {
+          from: string;
+          to: string;
+          candidate: RTCIceCandidateInit;
+        };
+        if (to !== selfId.current) return;
+        const pc = peerConnections.current.get(from);
+        if (pc && pc.remoteDescription) {
+          try {
+            await pc.addIceCandidate(candidate);
+          } catch {
+            // 追加に失敗した候補は無視(接続確立には他の候補が使われる)
+          }
+        } else {
+          const list = pendingCandidates.current.get(from) ?? [];
+          list.push(candidate);
+          pendingCandidates.current.set(from, list);
+        }
+      })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && selfState.current) {
           await channel.track(selfState.current);
@@ -123,7 +288,7 @@ export default function AvatarSpace() {
       channel.unsubscribe();
       channelRef.current = null;
     };
-  }, [joined]);
+  }, [joined, getOrCreatePeerConnection, flushPendingCandidates]);
 
   // ---- キーボード入力 ----
   useEffect(() => {
@@ -185,6 +350,15 @@ export default function AvatarSpace() {
         }
         self.moving = moving;
 
+        // ミーティングエリアの出入り判定(音声通話の自動接続に使用)
+        const areaNow = isInMeetingArea(self.x, self.y);
+        self.inMeetingArea = areaNow;
+        if (areaNow !== lastTrackedInArea.current) {
+          lastTrackedInArea.current = areaNow;
+          // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
+          channelRef.current?.track(self);
+        }
+
         // ローカル描画を即時反映
         setPlayers((prev) => ({ ...prev, [self.id]: { ...self } }));
 
@@ -225,8 +399,8 @@ export default function AvatarSpace() {
 
   // ---- マイクのON/OFF切り替え ----
   // 初回クリック時にブラウザへマイク使用の許可をリクエストする。
-  // 実際に他の人へ音声を届ける処理(WebRTC接続)は次のステップで実装予定。
-  // 現時点ではマイクの取得とミュート/ミュート解除だけを行う。
+  // 実際の音声送受信(WebRTC接続)はミーティングエリアの出入りに応じて
+  // 別のeffectが自動的に行う。ここではマイクの取得とミュート切り替えのみ。
   const toggleMic = useCallback(async () => {
     setMicError(null);
     try {
@@ -236,6 +410,7 @@ export default function AvatarSpace() {
         });
         localStreamRef.current = stream;
         setMicEnabled(true);
+        await attachMicToExistingConnections();
         return;
       }
       const next = !micEnabled;
@@ -248,7 +423,7 @@ export default function AvatarSpace() {
         "マイクを使用できませんでした。ブラウザのアドレスバー付近のマイク許可設定を確認してください。",
       );
     }
-  }, [micEnabled]);
+  }, [micEnabled, attachMicToExistingConnections]);
 
   // 退室時にマイクを解放(録音状態のまま残らないようにする)
   useEffect(() => {
@@ -256,6 +431,53 @@ export default function AvatarSpace() {
     return () => {
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
+    };
+  }, [joined]);
+
+  // ---- 音声通話:接続すべき相手(自分も相手もミーティングエリア内)を計算 ----
+  const selfPlayerForVoice = players[selfId.current];
+  const selfInMeetingAreaNow = !!selfPlayerForVoice?.inMeetingArea;
+  const eligiblePeerIds = useMemo(() => {
+    if (!selfInMeetingAreaNow) return [] as string[];
+    return Object.values(players)
+      .filter((p) => p.id !== selfId.current && p.inMeetingArea)
+      .map((p) => p.id)
+      .sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players, selfInMeetingAreaNow]);
+  const eligibleKey = eligiblePeerIds.join(",");
+
+  // ---- 音声通話:対象の増減に合わせて接続を作成/破棄 ----
+  useEffect(() => {
+    if (!joined) return;
+    const eligibleSet = new Set(eligiblePeerIds);
+
+    eligiblePeerIds.forEach((peerId) => {
+      if (peerConnections.current.has(peerId)) return;
+      // IDの文字列比較で片方だけがofferを送るようにし、二重接続を防ぐ
+      if (selfId.current < peerId) {
+        startCall(peerId);
+      } else {
+        getOrCreatePeerConnection(peerId);
+      }
+    });
+
+    Array.from(peerConnections.current.keys()).forEach((peerId) => {
+      if (!eligibleSet.has(peerId)) {
+        closePeerConnection(peerId);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleKey, joined]);
+
+  // 退室時にすべての音声接続を閉じる
+  useEffect(() => {
+    if (!joined) return;
+    return () => {
+      peerConnections.current.forEach((pc) => pc.close());
+      peerConnections.current.clear();
+      pendingCandidates.current.clear();
+      setRemoteStreams({});
     };
   }, [joined]);
 
@@ -349,6 +571,11 @@ export default function AvatarSpace() {
           <span className="text-xs text-slate-300">
             オンライン: {playerList.length}人
           </span>
+          {selfInMeetingAreaNow && (
+            <span className="rounded-full bg-emerald-600/80 px-2 py-0.5 text-[10px] font-semibold text-white">
+              🎧 ミーティングエリア通話中
+            </span>
+          )}
           <MicButton enabled={micEnabled} onClick={toggleMic} />
           {/* スマホのみ表示するハンバーガーボタン */}
           <button
@@ -467,6 +694,11 @@ export default function AvatarSpace() {
         onPress={handleTouchPress}
         onRelease={handleTouchRelease}
       />
+
+      {/* 相手の音声を再生する非表示要素(ミーティングエリアで自動接続された分だけ生成) */}
+      {Object.entries(remoteStreams).map(([peerId, stream]) => (
+        <RemoteAudio key={peerId} stream={stream} />
+      ))}
     </div>
   );
 }
