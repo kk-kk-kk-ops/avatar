@@ -1,6 +1,10 @@
 "use client";
 
-import { PlayerState, AVATAR_RADIUS, CHAT_BUBBLE_DURATION_MS } from "@/lib/types";
+import {
+  PlayerState,
+  AVATAR_RADIUS,
+  CHAT_BUBBLE_DURATION_MS,
+} from "@/lib/types";
 
 type Props = {
   player: PlayerState;
@@ -9,7 +13,9 @@ type Props = {
 
 export default function Avatar({ player, isSelf }: Props) {
   const showBubble =
-    player.message && player.messageAt && Date.now() - player.messageAt < CHAT_BUBBLE_DURATION_MS;
+    player.message &&
+    player.messageAt &&
+    Date.now() - player.messageAt < CHAT_BUBBLE_DURATION_MS;
 
   return (
     <div

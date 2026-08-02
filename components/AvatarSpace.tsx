@@ -168,7 +168,7 @@ export default function AvatarSpace() {
   // マイクを後から許可した場合に、既に接続済みの相手へ音声トラックを追加して再送信を開始する
   const attachMicToExistingConnections = useCallback(async () => {
     if (!localStreamRef.current) return;
-    for (const [peerId, pc] of peerConnections.current.entries()) {
+    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
       const senders = pc.getSenders();
       localStreamRef.current.getTracks().forEach((track) => {
         const alreadyAttached = senders.some((s) => s.track === track);
@@ -525,7 +525,7 @@ export default function AvatarSpace() {
       <div className="flex h-screen w-screen items-center justify-center bg-slate-900">
         <div className="w-80 rounded-xl bg-white p-6 shadow-xl">
           <h1 className="mb-1 text-lg font-bold text-slate-800">
-            Grovina Officeに入室
+            アバタースペースに入室
           </h1>
           <p className="mb-4 text-sm text-slate-500">
             表示する名前を入力してください
@@ -566,7 +566,7 @@ export default function AvatarSpace() {
     <div className="flex h-screen w-screen flex-col bg-slate-800">
       {/* ヘッダー */}
       <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
-        <span className="text-sm font-semibold">Grovina Office</span>
+        <span className="text-sm font-semibold">アバタースペース</span>
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-300">
             オンライン: {playerList.length}人
