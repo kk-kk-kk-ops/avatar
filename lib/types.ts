@@ -27,12 +27,16 @@ export const MEETING_AREA = {
   height: 220,
 };
 
-export function isInMeetingArea(x: number, y: number): boolean {
+export function isInMeetingArea(
+  x: number,
+  y: number,
+  area: { x: number; y: number; width: number; height: number } = MEETING_AREA,
+): boolean {
   return (
-    x >= MEETING_AREA.x &&
-    x <= MEETING_AREA.x + MEETING_AREA.width &&
-    y >= MEETING_AREA.y &&
-    y <= MEETING_AREA.y + MEETING_AREA.height
+    x >= area.x &&
+    x <= area.x + area.width &&
+    y >= area.y &&
+    y <= area.y + area.height
   );
 }
 
