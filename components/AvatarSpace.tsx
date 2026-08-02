@@ -956,7 +956,15 @@ export default function AvatarSpace() {
     <div className="flex h-screen w-screen flex-col bg-slate-800">
       {/* ヘッダー */}
       <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
-        <span className="text-sm font-semibold">Grovina Office</span>
+        <div className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.png"
+            alt="Grovina"
+            className="h-6 w-6 object-contain"
+          />
+          <span className="text-sm font-semibold">Grovina Office</span>
+        </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-300">
             オンライン: {playerList.length}人
