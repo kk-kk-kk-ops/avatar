@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AVATAR_IMAGES,
   PlayerState,
   AVATAR_RADIUS,
   CHAT_BUBBLE_DURATION_MS,
@@ -11,12 +12,15 @@ type Props = {
   isSelf: boolean;
 };
 
+const DISPLAY_SIZE = AVATAR_RADIUS * 2.4; // 見た目上のサイズ(当たり判定はAVATAR_RADIUSのまま)
+
 export default function Avatar({ player, isSelf }: Props) {
   const showBubble =
     player.message &&
     player.messageAt &&
     Date.now() - player.messageAt < CHAT_BUBBLE_DURATION_MS;
   const showMicBadge = player.micOn !== undefined;
+  const avatarImage = player.avatarImage || AVATAR_IMAGES[0];
 
   return (
     <div
@@ -24,9 +28,9 @@ export default function Avatar({ player, isSelf }: Props) {
         isSelf ? "" : "transition-[left,top] duration-75 ease-linear"
       }`}
       style={{
-        left: player.x - AVATAR_RADIUS,
-        top: player.y - AVATAR_RADIUS - 10,
-        width: AVATAR_RADIUS * 2,
+        left: player.x - DISPLAY_SIZE / 2,
+        top: player.y - DISPLAY_SIZE / 2 - 10,
+        width: DISPLAY_SIZE,
       }}
     >
       {showBubble && (
@@ -35,29 +39,21 @@ export default function Avatar({ player, isSelf }: Props) {
         </div>
       )}
 
-      <div className="relative flex flex-col items-center">
-        {/* 頭 */}
+      <div className="relative flex items-center justify-center">
+        {/* アバター画像 */}
         <div
-          className={`z-10 flex items-center justify-center rounded-full text-white text-xs font-bold shadow-md ${
+          className={`overflow-hidden rounded-full bg-white shadow-md ${
             isSelf ? "ring-2 ring-offset-2 ring-black" : ""
           }`}
-          style={{
-            width: AVATAR_RADIUS * 2,
-            height: AVATAR_RADIUS * 2,
-            backgroundColor: player.color,
-          }}
+          style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}
         >
-          {player.name.slice(0, 1).toUpperCase()}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={avatarImage}
+            alt={player.name}
+            className="h-full w-full object-cover"
+          />
         </div>
-        {/* 体(頭の少し後ろに重ねて簡易キャラクター風に) */}
-        <div
-          className="-mt-1 rounded-t-full opacity-90"
-          style={{
-            width: AVATAR_RADIUS * 1.6,
-            height: AVATAR_RADIUS * 0.9,
-            backgroundColor: player.color,
-          }}
-        />
 
         {/* ミーティングエリア在室バッジ */}
         {player.meetingZoneId && (

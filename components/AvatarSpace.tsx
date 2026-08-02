@@ -21,8 +21,10 @@ import {
   MeetingZone,
   DEFAULT_OBSTACLES,
   DEFAULT_MEETING_ZONES,
+  AVATAR_IMAGES,
 } from "@/lib/types";
 import Avatar from "./Avatar";
+import AvatarPicker from "./AvatarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
 import RemoteAudio from "./RemoteAudio";
@@ -65,6 +67,10 @@ type Props = {
 export default function AvatarSpace({ initialName }: Props) {
   const [joined, setJoined] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
+  const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsNameInput, setSettingsNameInput] = useState("");
+  const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
   const [chatInput, setChatInput] = useState("");
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
@@ -114,6 +120,7 @@ export default function AvatarSpace({ initialName }: Props) {
       id: selfId.current,
       name,
       color: randomColor(),
+      avatarImage: selectedAvatar,
       x: spawn.x,
       y: spawn.y,
       dir: "down",
@@ -121,8 +128,10 @@ export default function AvatarSpace({ initialName }: Props) {
     };
     selfState.current = initial;
     setPlayers((prev) => ({ ...prev, [initial.id]: initial }));
+    setSettingsNameInput(name);
+    setSettingsAvatar(selectedAvatar);
     setJoined(true);
-  }, [nameInput, obstacles]);
+  }, [nameInput, selectedAvatar, obstacles]);
 
   // ---- マップレイアウト:refをstateと同期(移動ループなど、effect外から常に最新値を読むため) ----
   useEffect(() => {
@@ -913,17 +922,44 @@ export default function AvatarSpace({ initialName }: Props) {
     // messageAt を上書きするので、自動的に「新しいメッセージで上書き」される。
   }, [chatInput]);
 
-  // ---- 入室前:名前入力モーダル ----
+  // ---- 入室後の設定変更(名前・アバター画像) ----
+  const openSettings = useCallback(() => {
+    setSettingsNameInput(selfState.current?.name ?? "");
+    setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
+    setSettingsOpen(true);
+  }, []);
+
+  const saveSettings = useCallback(() => {
+    if (!selfState.current) return;
+    const name =
+      settingsNameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
+    selfState.current.name = name;
+    selfState.current.avatarImage = settingsAvatar;
+    const updated = selfState.current;
+    setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
+    channelRef.current?.track(updated);
+    setSettingsOpen(false);
+  }, [settingsNameInput, settingsAvatar]);
+
+  // ---- 入室前:名前入力・アバター選択モーダル ----
   if (!joined) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-slate-900">
-        <div className="w-80 rounded-xl bg-white p-6 shadow-xl">
+      <div className="flex h-screen w-screen items-center justify-center bg-slate-900 px-4">
+        <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
           <h1 className="mb-1 text-lg font-bold text-slate-800">
             Grovina Officeに入室
           </h1>
           <p className="mb-4 text-sm text-slate-500">
-            表示する名前を入力してください
+            アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)
           </p>
+
+          <div className="mb-4">
+            <AvatarPicker
+              selected={selectedAvatar}
+              onSelect={setSelectedAvatar}
+            />
+          </div>
+
           <input
             autoFocus
             value={nameInput}
@@ -981,6 +1017,14 @@ export default function AvatarSpace({ initialName }: Props) {
             </span>
           )}
           <MicButton enabled={micEnabled} onClick={toggleMic} />
+          <button
+            onClick={openSettings}
+            className="rounded p-1.5 text-sm hover:bg-white/10"
+            aria-label="アバター・名前の設定"
+            title="アバター・名前を変更"
+          >
+            ⚙️
+          </button>
           {/* スマホのみ表示するハンバーガーボタン */}
           <button
             onClick={() => setShowParticipants((v) => !v)}
@@ -1260,6 +1304,47 @@ export default function AvatarSpace({ initialName }: Props) {
       {Object.entries(remoteStreams).map(([peerId, stream]) => (
         <RemoteAudio key={peerId} stream={stream} />
       ))}
+
+      {/* アバター・名前の変更モーダル */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h2 className="mb-4 text-base font-bold text-slate-800">
+              アバター・名前の変更
+            </h2>
+
+            <div className="mb-4">
+              <AvatarPicker
+                selected={settingsAvatar}
+                onSelect={setSettingsAvatar}
+              />
+            </div>
+
+            <input
+              value={settingsNameInput}
+              onChange={(e) => setSettingsNameInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && saveSettings()}
+              placeholder="例:みく"
+              className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+            />
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={saveSettings}
+                className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+              >
+                保存する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

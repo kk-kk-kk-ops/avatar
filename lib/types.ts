@@ -10,7 +10,18 @@ export type PlayerState = {
   messageAt?: number; // 発言タイムスタンプ
   meetingZoneId?: string | null; // 現在いるミーティングエリアのID(いなければnull)
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
+  avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)
 };
+
+// public/avatar 内の選択可能なアバター画像一覧
+export const AVATAR_IMAGES = [
+  "/avatar/goo.png",
+  "/avatar/kids1.png",
+  "/avatar/kids2.png",
+  "/avatar/men.png",
+  "/avatar/rabi.png",
+  "/avatar/woman.png",
+];
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
