@@ -986,14 +986,24 @@ export default function AvatarSpace({ initialName }: Props) {
   const playerList = Object.values(players);
 
   // ---- カメラ計算:自分を画面中央に固定し、端では止めてアイコン側が動くようにする ----
+  // スマホ(画面幅が狭い)場合は少し縮小(ズームアウト)して周囲が見えるようにする。
   const selfPlayer = players[selfId.current];
-  const maxCameraX = Math.max(MAP_WIDTH - viewport.width, 0);
-  const maxCameraY = Math.max(MAP_HEIGHT - viewport.height, 0);
+  const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
+  const effectiveViewportWidth = viewport.width / mapScale;
+  const effectiveViewportHeight = viewport.height / mapScale;
+  const maxCameraX = Math.max(MAP_WIDTH - effectiveViewportWidth, 0);
+  const maxCameraY = Math.max(MAP_HEIGHT - effectiveViewportHeight, 0);
   const cameraX = selfPlayer
-    ? Math.min(Math.max(selfPlayer.x - viewport.width / 2, 0), maxCameraX)
+    ? Math.min(
+        Math.max(selfPlayer.x - effectiveViewportWidth / 2, 0),
+        maxCameraX,
+      )
     : 0;
   const cameraY = selfPlayer
-    ? Math.min(Math.max(selfPlayer.y - viewport.height / 2, 0), maxCameraY)
+    ? Math.min(
+        Math.max(selfPlayer.y - effectiveViewportHeight / 2, 0),
+        maxCameraY,
+      )
     : 0;
 
   return (
@@ -1060,7 +1070,8 @@ export default function AvatarSpace({ initialName }: Props) {
             style={{
               width: MAP_WIDTH,
               height: MAP_HEIGHT,
-              transform: `translate(${-cameraX}px, ${-cameraY}px)`,
+              transformOrigin: "0 0",
+              transform: `scale(${mapScale}) translate(${-cameraX}px, ${-cameraY}px)`,
               backgroundImage: "url('/map-background.png')",
               backgroundSize: "cover",
               backgroundPosition: "center",

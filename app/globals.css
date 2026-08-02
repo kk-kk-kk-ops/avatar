@@ -8,3 +8,26 @@ body {
   margin: 0;
   overscroll-behavior: none;
 }
+
+/* スマホで長押しした際にテキスト選択・コピーメニューが出ないようにする。
+   ただし入力欄(名前・チャット)では通常通り選択・編集できるよう除外する。 */
+html,
+body,
+* {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
