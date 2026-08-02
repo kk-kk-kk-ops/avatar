@@ -459,6 +459,50 @@ export default function AvatarSpace({ initialName }: Props) {
     return map;
   }, []);
 
+  // 接続がすでにできている相手に対して、自分が今送っているはずの映像
+  // (画面共有・カメラ)がまだ正しく乗っていなければ、追加して再送信する。
+  // 接続する順番によっては、最初のofferの時点でまだ映像が反映されない
+  // ケースがあるため、offer/answerのやり取りが一段落するたびに毎回確認する。
+  const ensureLocalVideoAttached = useCallback(
+    async (peerId: string) => {
+      const pc = peerConnections.current.get(peerId);
+      if (!pc) return;
+      const senderTrackIds = new Set(
+        pc
+          .getSenders()
+          .map((s) => s.track?.id)
+          .filter((id): id is string => !!id),
+      );
+      const myStreams = [
+        screenStreamRef.current,
+        cameraStreamRef.current,
+      ].filter((s): s is MediaStream => !!s);
+      let needsRenegotiation = false;
+      myStreams.forEach((stream) => {
+        stream.getTracks().forEach((track) => {
+          if (!senderTrackIds.has(track.id)) {
+            pc.addTrack(track, stream);
+            needsRenegotiation = true;
+          }
+        });
+      });
+      if (!needsRenegotiation) return;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: {
+          from: selfId.current,
+          to: peerId,
+          sdp: offer,
+          videoTrackPurposes: buildVideoTrackPurposes(),
+        },
+      });
+    },
+    [buildVideoTrackPurposes],
+  );
+
   // 一時的な回線の乱れで切れた場合、自動で再接続を試みる
   // 接続が不安定になった際、自分がofferを送る側(IDが小さい方)だけが
   // iceRestartオプション付きで再接続を試みる(双方が同時に送ると衝突するため)
@@ -930,20 +974,33 @@ export default function AvatarSpace({ initialName }: Props) {
         channelRef.current?.send({
           type: "broadcast",
           event: "webrtc-answer",
-          payload: { from: selfId.current, to: from, sdp: answer },
+          payload: {
+            from: selfId.current,
+            to: from,
+            sdp: answer,
+            videoTrackPurposes: buildVideoTrackPurposes(),
+          },
         });
+        // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
+        await ensureLocalVideoAttached(from);
       })
       .on("broadcast", { event: "webrtc-answer" }, async ({ payload }) => {
-        const { from, to, sdp } = payload as {
+        const { from, to, sdp, videoTrackPurposes } = payload as {
           from: string;
           to: string;
           sdp: RTCSessionDescriptionInit;
+          videoTrackPurposes?: Record<string, "screen" | "camera">;
         };
         if (to !== selfId.current) return;
+        // ontrackが発火する前に、映像の種類を判定できるようにしておく
+        if (videoTrackPurposes)
+          peerVideoPurposes.current.set(from, videoTrackPurposes);
         const pc = peerConnections.current.get(from);
         if (!pc) return;
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
         await flushPendingCandidates(from, pc);
+        // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
+        await ensureLocalVideoAttached(from);
       })
       .on("broadcast", { event: "webrtc-ice" }, async ({ payload }) => {
         const { from, to, candidate } = payload as {
@@ -979,7 +1036,12 @@ export default function AvatarSpace({ initialName }: Props) {
       channel.unsubscribe();
       channelRef.current = null;
     };
-  }, [joined, getOrCreatePeerConnection, flushPendingCandidates]);
+  }, [
+    joined,
+    getOrCreatePeerConnection,
+    flushPendingCandidates,
+    ensureLocalVideoAttached,
+  ]);
 
   // ---- 在室状況の自己修復 ----
   // 何らかの理由でpresenceのsync/leaveイベントを取りこぼした場合に備え、
@@ -1899,7 +1961,7 @@ export default function AvatarSpace({ initialName }: Props) {
           );
         })()}
 
-      {/* アバター・名前の変更モーダルa */}
+      {/* アバター・名前の変更モーダル */}
       {settingsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
