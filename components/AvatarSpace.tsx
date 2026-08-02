@@ -1149,13 +1149,18 @@ export default function AvatarSpace({ initialName }: Props) {
           (pc.connectionState === "disconnected" && !isEligibleNow);
         if (unhealthy) {
           closePeerConnection(peerId);
+          return;
         }
+        // 接続自体は生きていても、画面共有・ビデオ通話の映像トラックが
+        // 何らかの理由でうまく乗っていないことがある。手動でON/OFFし
+        // 直さなくても直るよう、定期的に確認して足りなければ補う。
+        ensureLocalVideoAttached(peerId);
       });
     }, 2500);
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [joined, closePeerConnection]);
+  }, [joined, closePeerConnection, ensureLocalVideoAttached]);
 
   // ---- タブがバックグラウンドから復帰した際、即座に再同期する ----
   // スマホでアプリを切り替えたりロック画面から戻った際、requestAnimationFrameが
