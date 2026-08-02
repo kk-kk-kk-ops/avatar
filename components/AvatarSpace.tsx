@@ -85,7 +85,6 @@ export default function AvatarSpace({ initialName }: Props) {
     Record<string, MediaStream>
   >({});
   const [screenSharing, setScreenSharing] = useState(false);
-  const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [remoteScreenStreams, setRemoteScreenStreams] = useState<
     Record<string, MediaStream>
@@ -623,6 +622,20 @@ export default function AvatarSpace({ initialName }: Props) {
 
   const startScreenShare = useCallback(async () => {
     setShareError(null);
+
+    // スマホ(特にiPhoneのSafari)は画面共有API自体に対応していないため、
+    // 呼び出す前に判定して分かりやすいメッセージを出す
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices ||
+      typeof navigator.mediaDevices.getDisplayMedia !== "function"
+    ) {
+      setShareError(
+        "この端末・ブラウザは画面共有に対応していません。PCのブラウザからお試しください。",
+      );
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
@@ -630,7 +643,6 @@ export default function AvatarSpace({ initialName }: Props) {
       });
       screenStreamRef.current = stream;
       setScreenSharing(true);
-      setShareModalOpen(false);
 
       if (selfState.current) {
         selfState.current.sharingScreen = true;
@@ -645,7 +657,6 @@ export default function AvatarSpace({ initialName }: Props) {
       await attachScreenToExistingConnections();
     } catch {
       // 選択画面でキャンセルした場合などはここに来る。エラー扱いにはしない。
-      setShareModalOpen(false);
     }
   }, [attachScreenToExistingConnections, stopScreenShare]);
 
@@ -653,9 +664,9 @@ export default function AvatarSpace({ initialName }: Props) {
     if (screenSharing) {
       stopScreenShare();
     } else {
-      setShareModalOpen(true);
+      startScreenShare();
     }
-  }, [screenSharing, stopScreenShare]);
+  }, [screenSharing, stopScreenShare, startScreenShare]);
 
   // ---- Supabase Realtimeチャンネルの接続 ----
   useEffect(() => {
@@ -1046,8 +1057,10 @@ export default function AvatarSpace({ initialName }: Props) {
 
   // ---- 音声通話:接続すべき相手を計算 ----
   // 条件は「同じミーティングエリアに二人ともいる」か「一定距離より近い(近接ボイスチャット)」。
-  // 距離判定には少し余裕(ヒステリシス)を持たせ、境界線上での接続/切断の
-  // チラつきを防いでいる(接続済みの相手は少し離れても切れにくくする)。
+  // 距離判定には余裕(ヒステリシス)を持たせ、境界線上での接続/切断のチラつきを
+  // 防いでいる。特に「接続済みの相手」は、少し動いただけで音声通話や画面共有が
+  // 切れてしまわないよう、切断までの距離を大きく広げている(実際にその場を
+  // 離れるまでは繋がったままにする)。
   const eligiblePeerIds = useMemo(() => {
     const self = players[selfId.current];
     if (!self) return [] as string[];
@@ -1063,7 +1076,7 @@ export default function AvatarSpace({ initialName }: Props) {
         const dist = Math.hypot(p.x - self.x, p.y - self.y);
         const alreadyConnected = peerConnections.current.has(p.id);
         const threshold = alreadyConnected
-          ? PROXIMITY_RADIUS + 20
+          ? PROXIMITY_RADIUS + 250
           : PROXIMITY_RADIUS;
         return dist <= threshold;
       })
@@ -1606,34 +1619,6 @@ export default function AvatarSpace({ initialName }: Props) {
       {Object.entries(remoteStreams).map(([peerId, stream]) => (
         <RemoteAudio key={peerId} stream={stream} />
       ))}
-
-      {/* 画面共有:開始前の確認モーダル */}
-      {shareModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
-            <h2 className="mb-2 text-base font-bold text-slate-800">
-              画面を共有しますか?
-            </h2>
-            <p className="mb-6 text-sm text-slate-500">
-              共有するとブラウザの選択画面が表示されます。共有した画面は、近くにいる人だけに見えます。
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShareModalOpen(false)}
-                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={startScreenShare}
-                className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-              >
-                共有する
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 画面共有:全画面表示 */}
       {expandedScreenPeerId && remoteScreenStreams[expandedScreenPeerId] && (
