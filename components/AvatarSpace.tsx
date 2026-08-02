@@ -97,44 +97,79 @@ export default function AvatarSpace() {
     [],
   );
 
-  const getOrCreatePeerConnection = useCallback((peerId: string) => {
-    const existing = peerConnections.current.get(peerId);
-    if (existing) return existing;
-
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    });
-
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current as MediaStream);
+  // 接続が不安定になった際、自分がofferを送る側(IDが小さい方)だけが
+  // iceRestartオプション付きで再接続を試みる(双方が同時に送ると衝突するため)
+  const restartIce = useCallback(async (peerId: string) => {
+    const pc = peerConnections.current.get(peerId);
+    if (!pc || selfId.current >= peerId) return;
+    try {
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "webrtc-offer",
+        payload: { from: selfId.current, to: peerId, sdp: offer },
       });
-    } else {
-      // まだマイクを許可していない場合でも、相手の声だけは聞けるようにしておく
-      pc.addTransceiver("audio", { direction: "recvonly" });
+    } catch {
+      // 失敗した場合は次回の切断検知時に再度試みる
     }
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        channelRef.current?.send({
-          type: "broadcast",
-          event: "webrtc-ice",
-          payload: {
-            from: selfId.current,
-            to: peerId,
-            candidate: e.candidate.toJSON(),
-          },
-        });
-      }
-    };
-
-    pc.ontrack = (e) => {
-      setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
-    };
-
-    peerConnections.current.set(peerId, pc);
-    return pc;
   }, []);
+
+  const getOrCreatePeerConnection = useCallback(
+    (peerId: string) => {
+      const existing = peerConnections.current.get(peerId);
+      if (existing) return existing;
+
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" },
+        ],
+      });
+
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => {
+          pc.addTrack(track, localStreamRef.current as MediaStream);
+        });
+      } else {
+        // まだマイクを許可していない場合でも、相手の声だけは聞けるようにしておく
+        pc.addTransceiver("audio", { direction: "recvonly" });
+      }
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          channelRef.current?.send({
+            type: "broadcast",
+            event: "webrtc-ice",
+            payload: {
+              from: selfId.current,
+              to: peerId,
+              candidate: e.candidate.toJSON(),
+            },
+          });
+        }
+      };
+
+      pc.ontrack = (e) => {
+        setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
+      };
+
+      // 一時的な回線の乱れで切れた場合、自動で再接続を試みる
+      pc.oniceconnectionstatechange = () => {
+        if (
+          pc.iceConnectionState === "disconnected" ||
+          pc.iceConnectionState === "failed"
+        ) {
+          restartIce(peerId);
+        }
+      };
+
+      peerConnections.current.set(peerId, pc);
+      return pc;
+    },
+    [restartIce],
+  );
 
   const startCall = useCallback(
     async (peerId: string) => {
@@ -281,6 +316,18 @@ export default function AvatarSpace() {
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && selfState.current) {
           await channel.track(selfState.current);
+        }
+        if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+        ) {
+          // Wi-Fiの瞬断などで切れた場合、少し待ってから自動で再購読を試みる
+          setTimeout(() => {
+            if (channelRef.current === channel) {
+              channel.subscribe();
+            }
+          }, 2000);
         }
       });
 
