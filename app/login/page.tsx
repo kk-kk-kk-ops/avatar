@@ -28,7 +28,7 @@ export default function LoginPage({
           className="mx-auto mb-4 h-14 w-14 object-contain"
         />
         <h1 className="mb-8 text-lg font-bold text-slate-800">
-          AI受付システム
+          Grovina Office
         </h1>
 
         {errorMessage && (
