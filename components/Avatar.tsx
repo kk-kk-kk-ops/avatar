@@ -14,6 +14,9 @@ type Props = {
 };
 
 const DISPLAY_SIZE = AVATAR_RADIUS * 2; // アバター画像の表示サイズ(正方形)
+// 画像自体の上下に含まれる透明な余白を補正する値。
+// 数値を大きくするほど、見た目の足元が当たり判定ラインに近づく(=障害物との隙間が減る)。
+const FOOT_OFFSET = 20;
 
 export default function Avatar({ player, isSelf }: Props) {
   const showBubble =
@@ -33,7 +36,7 @@ export default function Avatar({ player, isSelf }: Props) {
         // 画像の下端(足元)が当たり判定の下端とぴったり揃うようにする。
         // こうすることで、障害物に接触する瞬間と足元が重なる瞬間が一致し、
         // 「めり込んで見える」ことがなくなる。
-        top: player.y + AVATAR_HITBOX_HEIGHT / 2 - DISPLAY_SIZE,
+        top: player.y + AVATAR_HITBOX_HEIGHT / 2 - DISPLAY_SIZE + FOOT_OFFSET,
         width: DISPLAY_SIZE,
         height: DISPLAY_SIZE,
       }}
