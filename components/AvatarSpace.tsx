@@ -9,9 +9,9 @@ import {
   MAP_HEIGHT,
   AVATAR_RADIUS,
   MOVE_SPEED,
-  CHAT_BUBBLE_DURATION_MS,
 } from "@/lib/types";
 import Avatar from "./Avatar";
+import TouchControls from "./TouchControls";
 
 const ROOM_NAME = "avatar-room-main";
 const COLORS = ["#F97316", "#3B82F6", "#22C55E", "#EC4899", "#A855F7", "#EAB308", "#14B8A6"];
@@ -186,6 +186,14 @@ export default function AvatarSpace() {
     };
   }, [joined]);
 
+  // ---- スマホ用タッチ操作(既存のkeysDownセットに仮想キーを追加/削除するだけ) ----
+  const handleTouchPress = useCallback((key: string) => {
+    keysDown.current.add(key);
+  }, []);
+  const handleTouchRelease = useCallback((key: string) => {
+    keysDown.current.delete(key);
+  }, []);
+
   // ---- チャット送信 ----
   const sendChat = useCallback(() => {
     const message = chatInput.trim();
@@ -204,14 +212,9 @@ export default function AvatarSpace() {
     });
 
     setChatInput("");
-    setTimeout(() => {
-      setPlayers((prev) => {
-        if (!prev[id] || prev[id].messageAt !== undefined && Date.now() - (prev[id].messageAt as number) < CHAT_BUBBLE_DURATION_MS) {
-          return prev;
-        }
-        return prev;
-      });
-    }, CHAT_BUBBLE_DURATION_MS);
+    // 吹き出しの自動非表示は移動ループの再描画(毎フレーム)で判定されるため、
+    // ここでタイマーを持つ必要はない。次のメッセージ送信時は上のsetPlayersが
+    // messageAt を上書きするので、自動的に「新しいメッセージで上書き」される。
   }, [chatInput]);
 
   // ---- 入室前:名前入力モーダル ----
@@ -307,7 +310,7 @@ export default function AvatarSpace() {
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sendChat()}
-          placeholder="メッセージを入力してEnter(移動は WASD / 矢印キー)"
+          placeholder="メッセージを入力してEnter(PCは WASD / 矢印キー、スマホは左下のボタンで移動)"
           className="flex-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-slate-400"
         />
         <button
@@ -317,6 +320,9 @@ export default function AvatarSpace() {
           送信
         </button>
       </div>
+
+      {/* スマホ用移動ボタン(sm以上の画面では非表示) */}
+      <TouchControls onPress={handleTouchPress} onRelease={handleTouchRelease} />
     </div>
   );
 }

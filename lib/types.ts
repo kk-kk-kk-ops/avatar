@@ -14,5 +14,5 @@ export const MAP_WIDTH = 1600;
 export const MAP_HEIGHT = 1000;
 export const AVATAR_RADIUS = 18;
 export const MOVE_SPEED = 220; // px / sec
-export const CHAT_BUBBLE_DURATION_MS = 5000;
+export const CHAT_BUBBLE_DURATION_MS = 60000; // 1分間表示。新しいメッセージが来ると上書きされる
 export const PROXIMITY_RADIUS = 160; // 近くにいる人だけ会話できる目安(将来のボイス/絞り込みチャット用)
