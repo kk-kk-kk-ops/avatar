@@ -25,7 +25,7 @@ export const AVATAR_IMAGES = [
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
-export const AVATAR_RADIUS = 18;
+export const AVATAR_RADIUS = 45; // アバターの当たり判定の半径(表示サイズと一致させている)
 export const MOVE_SPEED = 220; // px / sec
 export const CHAT_BUBBLE_DURATION_MS = 60000; // 1分間表示。新しいメッセージが来ると上書きされる
 export const PROXIMITY_RADIUS = 45; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。マス目=40pxの約1マス分)
