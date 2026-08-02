@@ -957,12 +957,14 @@ export default function AvatarSpace() {
       {/* ヘッダー */}
       <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <div className="flex items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/logo.png"
-            alt="Grovina"
-            className="h-6 w-6 object-contain"
-          />
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.png"
+              alt="Grovina"
+              className="h-5 w-5 object-contain"
+            />
+          </div>
           <span className="text-sm font-semibold">Grovina Office</span>
         </div>
         <div className="flex items-center gap-3">
