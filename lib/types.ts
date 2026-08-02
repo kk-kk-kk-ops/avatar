@@ -25,7 +25,9 @@ export const AVATAR_IMAGES = [
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
-export const AVATAR_RADIUS = 45; // アバターの当たり判定の半径(表示サイズと一致させている)
+export const AVATAR_RADIUS = 45; // アバターの表示サイズ計算に使う半径(当たり判定には使わない)
+export const AVATAR_HITBOX_WIDTH = 30; // 当たり判定の幅(px)
+export const AVATAR_HITBOX_HEIGHT = 60; // 当たり判定の高さ(px)
 export const MOVE_SPEED = 220; // px / sec
 export const CHAT_BUBBLE_DURATION_MS = 60000; // 1分間表示。新しいメッセージが来ると上書きされる
 export const PROXIMITY_RADIUS = 45; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。マス目=40pxの約1マス分)
@@ -103,17 +105,41 @@ export function circleIntersectsRect(
   return dx * dx + dy * dy < radius * radius;
 }
 
+// 矩形(アバターの当たり判定)と矩形(障害物・エリア)が重なっているかを判定する。
+// cx, cyは矩形の中心座標、halfWidth/halfHeightはその半分のサイズ。
+export function rectIntersectsRect(
+  cx: number,
+  cy: number,
+  halfWidth: number,
+  halfHeight: number,
+  rect: { x: number; y: number; width: number; height: number },
+): boolean {
+  const left = cx - halfWidth;
+  const right = cx + halfWidth;
+  const top = cy - halfHeight;
+  const bottom = cy + halfHeight;
+  return (
+    left < rect.x + rect.width &&
+    right > rect.x &&
+    top < rect.y + rect.height &&
+    bottom > rect.y
+  );
+}
+
 // 指定した位置(x, y)が障害物と重なっていた場合、その障害物の上端のすぐ上へ押し出した位置を返す。
 // 重なっていなければそのままの位置を返す。
 export function resolveSpawnPosition(
   x: number,
   y: number,
   obstaclesList: Rect[],
-  radius: number = AVATAR_RADIUS,
+  halfWidth: number = AVATAR_HITBOX_WIDTH / 2,
+  halfHeight: number = AVATAR_HITBOX_HEIGHT / 2,
 ): { x: number; y: number } {
-  const hit = obstaclesList.find((o) => circleIntersectsRect(x, y, radius, o));
+  const hit = obstaclesList.find((o) =>
+    rectIntersectsRect(x, y, halfWidth, halfHeight, o),
+  );
   if (!hit) return { x, y };
-  const adjustedY = Math.max(hit.y - radius, radius);
+  const adjustedY = Math.max(hit.y - halfHeight, halfHeight);
   return { x, y: adjustedY };
 }
 

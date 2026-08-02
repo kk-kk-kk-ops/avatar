@@ -7,10 +7,11 @@ import {
   PlayerState,
   MAP_WIDTH,
   MAP_HEIGHT,
-  AVATAR_RADIUS,
+  AVATAR_HITBOX_WIDTH,
+  AVATAR_HITBOX_HEIGHT,
   MOVE_SPEED,
   findMeetingZoneId,
-  circleIntersectsRect,
+  rectIntersectsRect,
   resolveSpawnPosition,
   clampPosition,
   clampSize,
@@ -693,22 +694,25 @@ export default function AvatarSpace({ initialName }: Props) {
           dx = (dx / len) * MOVE_SPEED * dt;
           dy = (dy / len) * MOVE_SPEED * dt;
 
+          const halfW = AVATAR_HITBOX_WIDTH / 2;
+          const halfH = AVATAR_HITBOX_HEIGHT / 2;
+
           const nextX = Math.min(
-            Math.max(self.x + dx, AVATAR_RADIUS),
-            MAP_WIDTH - AVATAR_RADIUS,
+            Math.max(self.x + dx, halfW),
+            MAP_WIDTH - halfW,
           );
           const nextY = Math.min(
-            Math.max(self.y + dy, AVATAR_RADIUS),
-            MAP_HEIGHT - AVATAR_RADIUS,
+            Math.max(self.y + dy, halfH),
+            MAP_HEIGHT - halfH,
           );
 
-          // 障害物との当たり判定。X軸・Y軸を別々に判定することで、
+          // 障害物との当たり判定(矩形どうし)。X軸・Y軸を別々に判定することで、
           // 障害物に斜めから近づいても壁沿いに滑るように移動できる。
           const blockedX = obstaclesRef.current.some((o) =>
-            circleIntersectsRect(nextX, self.y, AVATAR_RADIUS, o),
+            rectIntersectsRect(nextX, self.y, halfW, halfH, o),
           );
           const blockedY = obstaclesRef.current.some((o) =>
-            circleIntersectsRect(self.x, nextY, AVATAR_RADIUS, o),
+            rectIntersectsRect(self.x, nextY, halfW, halfH, o),
           );
 
           if (!blockedX) self.x = nextX;
