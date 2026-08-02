@@ -12,7 +12,7 @@ type Props = {
   isSelf: boolean;
 };
 
-const DISPLAY_SIZE = AVATAR_RADIUS * 2.4; // 見た目上のサイズ(当たり判定はAVATAR_RADIUSのまま)
+const DISPLAY_SIZE = AVATAR_RADIUS * 3.6; // 見た目上のサイズ(当たり判定はAVATAR_RADIUSのまま)
 
 export default function Avatar({ player, isSelf }: Props) {
   const showBubble =
