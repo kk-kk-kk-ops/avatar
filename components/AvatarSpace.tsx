@@ -57,6 +57,7 @@ export default function AvatarSpace() {
     new Map(),
   );
   const lastTrackedInArea = useRef(false);
+  const wasMovingRef = useRef(false);
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -424,14 +425,17 @@ export default function AvatarSpace() {
         // ローカル描画を即時反映
         setPlayers((prev) => ({ ...prev, [self.id]: { ...self } }));
 
-        // 動いた時だけ他プレイヤーへブロードキャスト(通信量を抑制)
-        if (moving && channelRef.current) {
+        // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
+        // 止まった瞬間を送らないと、相手の画面では最後に動いていた位置のまま
+        // 止まって見えてしまい、キーを離してから反映されるようなラグに感じられる。
+        if ((moving || wasMovingRef.current) && channelRef.current) {
           channelRef.current.send({
             type: "broadcast",
             event: "move",
             payload: self,
           });
         }
+        wasMovingRef.current = moving;
       }
 
       rafRef.current = requestAnimationFrame(loop);
@@ -518,7 +522,7 @@ export default function AvatarSpace() {
         const dist = Math.hypot(p.x - self.x, p.y - self.y);
         const alreadyConnected = peerConnections.current.has(p.id);
         const threshold = alreadyConnected
-          ? PROXIMITY_RADIUS + 60
+          ? PROXIMITY_RADIUS + 20
           : PROXIMITY_RADIUS;
         return dist <= threshold;
       })
