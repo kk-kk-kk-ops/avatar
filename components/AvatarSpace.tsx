@@ -78,6 +78,7 @@ export default function AvatarSpace({ initialName }: Props) {
   const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
   const [chatInput, setChatInput] = useState("");
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
+  const playersRef = useRef<Record<string, PlayerState>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
   const [micEnabled, setMicEnabled] = useState(false);
@@ -146,6 +147,13 @@ export default function AvatarSpace({ initialName }: Props) {
     const timer = setTimeout(() => setCallError(null), 5000);
     return () => clearTimeout(timer);
   }, [callError]);
+
+  // playersの最新値をrefにも反映(ontrackなど、effect外から最新状態を
+  // 参照したい箇所で使う。getOrCreatePeerConnectionをplayers変更のたびに
+  // 作り直さずに済むようにするため)
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
 
   // ---- 入室処理 ----
   const handleJoin = useCallback(() => {
@@ -580,7 +588,16 @@ export default function AvatarSpace({ initialName }: Props) {
       pc.ontrack = (e) => {
         if (e.track.kind === "video") {
           const purposes = peerVideoPurposes.current.get(peerId) || {};
-          const purpose = purposes[e.track.id] ?? "screen"; // 不明な場合は画面共有扱い
+          let purpose = purposes[e.track.id];
+          if (!purpose) {
+            // 目印(videoTrackPurposes)がまだ届いていない場合の保険。
+            // 相手の在室情報(presence)から種類を推測する。
+            const peerState = playersRef.current[peerId];
+            purpose =
+              peerState?.inCall && !peerState?.sharingScreen
+                ? "camera"
+                : "screen";
+          }
           const setter =
             purpose === "camera"
               ? setRemoteCallStreams
