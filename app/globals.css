@@ -10,9 +10,9 @@ body {
   /* 実際に見えている画面の高さぴったりに固定する(スマホのアドレスバー分の
      誤差も吸収できるdvhを使用。未対応ブラウザ向けにvhもフォールバックで指定)。
      はみ出し・全体スクロールを防ぐため、常にhiddenにしておく。 */
-  height: 97vh;
+  height: 100vh;
   width: 100%;
-  max-width: 99%;
+  max-width: 100%;
   overflow: hidden;
   overscroll-behavior-y: none;
   /* ピンチズーム・ダブルタップズームを禁止(viewport設定と合わせて) */
