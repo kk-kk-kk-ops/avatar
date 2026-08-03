@@ -1366,14 +1366,35 @@ export default function AvatarSpace({ initialName }: Props) {
   // ---- キーボード入力 ----
   useEffect(() => {
     if (!joined) return;
+
+    // ブラウザ標準のスクロール等を発火させたくないキーの一覧
+    const SCROLL_KEYS = new Set([
+      "arrowup",
+      "arrowdown",
+      "arrowleft",
+      "arrowright",
+      " ", // スペースキー(押しっぱなしでページが下スクロールされるのを防ぐ)
+    ]);
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === "INPUT") return;
-      keysDown.current.add(e.key.toLowerCase());
+      const key = e.key.toLowerCase();
+
+      // 矢印キー・スペースキーによる「ページ自体のスクロール」を止める。
+      // これを止めないと、アバターの移動と同時にブラウザがヘッダーや
+      // サイドバーを含む画面全体をスクロールさせてしまい、
+      // レイアウトごと動いて見えてしまう。
+      if (SCROLL_KEYS.has(key) || SCROLL_KEYS.has(e.key)) {
+        e.preventDefault();
+      }
+
+      keysDown.current.add(key);
     };
     const onKeyUp = (e: KeyboardEvent) => {
       keysDown.current.delete(e.key.toLowerCase());
     };
-    window.addEventListener("keydown", onKeyDown);
+    // passive: false にしないと preventDefault() が効かないブラウザがあるため明示する
+    window.addEventListener("keydown", onKeyDown, { passive: false });
     window.addEventListener("keyup", onKeyUp);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
