@@ -1145,22 +1145,32 @@ export default function AvatarSpace({ initialName }: Props) {
             });
           }
           const pc = getOrCreatePeerConnection(from);
-          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-          await flushPendingCandidates(from, pc);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          channelRef.current?.send({
-            type: "broadcast",
-            event: "webrtc-answer",
-            payload: {
-              from: selfId.current,
-              to: from,
-              sdp: answer,
-              videoTrackPurposes: buildVideoTrackPurposes(),
-            },
-          });
-          // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
-          await ensureLocalVideoAttached(from);
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+            // awaitで待っている間に、相手が離れて再度近づく等でこの接続が
+            // 破棄・作り直しされていた場合、もうこのpcは無関係なので中断する
+            // (再接続時に古いofferの処理が新しい接続へ混ざるのを防ぐ)。
+            if (peerConnections.current.get(from) !== pc) return;
+            await flushPendingCandidates(from, pc);
+            const answer = await pc.createAnswer();
+            if (peerConnections.current.get(from) !== pc) return;
+            await pc.setLocalDescription(answer);
+            channelRef.current?.send({
+              type: "broadcast",
+              event: "webrtc-answer",
+              payload: {
+                from: selfId.current,
+                to: from,
+                sdp: answer,
+                videoTrackPurposes: buildVideoTrackPurposes(),
+              },
+            });
+            // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
+            await ensureLocalVideoAttached(from);
+          } catch {
+            // pcが既に閉じられている等で失敗した場合は無視する(再度近づいた際の
+            // 次のoffer/answerのやり取りに任せる)
+          }
         })
         .on("broadcast", { event: "webrtc-answer" }, async ({ payload }) => {
           const { from, to, sdp, videoTrackPurposes } = payload as {
@@ -1180,10 +1190,15 @@ export default function AvatarSpace({ initialName }: Props) {
           }
           const pc = peerConnections.current.get(from);
           if (!pc) return;
-          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-          await flushPendingCandidates(from, pc);
-          // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
-          await ensureLocalVideoAttached(from);
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+            if (peerConnections.current.get(from) !== pc) return;
+            await flushPendingCandidates(from, pc);
+            // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
+            await ensureLocalVideoAttached(from);
+          } catch {
+            // pcが既に閉じられている等で失敗した場合は無視する
+          }
         })
         .on("broadcast", { event: "webrtc-ice" }, async ({ payload }) => {
           const { from, to, candidate } = payload as {
@@ -1516,18 +1531,21 @@ export default function AvatarSpace({ initialName }: Props) {
             .get(peerId)
             ?.updatePosition(pos.currentX, pos.currentY);
 
-          // 近接ボイスチャットの接続開始は、Reactのstate更新(最大0.2秒おき)を
-          // 待たず、毎フレームその場でチェックする。WebRTCの接続確立自体には
-          // 数秒かかることがあるため、開始のトリガーだけでも早めることで、
-          // 実際に近づいた時点までに接続を完了させやすくする。
-          if (!peerConnections.current.has(peerId)) {
-            const dist = Math.hypot(pos.targetX - self.x, pos.targetY - self.y);
-            const peerZone = playersRef.current[peerId]?.meetingZoneId;
-            const sameZone = !!(
-              self.meetingZoneId &&
-              peerZone &&
-              self.meetingZoneId === peerZone
-            );
+          // 近接ボイスチャットの接続開始・終了は、Reactのstate更新(最大0.2秒おき+
+          // エフェクトの実行タイミング)を待たず、毎フレームその場でチェックする。
+          // 開始を早めることで実際に近づいた時点までに接続を完了させやすくし、
+          // 終了も同じ頻度でチェックすることで「離れてもしばらく繋がったまま」
+          // に見える遅延をなくす(以前は開始だけここで即座に行い、終了はReactの
+          // eligiblePeerIdsエフェクト任せだったため、体感で数秒のズレが出ていた)。
+          const dist = Math.hypot(pos.targetX - self.x, pos.targetY - self.y);
+          const peerZone = playersRef.current[peerId]?.meetingZoneId;
+          const sameZone = !!(
+            self.meetingZoneId &&
+            peerZone &&
+            self.meetingZoneId === peerZone
+          );
+          const connected = peerConnections.current.has(peerId);
+          if (!connected) {
             if (sameZone || dist <= PROXIMITY_RADIUS) {
               if (selfId.current < peerId) {
                 startCall(peerId);
@@ -1535,6 +1553,10 @@ export default function AvatarSpace({ initialName }: Props) {
                 getOrCreatePeerConnection(peerId);
               }
             }
+          } else if (!sameZone && dist > PROXIMITY_RADIUS + 20) {
+            // eligiblePeerIdsと同じヒステリシス幅(+20)を使い、境界線上での
+            // 接続/切断のチラつきを防ぎつつ、ここでも即座に切断する。
+            closePeerConnection(peerId);
           }
         });
 
@@ -1569,7 +1591,7 @@ export default function AvatarSpace({ initialName }: Props) {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [joined, startCall, getOrCreatePeerConnection]);
+  }, [joined, startCall, getOrCreatePeerConnection, closePeerConnection]);
 
   // ---- 位置情報をロジック用に低頻度でReactのstateへ同期する ----
   // 見た目の描画はDOM操作で毎フレーム行っているが、近接判定(eligiblePeerIds)
