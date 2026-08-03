@@ -1897,7 +1897,7 @@ export default function AvatarSpace({ initialName }: Props) {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-slate-800">
       {/* ヘッダー */}
-      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 py-2 pl-4 pr-6 text-white">
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <div className="flex shrink-0 items-center gap-2">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2242,7 +2242,7 @@ export default function AvatarSpace({ initialName }: Props) {
         <div
           className={`${
             showParticipants ? "flex" : "hidden"
-          } fixed inset-y-0 right-0 z-40 w-64 flex-col overflow-y-auto border-l border-slate-700 bg-slate-900 py-3 pl-3 pr-4 text-white sm:static sm:z-auto sm:flex sm:w-52 sm:shrink-0`}
+          } fixed inset-y-0 right-0 z-40 w-64 flex-col overflow-y-auto border-l border-slate-700 bg-slate-900 p-3 text-white sm:static sm:z-auto sm:flex sm:w-52 sm:shrink-0`}
         >
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-xs font-semibold text-slate-400">参加者</h2>
