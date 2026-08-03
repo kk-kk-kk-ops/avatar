@@ -24,7 +24,7 @@ import {
   DEFAULT_MEETING_ZONES,
   AVATAR_IMAGES,
 } from "@/lib/types";
-import Avatar from "./Avatar";
+import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
@@ -133,8 +133,26 @@ export default function AvatarSpace({ initialName }: Props) {
   const channelRef = useRef<RealtimeChannel | null>(null);
   const keysDown = useRef<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const lastFrameTime = useRef<number>(performance.now());
+
+  // ---- 位置の描画をReactのstateから切り離すための仕組み ----
+  // 毎フレームsetPlayersを呼ぶと画面全体が再描画され、複数人が同時に動くと
+  // 負荷が高くなり通信が不安定になりやすい。そのため位置(x, y)の「見た目上の
+  // 描画」はDOM操作で直接行い、Reactのstateは名前・アバター画像・マイク状態
+  // など「頻繁には変わらない情報」だけを持つようにする。
+  // avatarRefs: 各プレイヤーのAvatar DOM操作ハンドルを保持
+  const avatarRefs = useRef<Map<string, AvatarHandle>>(new Map());
+  // 相手の位置の補間(interpolation)用。broadcastで届いた最新位置をtargetとして持ち、
+  // 毎フレーム現在位置(current)をtargetへ滑らかに近づけて描画する。
+  const peerPositionsRef = useRef<
+    Map<
+      string,
+      { currentX: number; currentY: number; targetX: number; targetY: number }
+    >
+  >(new Map());
+  const viewportRef = useRef({ width: 0, height: 0 });
 
   // 画面共有・ビデオ通話のエラーメッセージは5秒で自動的に消す
   useEffect(() => {
@@ -983,6 +1001,7 @@ export default function AvatarSpace({ initialName }: Props) {
         });
       })
       .on("presence", { event: "leave" }, ({ key }) => {
+        peerPositionsRef.current.delete(key);
         setPlayers((prev) => {
           const copy = { ...prev };
           delete copy[key];
@@ -992,7 +1011,48 @@ export default function AvatarSpace({ initialName }: Props) {
       .on("broadcast", { event: "move" }, ({ payload }) => {
         const p = payload as PlayerState;
         if (p.id === selfId.current) return;
-        setPlayers((prev) => ({ ...prev, [p.id]: p }));
+
+        // 位置(見た目)はReactのstateを介さず、補間(interpolation)用の
+        // target座標だけを更新する。実際の描画は毎フレームのrAFループで行う。
+        const posEntry = peerPositionsRef.current.get(p.id);
+        if (posEntry) {
+          posEntry.targetX = p.x;
+          posEntry.targetY = p.y;
+        } else {
+          peerPositionsRef.current.set(p.id, {
+            currentX: p.x,
+            currentY: p.y,
+            targetX: p.x,
+            targetY: p.y,
+          });
+        }
+
+        // 名前・アバター画像・マイク状態など「見た目以外の情報」が変わった場合、
+        // または初めて見る相手の場合だけReactのstateを更新する。位置(x, y)の
+        // 変化だけでは再描画を起こさない(近接判定などロジック用には、下の
+        // 定期的な同期処理で低頻度に反映する)。
+        setPlayers((prev) => {
+          const current = prev[p.id];
+          if (!current) {
+            return { ...prev, [p.id]: p };
+          }
+          if (
+            current.name !== p.name ||
+            current.color !== p.color ||
+            current.avatarImage !== p.avatarImage ||
+            current.micOn !== p.micOn ||
+            current.sharingScreen !== p.sharingScreen ||
+            current.inCall !== p.inCall ||
+            current.meetingZoneId !== p.meetingZoneId ||
+            current.message !== p.message
+          ) {
+            return {
+              ...prev,
+              [p.id]: { ...current, ...p, x: current.x, y: current.y },
+            };
+          }
+          return prev;
+        });
       })
       .on("broadcast", { event: "chat" }, ({ payload }) => {
         const { id, message } = payload as { id: string; message: string };
@@ -1142,6 +1202,7 @@ export default function AvatarSpace({ initialName }: Props) {
           if (suspectedGoneRef.current.has(id)) {
             // 前回に続き2回連続で不在を確認できたので削除する
             delete next[id];
+            peerPositionsRef.current.delete(id);
             changed = true;
           } else {
             // 今回が初めての不在確認。次回も不在なら削除する
@@ -1298,8 +1359,42 @@ export default function AvatarSpace({ initialName }: Props) {
           channelRef.current?.track(self);
         }
 
-        // ローカル描画を即時反映
-        setPlayers((prev) => ({ ...prev, [self.id]: { ...self } }));
+        // 自分のアバターの見た目の位置は、Reactのstateを介さずDOM操作で
+        // 直接更新する(毎フレーム呼んでも画面全体の再描画が起きない)。
+        avatarRefs.current.get(self.id)?.updatePosition(self.x, self.y);
+
+        // カメラ(マップ全体の表示位置)もDOM操作で直接更新する。
+        // 画面中央に自分を固定し、端では止めてアイコン側が動くようにする。
+        // スマホ(画面幅が狭い)場合は少し縮小(ズームアウト)して周囲が見えるようにする。
+        const viewport = viewportRef.current;
+        const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
+        const effectiveViewportWidth = viewport.width / mapScale;
+        const effectiveViewportHeight = viewport.height / mapScale;
+        const maxCameraX = Math.max(MAP_WIDTH - effectiveViewportWidth, 0);
+        const maxCameraY = Math.max(MAP_HEIGHT - effectiveViewportHeight, 0);
+        const cameraX = Math.min(
+          Math.max(self.x - effectiveViewportWidth / 2, 0),
+          maxCameraX,
+        );
+        const cameraY = Math.min(
+          Math.max(self.y - effectiveViewportHeight / 2, 0),
+          maxCameraY,
+        );
+        if (worldRef.current) {
+          worldRef.current.style.transform = `scale(${mapScale}) translate(${-cameraX}px, ${-cameraY}px)`;
+        }
+
+        // 相手の位置は補間(interpolation)しながら描画する。broadcastで届いた
+        // target座標へ、フレームレートに依存しない速度で滑らかに近づけていく。
+        const EASE_RATE = 12; // 大きいほど素早くtargetへ追いつく
+        const easeFactor = 1 - Math.exp(-EASE_RATE * dt);
+        peerPositionsRef.current.forEach((pos, peerId) => {
+          pos.currentX += (pos.targetX - pos.currentX) * easeFactor;
+          pos.currentY += (pos.targetY - pos.currentY) * easeFactor;
+          avatarRefs.current
+            .get(peerId)
+            ?.updatePosition(pos.currentX, pos.currentY);
+        });
 
         // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
         // 止まった瞬間を送らないと、相手の画面では最後に動いていた位置のまま
@@ -1334,6 +1429,45 @@ export default function AvatarSpace({ initialName }: Props) {
     };
   }, [joined]);
 
+  // ---- 位置情報をロジック用に低頻度でReactのstateへ同期する ----
+  // 見た目の描画はDOM操作で毎フレーム行っているが、近接判定(eligiblePeerIds)
+  // などのロジックは`players`のx, yを見て計算しているため、0.2秒おき程度の
+  // 頻度でここに反映しておく。毎フレーム同期しないことで再描画の回数を大幅に
+  // 減らしつつ、ロジックが極端に古い座標を参照し続けることも防ぐ。
+  useEffect(() => {
+    if (!joined) return;
+    const interval = setInterval(() => {
+      setPlayers((prev) => {
+        let changed = false;
+        const next = { ...prev };
+
+        const self = selfState.current;
+        if (
+          self &&
+          next[self.id] &&
+          (next[self.id].x !== self.x || next[self.id].y !== self.y)
+        ) {
+          next[self.id] = { ...next[self.id], x: self.x, y: self.y };
+          changed = true;
+        }
+
+        peerPositionsRef.current.forEach((pos, peerId) => {
+          const current = next[peerId];
+          if (
+            current &&
+            (current.x !== pos.targetX || current.y !== pos.targetY)
+          ) {
+            next[peerId] = { ...current, x: pos.targetX, y: pos.targetY };
+            changed = true;
+          }
+        });
+
+        return changed ? next : prev;
+      });
+    }, 200);
+    return () => clearInterval(interval);
+  }, [joined]);
+
   // ---- 表示領域(ビューポート)のサイズを監視(カメラ追従の計算に使用) ----
   useEffect(() => {
     if (!joined) return;
@@ -1341,7 +1475,9 @@ export default function AvatarSpace({ initialName }: Props) {
     if (!el) return;
 
     const update = () => {
-      setViewport({ width: el.clientWidth, height: el.clientHeight });
+      const size = { width: el.clientWidth, height: el.clientHeight };
+      viewportRef.current = size;
+      setViewport(size);
     };
     update();
 
@@ -1461,6 +1597,8 @@ export default function AvatarSpace({ initialName }: Props) {
       peerConnections.current.clear();
       pendingCandidates.current.clear();
       peerVideoPurposes.current.clear();
+      peerPositionsRef.current.clear();
+      avatarRefs.current.clear();
       setRemoteStreams({});
       setRemoteScreenStreams({});
       setRemoteCallStreams({});
@@ -1763,12 +1901,14 @@ export default function AvatarSpace({ initialName }: Props) {
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* マップ:表示領域は固定し、中の世界をtransformで動かしてカメラ追従を実現 */}
+        {/* マップ:表示領域は固定し、中の世界をtransformで動かしてカメラ追従を実現。
+            transformの更新は毎フレームDOM操作で行うため、ここでは初期値のみ指定する。 */}
         <div
           ref={containerRef}
           className="relative flex-1 overflow-hidden bg-slate-700"
         >
           <div
+            ref={worldRef}
             className="absolute left-0 top-0"
             style={{
               width: MAP_WIDTH,
@@ -1898,7 +2038,32 @@ export default function AvatarSpace({ initialName }: Props) {
             )}
 
             {playerList.map((p) => (
-              <Avatar key={p.id} player={p} isSelf={p.id === selfId.current} />
+              <Avatar
+                key={p.id}
+                player={p}
+                isSelf={p.id === selfId.current}
+                ref={(handle) => {
+                  if (handle) {
+                    avatarRefs.current.set(p.id, handle);
+                    // 生成された直後、Reactが把握している最新座標を初期位置として反映しておく
+                    // (次のrAFフレームまで座標(0,0)に見えてしまうのを防ぐ)
+                    if (p.id === selfId.current && selfState.current) {
+                      handle.updatePosition(
+                        selfState.current.x,
+                        selfState.current.y,
+                      );
+                    } else {
+                      const pos = peerPositionsRef.current.get(p.id);
+                      handle.updatePosition(
+                        pos?.currentX ?? p.x,
+                        pos?.currentY ?? p.y,
+                      );
+                    }
+                  } else {
+                    avatarRefs.current.delete(p.id);
+                  }
+                }}
+              />
             ))}
           </div>
         </div>

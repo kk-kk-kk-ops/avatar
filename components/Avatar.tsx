@@ -1,5 +1,6 @@
 "use client";
 
+import { forwardRef, useImperativeHandle, useRef } from "react";
 import {
   AVATAR_IMAGES,
   PlayerState,
@@ -13,12 +14,37 @@ type Props = {
   isSelf: boolean;
 };
 
+export type AvatarHandle = {
+  // 位置を直接DOM操作で更新する。Reactのstateを経由しないため、
+  // 毎フレーム呼んでも画面全体の再描画は発生しない。
+  updatePosition: (x: number, y: number) => void;
+};
+
 const DISPLAY_SIZE = AVATAR_RADIUS * 2; // アバター画像の表示サイズ(正方形)
 // 画像自体の上下に含まれる透明な余白を補正する値。
 // 数値を大きくするほど、見た目の足元が当たり判定ラインに近づく(=障害物との隙間が減る)。
 const FOOT_OFFSET = 20;
 
-export default function Avatar({ player, isSelf }: Props) {
+const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
+  { player, isSelf },
+  ref,
+) {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      updatePosition: (x: number, y: number) => {
+        const el = rootRef.current;
+        if (!el) return;
+        const left = x - DISPLAY_SIZE / 2;
+        const top = y + AVATAR_HITBOX_HEIGHT / 2 - DISPLAY_SIZE + FOOT_OFFSET;
+        el.style.transform = `translate(${left}px, ${top}px)`;
+      },
+    }),
+    [],
+  );
+
   const showBubble =
     player.message &&
     player.messageAt &&
@@ -28,18 +54,9 @@ export default function Avatar({ player, isSelf }: Props) {
 
   return (
     <div
-      className={`absolute will-change-transform ${
-        isSelf ? "" : "transition-[left,top] duration-150 ease-linear"
-      }`}
-      style={{
-        left: player.x - DISPLAY_SIZE / 2,
-        // 画像の下端(足元)が当たり判定の下端とぴったり揃うようにする。
-        // こうすることで、障害物に接触する瞬間と足元が重なる瞬間が一致し、
-        // 「めり込んで見える」ことがなくなる。
-        top: player.y + AVATAR_HITBOX_HEIGHT / 2 - DISPLAY_SIZE + FOOT_OFFSET,
-        width: DISPLAY_SIZE,
-        height: DISPLAY_SIZE,
-      }}
+      ref={rootRef}
+      className="absolute left-0 top-0 will-change-transform"
+      style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}
     >
       {showBubble && (
         <div className="absolute -top-14 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-3 py-1 text-xs shadow-md border border-gray-200">
@@ -78,4 +95,6 @@ export default function Avatar({ player, isSelf }: Props) {
       )}
     </div>
   );
-}
+});
+
+export default Avatar;
