@@ -12,7 +12,8 @@ body {
      はみ出し・全体スクロールを防ぐため、常にhiddenにしておく。 */
   height: 100vh;
   height: 100dvh;
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   overscroll-behavior-y: none;
   /* ピンチズーム・ダブルタップズームを禁止(viewport設定と合わせて) */
