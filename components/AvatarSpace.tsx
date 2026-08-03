@@ -490,10 +490,11 @@ export default function AvatarSpace({ initialName }: Props) {
     return map;
   }, []);
 
-  // 接続がすでにできている相手に対して、自分が今送っているはずの映像
-  // (画面共有・カメラ)がまだ正しく乗っていなければ、追加して再送信する。
-  // 接続する順番によっては、最初のofferの時点でまだ映像が反映されない
-  // ケースがあるため、offer/answerのやり取りが一段落するたびに毎回確認する。
+  // 接続がすでにできている相手に対して、自分が今送っているはずのトラック
+  // (マイク・画面共有・カメラ)がまだ正しく乗っていなければ、追加して
+  // 再送信する。接続する順番やタイミングによっては、最初のofferの時点では
+  // まだ反映されないケースがあるため、offer/answerのやり取りが一段落する
+  // たびに毎回確認する。
   const ensureLocalVideoAttached = useCallback(
     async (peerId: string) => {
       const pc = peerConnections.current.get(peerId);
@@ -505,6 +506,7 @@ export default function AvatarSpace({ initialName }: Props) {
           .filter((id): id is string => !!id),
       );
       const myStreams = [
+        localStreamRef.current,
         screenStreamRef.current,
         cameraStreamRef.current,
       ].filter((s): s is MediaStream => !!s);
