@@ -16,9 +16,9 @@ body {
      なるため使わない。overflow: hiddenでページ全体のスクロールも禁止し、
      常に画面ぴったりに収める(矢印キーでの移動時のスクロールは別途
      keydownハンドラ側のpreventDefault()で防いでいる)。 */
-  overflow: hidden;
+  /* overflow: hidden;
   overscroll-behavior-y: none;
-  touch-action: pan-x pan-y;
+  touch-action: pan-x pan-y; */
 }
 
 /* 横スクロールが必要な行(ツールバー等)でスクロールバーを隠すためのユーティリティ */
