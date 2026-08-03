@@ -1296,6 +1296,26 @@ export default function AvatarSpace({ initialName }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [joined, closePeerConnection, ensureLocalVideoAttached]);
 
+  // ---- ブラウザを閉じる/タブを閉じる際、明示的に退室を通知する ----
+  // 何もしないと、Supabase側が「切断された」と気づくまで数十秒かかることがあり、
+  // その間は「もう存在しない古い自分」が在室したまま残ってしまう
+  // (再度入室すると、実際には1人なのに2人分見えてしまう原因になる)。
+  // ページを離れる瞬間にできる範囲でチャンネルの購読を解除し、素早く
+  // 「退室」を伝える。ブラウザのクラッシュなど、必ず届くとは限らない点は
+  // 限界として残る。
+  useEffect(() => {
+    if (!joined) return;
+    const handleLeave = () => {
+      channelRef.current?.unsubscribe();
+    };
+    window.addEventListener("beforeunload", handleLeave);
+    window.addEventListener("pagehide", handleLeave);
+    return () => {
+      window.removeEventListener("beforeunload", handleLeave);
+      window.removeEventListener("pagehide", handleLeave);
+    };
+  }, [joined]);
+
   // ---- タブがバックグラウンドから復帰した際、即座に再同期する ----
   // スマホでアプリを切り替えたりロック画面から戻った際、requestAnimationFrameが
   // 一時停止するため、その間の位置更新が相手に届いていないことがある。
