@@ -11,7 +11,7 @@ body {
   height: 100dvh; /* dvh対応ブラウザではこちらが優先して使われる */
   width: 100%;
   max-width: 100vw;
-  overflow: hidden;
+  /* overflow: hidden; */
   overscroll-behavior-y: none;
   touch-action: pan-x pan-y;
 }
