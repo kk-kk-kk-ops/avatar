@@ -134,6 +134,7 @@ export default function AvatarSpace({ initialName }: Props) {
   const keysDown = useRef<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
+  const proximityCircleRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const lastFrameTime = useRef<number>(performance.now());
 
@@ -1454,6 +1455,14 @@ export default function AvatarSpace({ initialName }: Props) {
         // 直接更新する(毎フレーム呼んでも画面全体の再描画が起きない)。
         avatarRefs.current.get(self.id)?.updatePosition(self.x, self.y);
 
+        // マイクの音声が届く範囲の目安の円も、アバターと同じく毎フレーム
+        // DOM操作で位置を更新する(Reactのstate経由だと追従が遅れて見える)。
+        if (proximityCircleRef.current) {
+          proximityCircleRef.current.style.transform = `translate(${
+            self.x - PROXIMITY_RADIUS
+          }px, ${self.y - PROXIMITY_RADIUS}px)`;
+        }
+
         // カメラ(マップ全体の表示位置)もDOM操作で直接更新する。
         // 画面中央に自分を固定し、端では止めてアイコン側が動くようにする。
         // スマホ(画面幅が狭い)場合は少し縮小(ズームアウト)して周囲が見えるようにする。
@@ -1787,7 +1796,7 @@ export default function AvatarSpace({ initialName }: Props) {
   // ---- 入室前:名前入力・アバター選択モーダル ----
   if (!joined) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-slate-900 px-4">
+      <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
         <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
           <h1 className="mb-1 text-lg font-bold text-slate-800">
             Grovina Officeに入室
@@ -1865,7 +1874,7 @@ export default function AvatarSpace({ initialName }: Props) {
     : 0;
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-slate-800">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-slate-800">
       {/* ヘッダー */}
       <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <div className="flex items-center gap-2">
@@ -2136,18 +2145,17 @@ export default function AvatarSpace({ initialName }: Props) {
               </div>
             ))}
 
-            {/* 自分の音声が届く範囲の目安(マイクON時のみ表示) */}
-            {selfPlayer && micEnabled && (
-              <div
-                className="pointer-events-none absolute rounded-full border border-emerald-400/40"
-                style={{
-                  left: selfPlayer.x - PROXIMITY_RADIUS,
-                  top: selfPlayer.y - PROXIMITY_RADIUS,
-                  width: PROXIMITY_RADIUS * 2,
-                  height: PROXIMITY_RADIUS * 2,
-                }}
-              />
-            )}
+            {/* 自分の音声が届く範囲の目安(マイクON時のみ表示。位置は毎フレームDOM操作で更新) */}
+            <div
+              ref={proximityCircleRef}
+              className={`pointer-events-none absolute left-0 top-0 rounded-full border border-emerald-400/40 ${
+                micEnabled ? "" : "hidden"
+              }`}
+              style={{
+                width: PROXIMITY_RADIUS * 2,
+                height: PROXIMITY_RADIUS * 2,
+              }}
+            />
 
             {playerList.map((p) => (
               <Avatar
