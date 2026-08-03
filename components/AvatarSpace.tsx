@@ -2059,12 +2059,16 @@ export default function AvatarSpace({ initialName }: Props) {
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* マップ:表示領域は固定し、中の世界をtransformで動かしてカメラ追従を実現。
-            transformの更新は毎フレームDOM操作で行うため、ここでは初期値のみ指定する。 */}
+            transformの更新は毎フレームDOM操作で行うため、ここでは初期値のみ指定する。
+            flexアイテムはデフォルトでmin-width/min-height: autoになり、中身が
+            大きいと縮まず親を押し広げてしまうことがあるため、min-w-0/min-h-0で
+            明示的に「縮んでよい」ことを指定しておく(中身のworldRefはposition:
+            absoluteなので通常は影響しないはずだが、念のための保険)。 */}
         <div
           ref={containerRef}
-          className="relative flex-1 overflow-hidden bg-slate-700"
+          className="relative min-w-0 flex-1 overflow-hidden bg-slate-700"
         >
           <div
             ref={worldRef}
