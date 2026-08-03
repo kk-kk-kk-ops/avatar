@@ -153,6 +153,8 @@ export default function AvatarSpace({ initialName }: Props) {
     >
   >(new Map());
   const viewportRef = useRef({ width: 0, height: 0 });
+  // TURNサーバーの認証情報(サーバー経由で取得。取得できるまではSTUNのみで動作する)
+  const turnServersRef = useRef<RTCIceServer[]>([]);
 
   // 画面共有・ビデオ通話のエラーメッセージは5秒で自動的に消す
   useEffect(() => {
@@ -177,6 +179,23 @@ export default function AvatarSpace({ initialName }: Props) {
   useEffect(() => {
     remoteScreenStreamsRef.current = remoteScreenStreams;
   }, [remoteScreenStreams]);
+
+  // ---- TURNサーバーの認証情報を取得(取得できるまではSTUNのみで動作する) ----
+  useEffect(() => {
+    if (!joined) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/turn-credentials");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.iceServers)) {
+          turnServersRef.current = data.iceServers;
+        }
+      } catch {
+        // 取得できなくてもSTUNのみで動作を続ける
+      }
+    })();
+  }, [joined]);
 
   // ---- 入室処理 ----
   const handleJoin = useCallback(() => {
@@ -570,6 +589,7 @@ export default function AvatarSpace({ initialName }: Props) {
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
           { urls: "stun:stun2.l.google.com:19302" },
+          ...turnServersRef.current,
         ],
       });
 
