@@ -1485,6 +1485,27 @@ export default function AvatarSpace({ initialName }: Props) {
           avatarRefs.current
             .get(peerId)
             ?.updatePosition(pos.currentX, pos.currentY);
+
+          // 近接ボイスチャットの接続開始は、Reactのstate更新(最大0.2秒おき)を
+          // 待たず、毎フレームその場でチェックする。WebRTCの接続確立自体には
+          // 数秒かかることがあるため、開始のトリガーだけでも早めることで、
+          // 実際に近づいた時点までに接続を完了させやすくする。
+          if (!peerConnections.current.has(peerId)) {
+            const dist = Math.hypot(pos.targetX - self.x, pos.targetY - self.y);
+            const peerZone = playersRef.current[peerId]?.meetingZoneId;
+            const sameZone = !!(
+              self.meetingZoneId &&
+              peerZone &&
+              self.meetingZoneId === peerZone
+            );
+            if (sameZone || dist <= PROXIMITY_RADIUS) {
+              if (selfId.current < peerId) {
+                startCall(peerId);
+              } else {
+                getOrCreatePeerConnection(peerId);
+              }
+            }
+          }
         });
 
         // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
@@ -1518,7 +1539,7 @@ export default function AvatarSpace({ initialName }: Props) {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [joined]);
+  }, [joined, startCall, getOrCreatePeerConnection]);
 
   // ---- 位置情報をロジック用に低頻度でReactのstateへ同期する ----
   // 見た目の描画はDOM操作で毎フレーム行っているが、近接判定(eligiblePeerIds)

@@ -28,11 +28,11 @@ export const AVATAR_IMAGES = [
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
 export const AVATAR_RADIUS = 45; // アバターの表示サイズ計算に使う半径(当たり判定には使わない)
-export const AVATAR_HITBOX_WIDTH = 30; // 当たり判定の幅(px)
-export const AVATAR_HITBOX_HEIGHT = 60; // 当たり判定の高さ(px)
+export const AVATAR_HITBOX_WIDTH = 20; // 当たり判定の幅(px)
+export const AVATAR_HITBOX_HEIGHT = 20; // 当たり判定の高さ(px)
 export const MOVE_SPEED = 220; // px / sec
 export const CHAT_BUBBLE_DURATION_MS = 60000; // 1分間表示。新しいメッセージが来ると上書きされる
-export const PROXIMITY_RADIUS = 45; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。マス目=40pxの約1マス分)
+export const PROXIMITY_RADIUS = 68; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。従来の1.5倍)
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
