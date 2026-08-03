@@ -518,6 +518,12 @@ export default function AvatarSpace({ initialName }: Props) {
     async (peerId: string) => {
       const pc = peerConnections.current.get(peerId);
       if (!pc) return;
+
+      // 別の交渉(offer/answer)がまだ進行中のタイミングで割り込むと、
+      // createOffer/setLocalDescriptionが失敗し、それっきり再試行されなく
+      // なることがあった。交渉が落ち着いている("stable")時だけ実行する。
+      if (pc.signalingState !== "stable") return;
+
       const senderTrackIds = new Set(
         pc
           .getSenders()
@@ -530,27 +536,45 @@ export default function AvatarSpace({ initialName }: Props) {
         cameraStreamRef.current,
       ].filter((s): s is MediaStream => !!s);
       let needsRenegotiation = false;
+      const addedTracks: MediaStreamTrack[] = [];
       myStreams.forEach((stream) => {
         stream.getTracks().forEach((track) => {
           if (!senderTrackIds.has(track.id)) {
             pc.addTrack(track, stream);
+            addedTracks.push(track);
             needsRenegotiation = true;
           }
         });
       });
       if (!needsRenegotiation) return;
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: {
-          from: selfId.current,
-          to: peerId,
-          sdp: offer,
-          videoTrackPurposes: buildVideoTrackPurposes(),
-        },
-      });
+
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        channelRef.current?.send({
+          type: "broadcast",
+          event: "webrtc-offer",
+          payload: {
+            from: selfId.current,
+            to: peerId,
+            sdp: offer,
+            videoTrackPurposes: buildVideoTrackPurposes(),
+          },
+        });
+      } catch {
+        // 失敗した場合、追加したトラックをsenderから外し、次回のチェックで
+        // 「まだ乗っていない」と判定させて再試行できるようにする
+        addedTracks.forEach((track) => {
+          const sender = pc.getSenders().find((s) => s.track === track);
+          if (sender) {
+            try {
+              pc.removeTrack(sender);
+            } catch {
+              // 無視(次回の判定が多少ズレる程度で致命的ではない)
+            }
+          }
+        });
+      }
     },
     [buildVideoTrackPurposes],
   );
