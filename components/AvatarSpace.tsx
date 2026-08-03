@@ -959,37 +959,109 @@ export default function AvatarSpace({ initialName }: Props) {
   // ---- Supabase Realtimeチャンネルの接続 ----
   useEffect(() => {
     if (!joined) return;
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const channel = supabase.channel(ROOM_NAME, {
-      config: { presence: { key: selfId.current } },
-    });
-    channelRef.current = channel;
+    const connectChannel = () => {
+      if (cancelled) return;
 
-    channel
-      .on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState<PlayerState>();
+      const channel = supabase.channel(ROOM_NAME, {
+        config: { presence: { key: selfId.current } },
+      });
+      channelRef.current = channel;
 
-        // syncイベントは複数人が同時に在室状況を更新した際、瞬間的に
-        // 不完全なスナップショットが届くことがある。そのタイミングで
-        // 「いなくなった」と判断して消してしまうと、実際にはまだ在室している
-        // 相手を誤って消してしまうことがあるため、ここでは削除は行わない
-        // (削除は正確な情報が来るleaveイベントと、下の定期的な自己修復に任せる)。
-        //
-        // ただし、名前・アバター画像・マイク状態などは track() が呼ばれた
-        // 瞬間にしか更新されないため、既に把握している相手であっても
-        // これらの「見た目」情報だけは反映する。位置情報(x, y, 向きなど)は
-        // 移動のbroadcastの方が新しいので、そちらは上書きしない。
-        setPlayers((prev) => {
-          let changed = false;
-          const next = { ...prev };
-          Object.values(state).forEach((entries) => {
-            const p = entries[0] as unknown as PlayerState;
-            if (p.id === selfId.current) return;
-            const current = next[p.id];
-            if (!current) {
-              next[p.id] = p;
+      channel
+        .on("presence", { event: "sync" }, () => {
+          const state = channel.presenceState<PlayerState>();
+
+          // syncイベントは複数人が同時に在室状況を更新した際、瞬間的に
+          // 不完全なスナップショットが届くことがある。そのタイミングで
+          // 「いなくなった」と判断して消してしまうと、実際にはまだ在室している
+          // 相手を誤って消してしまうことがあるため、ここでは削除は行わない
+          // (削除は正確な情報が来るleaveイベントと、下の定期的な自己修復に任せる)。
+          //
+          // ただし、名前・アバター画像・マイク状態などは track() が呼ばれた
+          // 瞬間にしか更新されないため、既に把握している相手であっても
+          // これらの「見た目」情報だけは反映する。位置情報(x, y, 向きなど)は
+          // 移動のbroadcastの方が新しいので、そちらは上書きしない。
+          setPlayers((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            Object.values(state).forEach((entries) => {
+              const p = entries[0] as unknown as PlayerState;
+              if (p.id === selfId.current) return;
+              const current = next[p.id];
+              if (!current) {
+                next[p.id] = p;
+                changed = true;
+                return;
+              }
+              if (
+                current.name !== p.name ||
+                current.color !== p.color ||
+                current.avatarImage !== p.avatarImage ||
+                current.micOn !== p.micOn ||
+                current.sharingScreen !== p.sharingScreen ||
+                current.inCall !== p.inCall
+              ) {
+                next[p.id] = {
+                  ...current,
+                  name: p.name,
+                  color: p.color,
+                  avatarImage: p.avatarImage,
+                  micOn: p.micOn,
+                  sharingScreen: p.sharingScreen,
+                  inCall: p.inCall,
+                };
+                changed = true;
+              }
+            });
+            // 自分の最新状態は selfState を優先(presence syncのタイムラグ対策)
+            if (
+              selfState.current &&
+              next[selfState.current.id] !== selfState.current
+            ) {
+              next[selfState.current.id] = selfState.current;
               changed = true;
-              return;
+            }
+            return changed ? next : prev;
+          });
+        })
+        .on("presence", { event: "leave" }, ({ key }) => {
+          peerPositionsRef.current.delete(key);
+          setPlayers((prev) => {
+            const copy = { ...prev };
+            delete copy[key];
+            return copy;
+          });
+        })
+        .on("broadcast", { event: "move" }, ({ payload }) => {
+          const p = payload as PlayerState;
+          if (p.id === selfId.current) return;
+
+          // 位置(見た目)はReactのstateを介さず、補間(interpolation)用の
+          // target座標だけを更新する。実際の描画は毎フレームのrAFループで行う。
+          const posEntry = peerPositionsRef.current.get(p.id);
+          if (posEntry) {
+            posEntry.targetX = p.x;
+            posEntry.targetY = p.y;
+          } else {
+            peerPositionsRef.current.set(p.id, {
+              currentX: p.x,
+              currentY: p.y,
+              targetX: p.x,
+              targetY: p.y,
+            });
+          }
+
+          // 名前・アバター画像・マイク状態など「見た目以外の情報」が変わった場合、
+          // または初めて見る相手の場合だけReactのstateを更新する。位置(x, y)の
+          // 変化だけでは再描画を起こさない(近接判定などロジック用には、下の
+          // 定期的な同期処理で低頻度に反映する)。
+          setPlayers((prev) => {
+            const current = prev[p.id];
+            if (!current) {
+              return { ...prev, [p.id]: p };
             }
             if (
               current.name !== p.name ||
@@ -997,195 +1069,148 @@ export default function AvatarSpace({ initialName }: Props) {
               current.avatarImage !== p.avatarImage ||
               current.micOn !== p.micOn ||
               current.sharingScreen !== p.sharingScreen ||
-              current.inCall !== p.inCall
+              current.inCall !== p.inCall ||
+              current.meetingZoneId !== p.meetingZoneId ||
+              current.message !== p.message
             ) {
-              next[p.id] = {
-                ...current,
-                name: p.name,
-                color: p.color,
-                avatarImage: p.avatarImage,
-                micOn: p.micOn,
-                sharingScreen: p.sharingScreen,
-                inCall: p.inCall,
+              return {
+                ...prev,
+                [p.id]: { ...current, ...p, x: current.x, y: current.y },
               };
-              changed = true;
             }
+            return prev;
           });
-          // 自分の最新状態は selfState を優先(presence syncのタイムラグ対策)
-          if (
-            selfState.current &&
-            next[selfState.current.id] !== selfState.current
-          ) {
-            next[selfState.current.id] = selfState.current;
-            changed = true;
-          }
-          return changed ? next : prev;
-        });
-      })
-      .on("presence", { event: "leave" }, ({ key }) => {
-        peerPositionsRef.current.delete(key);
-        setPlayers((prev) => {
-          const copy = { ...prev };
-          delete copy[key];
-          return copy;
-        });
-      })
-      .on("broadcast", { event: "move" }, ({ payload }) => {
-        const p = payload as PlayerState;
-        if (p.id === selfId.current) return;
-
-        // 位置(見た目)はReactのstateを介さず、補間(interpolation)用の
-        // target座標だけを更新する。実際の描画は毎フレームのrAFループで行う。
-        const posEntry = peerPositionsRef.current.get(p.id);
-        if (posEntry) {
-          posEntry.targetX = p.x;
-          posEntry.targetY = p.y;
-        } else {
-          peerPositionsRef.current.set(p.id, {
-            currentX: p.x,
-            currentY: p.y,
-            targetX: p.x,
-            targetY: p.y,
-          });
-        }
-
-        // 名前・アバター画像・マイク状態など「見た目以外の情報」が変わった場合、
-        // または初めて見る相手の場合だけReactのstateを更新する。位置(x, y)の
-        // 変化だけでは再描画を起こさない(近接判定などロジック用には、下の
-        // 定期的な同期処理で低頻度に反映する)。
-        setPlayers((prev) => {
-          const current = prev[p.id];
-          if (!current) {
-            return { ...prev, [p.id]: p };
-          }
-          if (
-            current.name !== p.name ||
-            current.color !== p.color ||
-            current.avatarImage !== p.avatarImage ||
-            current.micOn !== p.micOn ||
-            current.sharingScreen !== p.sharingScreen ||
-            current.inCall !== p.inCall ||
-            current.meetingZoneId !== p.meetingZoneId ||
-            current.message !== p.message
-          ) {
+        })
+        .on("broadcast", { event: "chat" }, ({ payload }) => {
+          const { id, message } = payload as { id: string; message: string };
+          setPlayers((prev) => {
+            if (!prev[id]) return prev;
             return {
               ...prev,
-              [p.id]: { ...current, ...p, x: current.x, y: current.y },
+              [id]: { ...prev[id], message, messageAt: Date.now() },
             };
-          }
-          return prev;
-        });
-      })
-      .on("broadcast", { event: "chat" }, ({ payload }) => {
-        const { id, message } = payload as { id: string; message: string };
-        setPlayers((prev) => {
-          if (!prev[id]) return prev;
-          return {
-            ...prev,
-            [id]: { ...prev[id], message, messageAt: Date.now() },
+          });
+        })
+        .on("broadcast", { event: "layout-update" }, ({ payload }) => {
+          const { obstacles: newObstacles, meetingZones: newZones } =
+            payload as {
+              obstacles?: Obstacle[];
+              meetingZones?: MeetingZone[];
+            };
+          if (newObstacles) setObstacles(newObstacles);
+          if (newZones) setMeetingZones(newZones);
+        })
+        .on("broadcast", { event: "webrtc-offer" }, async ({ payload }) => {
+          const { from, to, sdp, videoTrackPurposes } = payload as {
+            from: string;
+            to: string;
+            sdp: RTCSessionDescriptionInit;
+            videoTrackPurposes?: Record<string, "screen" | "camera">;
           };
-        });
-      })
-      .on("broadcast", { event: "layout-update" }, ({ payload }) => {
-        const { obstacles: newObstacles, meetingZones: newZones } = payload as {
-          obstacles?: Obstacle[];
-          meetingZones?: MeetingZone[];
-        };
-        if (newObstacles) setObstacles(newObstacles);
-        if (newZones) setMeetingZones(newZones);
-      })
-      .on("broadcast", { event: "webrtc-offer" }, async ({ payload }) => {
-        const { from, to, sdp, videoTrackPurposes } = payload as {
-          from: string;
-          to: string;
-          sdp: RTCSessionDescriptionInit;
-          videoTrackPurposes?: Record<string, "screen" | "camera">;
-        };
-        if (to !== selfId.current) return;
-        // ontrackが発火する前に、映像の種類を判定できるようにしておく。
-        // 上書きではなく追記(マージ)することで、タイミングによって
-        // 一部の情報が抜けたメッセージが来ても、以前分かっていた情報を
-        // 失わないようにする。
-        if (videoTrackPurposes) {
-          const existing = peerVideoPurposes.current.get(from) || {};
-          peerVideoPurposes.current.set(from, {
-            ...existing,
-            ...videoTrackPurposes,
-          });
-        }
-        const pc = getOrCreatePeerConnection(from);
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        await flushPendingCandidates(from, pc);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        channelRef.current?.send({
-          type: "broadcast",
-          event: "webrtc-answer",
-          payload: {
-            from: selfId.current,
-            to: from,
-            sdp: answer,
-            videoTrackPurposes: buildVideoTrackPurposes(),
-          },
-        });
-        // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
-        await ensureLocalVideoAttached(from);
-      })
-      .on("broadcast", { event: "webrtc-answer" }, async ({ payload }) => {
-        const { from, to, sdp, videoTrackPurposes } = payload as {
-          from: string;
-          to: string;
-          sdp: RTCSessionDescriptionInit;
-          videoTrackPurposes?: Record<string, "screen" | "camera">;
-        };
-        if (to !== selfId.current) return;
-        // ontrackが発火する前に、映像の種類を判定できるようにしておく(こちらも追記)
-        if (videoTrackPurposes) {
-          const existing = peerVideoPurposes.current.get(from) || {};
-          peerVideoPurposes.current.set(from, {
-            ...existing,
-            ...videoTrackPurposes,
-          });
-        }
-        const pc = peerConnections.current.get(from);
-        if (!pc) return;
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        await flushPendingCandidates(from, pc);
-        // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
-        await ensureLocalVideoAttached(from);
-      })
-      .on("broadcast", { event: "webrtc-ice" }, async ({ payload }) => {
-        const { from, to, candidate } = payload as {
-          from: string;
-          to: string;
-          candidate: RTCIceCandidateInit;
-        };
-        if (to !== selfId.current) return;
-        const pc = peerConnections.current.get(from);
-        if (pc && pc.remoteDescription) {
-          try {
-            await pc.addIceCandidate(candidate);
-          } catch {
-            // 追加に失敗した候補は無視(接続確立には他の候補が使われる)
+          if (to !== selfId.current) return;
+          // ontrackが発火する前に、映像の種類を判定できるようにしておく。
+          // 上書きではなく追記(マージ)することで、タイミングによって
+          // 一部の情報が抜けたメッセージが来ても、以前分かっていた情報を
+          // 失わないようにする。
+          if (videoTrackPurposes) {
+            const existing = peerVideoPurposes.current.get(from) || {};
+            peerVideoPurposes.current.set(from, {
+              ...existing,
+              ...videoTrackPurposes,
+            });
           }
-        } else {
-          const list = pendingCandidates.current.get(from) ?? [];
-          list.push(candidate);
-          pendingCandidates.current.set(from, list);
-        }
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED" && selfState.current) {
-          await channel.track(selfState.current);
-        }
-        // Supabase Realtimeはソケット切断時に自動で再接続・チャンネル再参加を
-        // 行うため、ここで自前でchannel.subscribe()を呼び直す必要はない。
-        // 同じチャンネルに対して2回目のsubscribe()を呼ぶと
-        // 「tried to join multiple times」エラーになり、かえって不安定になる。
-      });
+          const pc = getOrCreatePeerConnection(from);
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          await flushPendingCandidates(from, pc);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          channelRef.current?.send({
+            type: "broadcast",
+            event: "webrtc-answer",
+            payload: {
+              from: selfId.current,
+              to: from,
+              sdp: answer,
+              videoTrackPurposes: buildVideoTrackPurposes(),
+            },
+          });
+          // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
+          await ensureLocalVideoAttached(from);
+        })
+        .on("broadcast", { event: "webrtc-answer" }, async ({ payload }) => {
+          const { from, to, sdp, videoTrackPurposes } = payload as {
+            from: string;
+            to: string;
+            sdp: RTCSessionDescriptionInit;
+            videoTrackPurposes?: Record<string, "screen" | "camera">;
+          };
+          if (to !== selfId.current) return;
+          // ontrackが発火する前に、映像の種類を判定できるようにしておく(こちらも追記)
+          if (videoTrackPurposes) {
+            const existing = peerVideoPurposes.current.get(from) || {};
+            peerVideoPurposes.current.set(from, {
+              ...existing,
+              ...videoTrackPurposes,
+            });
+          }
+          const pc = peerConnections.current.get(from);
+          if (!pc) return;
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          await flushPendingCandidates(from, pc);
+          // 自分がすでに画面共有/ビデオ通話中なら、この接続にもきちんと乗っているか確認する
+          await ensureLocalVideoAttached(from);
+        })
+        .on("broadcast", { event: "webrtc-ice" }, async ({ payload }) => {
+          const { from, to, candidate } = payload as {
+            from: string;
+            to: string;
+            candidate: RTCIceCandidateInit;
+          };
+          if (to !== selfId.current) return;
+          const pc = peerConnections.current.get(from);
+          if (pc && pc.remoteDescription) {
+            try {
+              await pc.addIceCandidate(candidate);
+            } catch {
+              // 追加に失敗した候補は無視(接続確立には他の候補が使われる)
+            }
+          } else {
+            const list = pendingCandidates.current.get(from) ?? [];
+            list.push(candidate);
+            pendingCandidates.current.set(from, list);
+          }
+        })
+        .subscribe(async (status) => {
+          if (status === "SUBSCRIBED" && selfState.current) {
+            await channel.track(selfState.current);
+          }
+          if (
+            status === "CHANNEL_ERROR" ||
+            status === "TIMED_OUT" ||
+            status === "CLOSED"
+          ) {
+            // このチャンネルインスタンスはもう使えないため、同じインスタンスに
+            // 再度subscribe()するのではなく、少し待ってから新しいチャンネルを
+            // 作り直して再接続する(同一インスタンスへの2回目のsubscribe()は
+            // 「tried to join multiple times」エラーになるため避ける)。
+            if (channelRef.current !== channel) return; // すでに別の接続に置き換わっている
+            if (reconnectTimer) return; // 予約は1つだけにする
+            reconnectTimer = setTimeout(() => {
+              reconnectTimer = null;
+              if (cancelled) return;
+              channel.unsubscribe();
+              connectChannel();
+            }, 1500);
+          }
+        });
+    };
+
+    connectChannel();
 
     return () => {
-      channel.unsubscribe();
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      channelRef.current?.unsubscribe();
       channelRef.current = null;
     };
   }, [
