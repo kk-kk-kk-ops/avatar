@@ -1893,9 +1893,9 @@ export default function AvatarSpace({ initialName }: Props) {
         maxCameraY,
       )
     : 0;
-
+  // overflow-hidden
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-slate-800">
+    <div className="flex h-full w-full flex-col  bg-slate-800">
       {/* ヘッダー */}
       <div className="flex min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <div className="flex shrink-0 items-center gap-2">
