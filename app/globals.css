@@ -7,20 +7,24 @@ body {
   padding: 0;
   margin: 0;
   overscroll-behavior: none;
-  /* 実際に見えている画面の高さぴったりに固定する(スマホのアドレスバー分の
-     誤差も吸収できるdvhを使用。未対応ブラウザ向けにvhもフォールバックで指定)。
-     はみ出し・全体スクロールを防ぐため、常にhiddenにしておく。 */
   height: 100vh;
+  height: 100dvh; /* dvh対応ブラウザではこちらが優先して使われる */
   width: 100%;
-  max-width: 100%;
+  max-width: 100vw;
   overflow: hidden;
   overscroll-behavior-y: none;
-  /* ピンチズーム・ダブルタップズームを禁止(viewport設定と合わせて) */
   touch-action: pan-x pan-y;
 }
 
-/* スマホで長押しした際にテキスト選択・コピーメニューが出ないようにする。
-   ただし入力欄(名前・チャット)では通常通り選択・編集できるよう除外する。 */
+/* 横スクロールが必要な行(ツールバー等)でスクロールバーを隠すためのユーティリティ */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 html,
 body,
 * {

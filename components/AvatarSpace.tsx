@@ -1876,9 +1876,9 @@ export default function AvatarSpace({ initialName }: Props) {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-slate-800">
       {/* ヘッダー */}
-      <div className="flex items-center justify-between border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white">
+      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo.png"
@@ -1886,26 +1886,37 @@ export default function AvatarSpace({ initialName }: Props) {
               className="h-5 w-5 object-contain"
             />
           </div>
-          <span className="text-sm font-semibold">Grovina Office</span>
+          <span className="hidden text-sm font-semibold sm:inline">
+            Grovina Office
+          </span>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-300">
+
+        {/* 右側のボタン群:幅が足りない時は横スクロールで吸収し、
+      見た目上「見切れる」のではなく「隠れたぶんはスクロールで見える」状態にする */}
+        <div className="no-scrollbar flex min-w-0 flex-1 items-center justify-end gap-2 overflow-x-auto sm:gap-3">
+          <span className="hidden shrink-0 whitespace-nowrap text-xs text-slate-300 md:inline">
             オンライン: {playerList.length}人
           </span>
           {eligiblePeerIds.length > 0 && (
-            <span className="rounded-full bg-emerald-600/80 px-2 py-0.5 text-[10px] font-semibold text-white">
+            <span className="hidden shrink-0 whitespace-nowrap rounded-full bg-emerald-600/80 px-2 py-0.5 text-[10px] font-semibold text-white sm:inline-block">
               🎧 音声通話中({eligiblePeerIds.length}人)
             </span>
           )}
-          <MicButton enabled={micEnabled} onClick={toggleMic} />
-          <ScreenShareButton
-            enabled={screenSharing}
-            onClick={toggleScreenShare}
-          />
-          <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
+          <div className="shrink-0">
+            <MicButton enabled={micEnabled} onClick={toggleMic} />
+          </div>
+          <div className="shrink-0">
+            <ScreenShareButton
+              enabled={screenSharing}
+              onClick={toggleScreenShare}
+            />
+          </div>
+          <div className="shrink-0">
+            <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
+          </div>
           <button
             onClick={openSettings}
-            className="rounded p-1.5 text-sm hover:bg-white/10"
+            className="shrink-0 rounded p-1.5 text-sm hover:bg-white/10"
             aria-label="アバター・名前の設定"
             title="アバター・名前を変更"
           >
@@ -1914,7 +1925,7 @@ export default function AvatarSpace({ initialName }: Props) {
           {/* スマホのみ表示するハンバーガーボタン */}
           <button
             onClick={() => setShowParticipants((v) => !v)}
-            className="rounded p-1.5 hover:bg-white/10 sm:hidden"
+            className="shrink-0 rounded p-1.5 hover:bg-white/10 sm:hidden"
             aria-label="参加者一覧を開く"
           >
             <span className="mb-1 block h-0.5 w-5 bg-white" />
