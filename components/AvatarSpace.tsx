@@ -1912,47 +1912,53 @@ export default function AvatarSpace({ initialName }: Props) {
           </span>
         </div>
 
-        {/* 右側のボタン群:幅が足りない時は横スクロールで吸収し、
-      見た目上「見切れる」のではなく「隠れたぶんはスクロールで見える」状態にする */}
-        <div className="no-scrollbar flex min-w-0 flex-1 items-center justify-end gap-2 overflow-x-auto sm:gap-3">
-          <span className="hidden shrink-0 whitespace-nowrap text-xs text-slate-300 md:inline">
-            オンライン: {playerList.length}人
-          </span>
-          {eligiblePeerIds.length > 0 && (
-            <span className="hidden shrink-0 whitespace-nowrap rounded-full bg-emerald-600/80 px-2 py-0.5 text-[10px] font-semibold text-white sm:inline-block">
-              🎧 音声通話中({eligiblePeerIds.length}人)
+        {/* 右側:テキスト情報(幅が足りない時だけ横スクロールで隠れてよい)と、
+      操作アイコン(常に全部見える必要がある)を別グループに分ける。
+      同じスクロール領域に入れてしまうと、幅が足りない時にアイコンごと
+      スクロール範囲の外に出てしまい、⚙️などが見えなくなることがあったため。 */}
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          <div className="no-scrollbar min-w-0 overflow-x-auto whitespace-nowrap">
+            <span className="hidden shrink-0 text-xs text-slate-300 md:inline">
+              オンライン: {playerList.length}人
             </span>
-          )}
-          <div className="shrink-0">
-            <MicButton enabled={micEnabled} onClick={toggleMic} />
+            {eligiblePeerIds.length > 0 && (
+              <span className="ml-2 hidden shrink-0 rounded-full bg-emerald-600/80 px-2 py-0.5 text-[10px] font-semibold text-white sm:inline-block">
+                🎧 音声通話中({eligiblePeerIds.length}人)
+              </span>
+            )}
           </div>
-          <div className="shrink-0">
-            <ScreenShareButton
-              enabled={screenSharing}
-              onClick={toggleScreenShare}
-            />
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <div className="shrink-0">
+              <MicButton enabled={micEnabled} onClick={toggleMic} />
+            </div>
+            <div className="shrink-0">
+              <ScreenShareButton
+                enabled={screenSharing}
+                onClick={toggleScreenShare}
+              />
+            </div>
+            <div className="shrink-0">
+              <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
+            </div>
+            <button
+              onClick={openSettings}
+              className="shrink-0 rounded p-1.5 text-sm hover:bg-white/10"
+              aria-label="アバター・名前の設定"
+              title="アバター・名前を変更"
+            >
+              ⚙️
+            </button>
+            {/* スマホのみ表示するハンバーガーボタン */}
+            <button
+              onClick={() => setShowParticipants((v) => !v)}
+              className="shrink-0 rounded p-1.5 hover:bg-white/10 sm:hidden"
+              aria-label="参加者一覧を開く"
+            >
+              <span className="mb-1 block h-0.5 w-5 bg-white" />
+              <span className="mb-1 block h-0.5 w-5 bg-white" />
+              <span className="block h-0.5 w-5 bg-white" />
+            </button>
           </div>
-          <div className="shrink-0">
-            <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
-          </div>
-          <button
-            onClick={openSettings}
-            className="shrink-0 rounded p-1.5 text-sm hover:bg-white/10"
-            aria-label="アバター・名前の設定"
-            title="アバター・名前を変更"
-          >
-            ⚙️
-          </button>
-          {/* スマホのみ表示するハンバーガーボタン */}
-          <button
-            onClick={() => setShowParticipants((v) => !v)}
-            className="shrink-0 rounded p-1.5 hover:bg-white/10 sm:hidden"
-            aria-label="参加者一覧を開く"
-          >
-            <span className="mb-1 block h-0.5 w-5 bg-white" />
-            <span className="mb-1 block h-0.5 w-5 bg-white" />
-            <span className="block h-0.5 w-5 bg-white" />
-          </button>
         </div>
       </div>
 
