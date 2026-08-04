@@ -6,6 +6,13 @@ import { addRoom, deleteRoom, renameRoom } from "./actions";
 
 type TemplateOption = { id: string; name: string };
 
+// どの操作が進行中かを個別に表示するため、useTransitionのpending
+// フラグだけでなく「どのルームの何をしているか」も保持する。
+type PendingAction =
+  | { type: "add" }
+  | { type: "rename"; roomId: string }
+  | { type: "delete"; roomId: string };
+
 export default function RoomManager({
   rooms,
   maxRooms,
@@ -16,6 +23,9 @@ export default function RoomManager({
   templates: TemplateOption[];
 }) {
   const [pending, startTransition] = useTransition();
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -23,11 +33,14 @@ export default function RoomManager({
 
   const handleAdd = () => {
     setError(null);
+    setPendingAction({ type: "add" });
     startTransition(async () => {
       try {
         await addRoom(templateId);
       } catch (e) {
         setError(e instanceof Error ? e.message : "ルームの作成に失敗しました");
+      } finally {
+        setPendingAction(null);
       }
     });
   };
@@ -35,11 +48,14 @@ export default function RoomManager({
   const handleDelete = (roomId: string) => {
     if (!window.confirm("このルームを削除します。よろしいですか?")) return;
     setError(null);
+    setPendingAction({ type: "delete", roomId });
     startTransition(async () => {
       try {
         await deleteRoom(roomId);
       } catch (e) {
         setError(e instanceof Error ? e.message : "ルームの削除に失敗しました");
+      } finally {
+        setPendingAction(null);
       }
     });
   };
@@ -51,12 +67,15 @@ export default function RoomManager({
 
   const submitRename = (roomId: string) => {
     setError(null);
+    setPendingAction({ type: "rename", roomId });
     startTransition(async () => {
       try {
         await renameRoom(roomId, renameValue);
         setRenamingId(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "ルーム名の変更に失敗しました");
+      } finally {
+        setPendingAction(null);
       }
     });
   };
@@ -91,14 +110,18 @@ export default function RoomManager({
                     onKeyDown={(e) =>
                       e.key === "Enter" && submitRename(room.id)
                     }
-                    className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs outline-none focus:border-slate-500"
+                    disabled={pending}
+                    className="w-full rounded border border-slate-300 px-1.5 py-1 text-xs outline-none focus:border-slate-500 disabled:opacity-60"
                   />
                   <button
                     onClick={() => submitRename(room.id)}
                     disabled={pending}
-                    className="shrink-0 rounded bg-slate-900 px-2 text-xs text-white"
+                    className="shrink-0 rounded bg-slate-900 px-2 text-xs text-white disabled:opacity-60"
                   >
-                    保存
+                    {pendingAction?.type === "rename" &&
+                    pendingAction.roomId === room.id
+                      ? "保存中..."
+                      : "保存"}
                   </button>
                 </div>
               ) : (
@@ -109,16 +132,20 @@ export default function RoomManager({
                   <div className="mt-1 flex gap-2">
                     <button
                       onClick={() => startRename(room)}
-                      className="text-[10px] text-slate-500 hover:text-slate-800"
+                      disabled={pending}
+                      className="text-[10px] text-slate-500 hover:text-slate-800 disabled:opacity-60"
                     >
                       名前変更
                     </button>
                     <button
                       onClick={() => handleDelete(room.id)}
                       disabled={pending}
-                      className="text-[10px] text-red-500 hover:text-red-700"
+                      className="text-[10px] text-red-500 hover:text-red-700 disabled:opacity-60"
                     >
-                      削除
+                      {pendingAction?.type === "delete" &&
+                      pendingAction.roomId === room.id
+                        ? "削除中..."
+                        : "削除"}
                     </button>
                   </div>
                 </>
@@ -156,7 +183,7 @@ export default function RoomManager({
           disabled={pending || rooms.length >= maxRooms || templates.length === 0}
           className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
         >
-          ➕ ルーム追加
+          {pendingAction?.type === "add" ? "追加中..." : "➕ ルーム追加"}
         </button>
       </div>
     </div>

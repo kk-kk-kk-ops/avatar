@@ -6,12 +6,19 @@ import { createTemplate, deleteTemplate } from "./actions";
 import { uploadTemplateImageClient } from "./uploadTemplateImage";
 import TemplateEditor from "./TemplateEditor";
 
+// どの操作が進行中かを個別に表示するため、useTransitionのpendingフラグ
+// だけでなく「どのテンプレートの何をしているか」も保持する。
+type PendingAction = { type: "create" } | { type: "delete"; id: string };
+
 export default function TemplateManager({
   templates,
 }: {
   templates: MapTemplate[];
 }) {
   const [pending, startTransition] = useTransition();
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -26,6 +33,7 @@ export default function TemplateManager({
       setError("テンプレート名と背景画像を入力してください");
       return;
     }
+    setPendingAction({ type: "create" });
     startTransition(async () => {
       try {
         const backgroundImageUrl = await uploadTemplateImageClient(file);
@@ -35,6 +43,8 @@ export default function TemplateManager({
         setCreating(false);
       } catch (e) {
         setError(e instanceof Error ? e.message : "作成に失敗しました");
+      } finally {
+        setPendingAction(null);
       }
     });
   };
@@ -42,11 +52,14 @@ export default function TemplateManager({
   const handleDelete = (id: string) => {
     if (!window.confirm("このテンプレートを削除します。よろしいですか?")) return;
     setError(null);
+    setPendingAction({ type: "delete", id });
     startTransition(async () => {
       try {
         await deleteTemplate(id);
       } catch (e) {
         setError(e instanceof Error ? e.message : "削除に失敗しました");
+      } finally {
+        setPendingAction(null);
       }
     });
   };
@@ -84,16 +97,19 @@ export default function TemplateManager({
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setEditingId(t.id)}
-                  className="text-[10px] text-slate-500 hover:text-slate-800"
+                  disabled={pending}
+                  className="text-[10px] text-slate-500 hover:text-slate-800 disabled:opacity-60"
                 >
                   編集
                 </button>
                 <button
                   onClick={() => handleDelete(t.id)}
                   disabled={pending}
-                  className="text-[10px] text-red-500 hover:text-red-700"
+                  className="text-[10px] text-red-500 hover:text-red-700 disabled:opacity-60"
                 >
-                  削除
+                  {pendingAction?.type === "delete" && pendingAction.id === t.id
+                    ? "削除中..."
+                    : "削除"}
                 </button>
               </div>
             </div>
@@ -113,7 +129,8 @@ export default function TemplateManager({
             type="file"
             accept="image/*"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="w-full text-xs"
+            disabled={pending}
+            className="w-full text-xs disabled:opacity-60"
           />
           <div className="flex gap-2">
             <button
@@ -121,11 +138,12 @@ export default function TemplateManager({
               disabled={pending}
               className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
             >
-              作成
+              {pendingAction?.type === "create" ? "作成中..." : "作成"}
             </button>
             <button
               onClick={() => setCreating(false)}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              disabled={pending}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
             >
               キャンセル
             </button>
