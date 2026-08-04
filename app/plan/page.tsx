@@ -20,6 +20,13 @@ export default async function PlanPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4 py-10">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl">
+        <div className="mb-4 flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Grovina" className="h-6 w-6 object-contain" />
+          <span className="text-sm font-bold text-slate-800">
+            Grovina Office
+          </span>
+        </div>
         <h1 className="mb-1 text-lg font-bold text-slate-800">
           プランを選択
         </h1>

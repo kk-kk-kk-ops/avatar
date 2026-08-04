@@ -144,7 +144,7 @@ export const PLANS: Record<
   standard: {
     label: "スタンダード",
     subLabel: "(3ルーム20名)",
-    priceLabel: "2980円",
+    priceLabel: "2980円/月",
     priceYen: 2980,
     maxRooms: 3,
     maxPeoplePerRoom: 20,
@@ -152,7 +152,7 @@ export const PLANS: Record<
   pro: {
     label: "プロ",
     subLabel: "(5ルーム30名)",
-    priceLabel: "4980円",
+    priceLabel: "4980円/月",
     priceYen: 4980,
     maxRooms: 5,
     maxPeoplePerRoom: 30,

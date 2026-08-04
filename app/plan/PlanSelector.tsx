@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PLANS, type PlanId } from "@/lib/types";
 import { startFreeTrial } from "./actions";
+import LogoutButton from "@/components/auth/LogoutButton";
 
 const PLAN_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
 
@@ -81,6 +82,8 @@ export default function PlanSelector() {
       >
         {pending ? "処理中..." : "次へ"}
       </button>
+
+      <LogoutButton className="mt-3 w-full rounded-lg border border-slate-300 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50" />
     </div>
   );
 }
