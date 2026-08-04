@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
 import {
-  MAP_WIDTH,
   NEW_ITEM_SIZE,
   clampPosition,
   clampSize,
@@ -39,6 +38,8 @@ type DragState =
     };
 
 const MAX_DISPLAY_WIDTH = 720;
+const MIN_MAP_SIZE = 400;
+const MAX_MAP_SIZE = 8000;
 
 // テンプレートの背景画像上に障害物・ミーティングエリアを配置編集する。
 // マップ編集はここに一本化されており、個々のルームでは編集できない。
@@ -63,26 +64,24 @@ export default function TemplateEditor({
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(template.name);
   const [renaming, setRenaming] = useState(false);
+  const [mapWidth, setMapWidth] = useState(template.width);
+  const [mapHeight, setMapHeight] = useState(template.height);
   const dragState = useRef<DragState | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
-  const [baseSize, setBaseSize] = useState(MAX_DISPLAY_WIDTH);
+  const [availableWidth, setAvailableWidth] = useState(MAX_DISPLAY_WIDTH);
+  const [availableHeight, setAvailableHeight] = useState(600);
   const [zoom, setZoom] = useState(1);
 
-  // 画面(特に縦幅が小さいノートPCなど)にマップ全体が収まるよう、表示の
-  // 基準サイズを「横幅に入る幅」と「縦幅に入る高さ」の小さい方に合わせて
-  // 動的に決める。MAP_WIDTH===MAP_HEIGHT(正方形)なので1辺の長さだけで良い。
-  // (CSSのaspect-ratio+max-heightだけだと横幅と縦幅が独立して決まってしまい、
-  // マップの下側がコンテナからはみ出て見えなくなっていたため、JS側で
-  // 実測して正方形を保証する)
+  // 画面(特に縦幅が小さいノートPCなど)にマップ全体が収まるよう、
+  // 「横幅に入る幅」「縦幅に入る高さ」を実測しておく(依存はマウント時の
+  // リサイズだけで、マップサイズが変わったときの再計算はfitScale側で
+  // 都度行う)。
   useEffect(() => {
     const el = measureRef.current;
     if (!el) return;
     const recompute = () => {
-      const availableWidth = el.clientWidth;
-      const availableHeight = window.innerHeight * 0.6;
-      setBaseSize(
-        Math.max(240, Math.min(MAX_DISPLAY_WIDTH, availableWidth, availableHeight)),
-      );
+      setAvailableWidth(el.clientWidth);
+      setAvailableHeight(window.innerHeight * 0.6);
     };
     recompute();
     const observer = new ResizeObserver(recompute);
@@ -94,13 +93,18 @@ export default function TemplateEditor({
     };
   }, []);
 
-  // 障害物・ミーティングエリアの位置調整がしやすいよう、拡大表示できる
-  // ようにしている。拡大時は表示ウィンドウ(baseSize四方)は変えず、中身の
-  // マップ側をrenderedSizeまで大きくしてスクロールで見る(transform:scaleで
+  // マップ全体(mapWidth×mapHeight)が画面に収まる縮尺。障害物・ミーティング
+  // エリアの位置調整がしやすいよう、これとは別に拡大表示もできるように
+  // している。拡大時は表示ウィンドウ(viewportWidth×viewportHeight)は
+  // 変えず、中身のマップ側だけ大きくしてスクロールで見る(transform:scaleで
   // 見た目だけ拡大するとoverflow-autoのスクロール範囲計算があいまいに
   // なるため、実際のpx幅・高さとして拡大している)。
-  const renderedSize = baseSize * zoom;
-  const scale = renderedSize / MAP_WIDTH;
+  const fitScale = Math.min(availableWidth / mapWidth, availableHeight / mapHeight);
+  const viewportWidth = mapWidth * fitScale;
+  const viewportHeight = mapHeight * fitScale;
+  const scale = fitScale * zoom;
+  const renderedWidth = mapWidth * scale;
+  const renderedHeight = mapHeight * scale;
 
   const handlePointerDown = (
     e: React.PointerEvent,
@@ -149,6 +153,8 @@ export default function TemplateEditor({
             drag.originY + dy,
             item.width,
             item.height,
+            mapWidth,
+            mapHeight,
           );
           return { ...item, ...pos };
         }
@@ -157,6 +163,8 @@ export default function TemplateEditor({
           item.y,
           drag.originWidth + dx,
           drag.originHeight + dy,
+          mapWidth,
+          mapHeight,
         );
         return { ...item, ...size };
       }),
@@ -204,7 +212,13 @@ export default function TemplateEditor({
     setError(null);
     setSaving(true);
     try {
-      await updateTemplateLayout(template.id, obstacles, meetingZones);
+      await updateTemplateLayout(
+        template.id,
+        obstacles,
+        meetingZones,
+        mapWidth,
+        mapHeight,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存に失敗しました");
     } finally {
@@ -335,6 +349,44 @@ export default function TemplateEditor({
 
       <div ref={measureRef} className="w-full" style={{ maxWidth: MAX_DISPLAY_WIDTH }}>
         <div className="mb-2 flex items-center gap-2">
+          <span className="text-xs font-semibold text-slate-500">マップサイズ</span>
+          <input
+            type="number"
+            min={MIN_MAP_SIZE}
+            max={MAX_MAP_SIZE}
+            step={100}
+            value={mapWidth}
+            onChange={(e) =>
+              setMapWidth(
+                Math.min(
+                  MAX_MAP_SIZE,
+                  Math.max(MIN_MAP_SIZE, Number(e.target.value) || mapWidth),
+                ),
+              )
+            }
+            className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
+          />
+          <span className="text-xs text-slate-400">×</span>
+          <input
+            type="number"
+            min={MIN_MAP_SIZE}
+            max={MAX_MAP_SIZE}
+            step={100}
+            value={mapHeight}
+            onChange={(e) =>
+              setMapHeight(
+                Math.min(
+                  MAX_MAP_SIZE,
+                  Math.max(MIN_MAP_SIZE, Number(e.target.value) || mapHeight),
+                ),
+              )
+            }
+            className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
+          />
+          <span className="text-xs text-slate-400">px</span>
+        </div>
+
+        <div className="mb-2 flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-500">
             拡大 {Math.round(zoom * 100)}%
           </span>
@@ -373,15 +425,15 @@ export default function TemplateEditor({
 
         <div
           className="relative touch-none overflow-auto rounded-lg border border-slate-300 bg-slate-700"
-          style={{ width: baseSize, height: baseSize }}
+          style={{ width: viewportWidth, height: viewportHeight }}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
         >
           <div
             className="relative"
             style={{
-              width: renderedSize,
-              height: renderedSize,
+              width: renderedWidth,
+              height: renderedHeight,
               backgroundImage: `url('${backgroundImageUrl}')`,
               backgroundSize: "cover",
               backgroundPosition: "center",

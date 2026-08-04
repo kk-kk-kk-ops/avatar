@@ -5,6 +5,8 @@ import { resolveUserRouteState } from "@/lib/authRouting";
 import {
   PLANS,
   NEW_ITEM_SIZE,
+  MAP_WIDTH,
+  MAP_HEIGHT,
   type PlanId,
   type Room,
   type MapTemplate,
@@ -71,7 +73,9 @@ export default async function MasterPage() {
 
   const { data: templateRows } = await supabase
     .from("templates")
-    .select("id, name, background_image_url, obstacles, meeting_area")
+    .select(
+      "id, name, background_image_url, obstacles, meeting_area, map_width, map_height",
+    )
     .order("created_at", { ascending: true });
 
   const templates: MapTemplate[] = (templateRows ?? []).map((t) => {
@@ -105,6 +109,8 @@ export default async function MasterPage() {
       backgroundImageUrl: t.background_image_url,
       obstacles,
       meetingZones,
+      width: t.map_width ?? MAP_WIDTH,
+      height: t.map_height ?? MAP_HEIGHT,
     };
   });
 

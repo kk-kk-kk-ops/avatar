@@ -127,6 +127,12 @@ export default function AvatarSpace({
   const obstaclesRef = useRef<Obstacle[]>(DEFAULT_OBSTACLES);
   const meetingZonesRef = useRef<MeetingZone[]>(DEFAULT_MEETING_ZONES);
 
+  // マップの広さ(テンプレートごとに変更可能)。デフォルトは従来通りの
+  // MAP_WIDTH/MAP_HEIGHTだが、テンプレート側で個別サイズが設定されて
+  // いればそちらを使う。
+  const [mapSize, setMapSize] = useState({ width: MAP_WIDTH, height: MAP_HEIGHT });
+  const mapSizeRef = useRef({ width: MAP_WIDTH, height: MAP_HEIGHT });
+
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -253,8 +259,8 @@ export default function AvatarSpace({
     const name = nameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
     // マップ中央が障害物と重なっていたら、その障害物の上端のすぐ上へ押し出す
     const spawn = resolveSpawnPosition(
-      MAP_WIDTH / 2,
-      MAP_HEIGHT / 2,
+      mapSizeRef.current.width / 2,
+      mapSizeRef.current.height / 2,
       obstacles,
     );
     const initial: PlayerState = {
@@ -282,6 +288,9 @@ export default function AvatarSpace({
   useEffect(() => {
     meetingZonesRef.current = meetingZones;
   }, [meetingZones]);
+  useEffect(() => {
+    mapSizeRef.current = mapSize;
+  }, [mapSize]);
 
   // ---- マップレイアウト:選んだルームのテンプレートから読み込む ----
   // マップの編集はマスターがテンプレートに対して行う運用に一本化した
@@ -295,13 +304,17 @@ export default function AvatarSpace({
     (async () => {
       const { data } = await supabase
         .from("templates")
-        .select("background_image_url, obstacles, meeting_area")
+        .select("background_image_url, obstacles, meeting_area, map_width, map_height")
         .eq("id", room.templateId)
         .maybeSingle();
       if (!data) return;
 
       if (data.background_image_url) {
         setBackgroundImageUrl(data.background_image_url);
+      }
+
+      if (data.map_width && data.map_height) {
+        setMapSize({ width: data.map_width, height: data.map_height });
       }
 
       if (Array.isArray(data.obstacles)) {
@@ -1328,11 +1341,11 @@ export default function AvatarSpace({
 
           const nextX = Math.min(
             Math.max(self.x + dx, halfW),
-            MAP_WIDTH - halfW,
+            mapSizeRef.current.width - halfW,
           );
           const nextY = Math.min(
             Math.max(self.y + dy, halfH),
-            MAP_HEIGHT - halfH,
+            mapSizeRef.current.height - halfH,
           );
 
           // 障害物との当たり判定(矩形どうし)。X軸・Y軸を別々に判定することで、
@@ -1387,8 +1400,14 @@ export default function AvatarSpace({
         const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
         const effectiveViewportWidth = viewport.width / mapScale;
         const effectiveViewportHeight = viewport.height / mapScale;
-        const maxCameraX = Math.max(MAP_WIDTH - effectiveViewportWidth, 0);
-        const maxCameraY = Math.max(MAP_HEIGHT - effectiveViewportHeight, 0);
+        const maxCameraX = Math.max(
+          mapSizeRef.current.width - effectiveViewportWidth,
+          0,
+        );
+        const maxCameraY = Math.max(
+          mapSizeRef.current.height - effectiveViewportHeight,
+          0,
+        );
         const cameraX = Math.min(
           Math.max(self.x - effectiveViewportWidth / 2, 0),
           maxCameraX,
@@ -1855,8 +1874,8 @@ export default function AvatarSpace({
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
   const effectiveViewportWidth = viewport.width / mapScale;
   const effectiveViewportHeight = viewport.height / mapScale;
-  const maxCameraX = Math.max(MAP_WIDTH - effectiveViewportWidth, 0);
-  const maxCameraY = Math.max(MAP_HEIGHT - effectiveViewportHeight, 0);
+  const maxCameraX = Math.max(mapSize.width - effectiveViewportWidth, 0);
+  const maxCameraY = Math.max(mapSize.height - effectiveViewportHeight, 0);
   const cameraX = selfPlayer
     ? Math.min(
         Math.max(selfPlayer.x - effectiveViewportWidth / 2, 0),
@@ -2043,8 +2062,8 @@ export default function AvatarSpace({
             ref={worldRef}
             className="absolute left-0 top-0"
             style={{
-              width: MAP_WIDTH,
-              height: MAP_HEIGHT,
+              width: mapSize.width,
+              height: mapSize.height,
               transformOrigin: "0 0",
               transform: `scale(${mapScale}) translate(${-cameraX}px, ${-cameraY}px)`,
               backgroundImage: `url('${backgroundImageUrl}')`,

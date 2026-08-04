@@ -58,11 +58,18 @@ export async function updateTemplateLayout(
   templateId: string,
   obstacles: Obstacle[],
   meetingZones: MeetingZone[],
+  mapWidth: number,
+  mapHeight: number,
 ) {
   const { supabase } = await requireMaster();
   const { error } = await supabase
     .from("templates")
-    .update({ obstacles, meeting_area: meetingZones })
+    .update({
+      obstacles,
+      meeting_area: meetingZones,
+      map_width: mapWidth,
+      map_height: mapHeight,
+    })
     .eq("id", templateId);
   if (error) throw new Error("レイアウトの保存に失敗しました");
 

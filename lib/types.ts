@@ -96,6 +96,8 @@ export type MapTemplate = {
   backgroundImageUrl: string;
   obstacles: Obstacle[];
   meetingZones: MeetingZone[];
+  width: number;
+  height: number;
 };
 
 // 契約単位の組織。Supabaseのaccountsテーブルの行に対応する。
@@ -281,16 +283,20 @@ export function resolveSpawnPosition(
   return { x, y: adjustedY };
 }
 
-// 移動(位置変更)時、幅・高さは変えずにマップの外へ出ないようx,yを制限する
+// 移動(位置変更)時、幅・高さは変えずにマップの外へ出ないようx,yを制限する。
+// mapWidth/mapHeightを省略した場合は既定のMAP_WIDTH/MAP_HEIGHTを使う
+// (テンプレートごとにマップサイズを変えられるようにしたため引数化した)。
 export function clampPosition(
   x: number,
   y: number,
   width: number,
   height: number,
+  mapWidth: number = MAP_WIDTH,
+  mapHeight: number = MAP_HEIGHT,
 ): { x: number; y: number } {
   return {
-    x: Math.min(Math.max(x, 0), Math.max(MAP_WIDTH - width, 0)),
-    y: Math.min(Math.max(y, 0), Math.max(MAP_HEIGHT - height, 0)),
+    x: Math.min(Math.max(x, 0), Math.max(mapWidth - width, 0)),
+    y: Math.min(Math.max(y, 0), Math.max(mapHeight - height, 0)),
   };
 }
 
@@ -300,9 +306,11 @@ export function clampSize(
   y: number,
   width: number,
   height: number,
+  mapWidth: number = MAP_WIDTH,
+  mapHeight: number = MAP_HEIGHT,
 ): { width: number; height: number } {
-  const maxWidth = Math.max(MAP_WIDTH - x, MIN_ITEM_SIZE);
-  const maxHeight = Math.max(MAP_HEIGHT - y, MIN_ITEM_SIZE);
+  const maxWidth = Math.max(mapWidth - x, MIN_ITEM_SIZE);
+  const maxHeight = Math.max(mapHeight - y, MIN_ITEM_SIZE);
   return {
     width: Math.min(Math.max(width, MIN_ITEM_SIZE), maxWidth),
     height: Math.min(Math.max(height, MIN_ITEM_SIZE), maxHeight),
