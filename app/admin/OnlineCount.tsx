@@ -13,7 +13,7 @@ export default function OnlineCount({ rooms }: { rooms: Room[] }) {
     if (rooms.length === 0) return;
     const supabase = createClient();
     const channels = rooms.map((room) => {
-      const channel = supabase.channel(`avatar-room-${room.name}`, {
+      const channel = supabase.channel(`avatar-room-${room.id}`, {
         config: { presence: { key: `observer-${crypto.randomUUID()}` } },
       });
       channel
