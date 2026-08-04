@@ -37,7 +37,7 @@ import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LogoutButton from "./auth/LogoutButton";
 
-const ROOM_NAME = "avatar-room-main";
+const DEFAULT_ROOM_NAME = "Grovina Office";
 const COLORS = [
   "#F97316",
   "#3B82F6",
@@ -79,6 +79,10 @@ export default function AvatarSpace({ initialName }: Props) {
   // auth.uid()がRLS側で常にnullになっていた)。useStateの遅延初期化で
   // マウント時に一度だけ生成する。
   const [supabase] = useState(() => createClient());
+  // ---- ルーム選択(Googleログイン後、最初に必ずここへ遷移する) ----
+  const [roomSelected, setRoomSelected] = useState(false);
+  const [roomNameInput, setRoomNameInput] = useState(DEFAULT_ROOM_NAME);
+  const [roomName, setRoomName] = useState(DEFAULT_ROOM_NAME);
   const [joined, setJoined] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
@@ -221,6 +225,24 @@ export default function AvatarSpace({ initialName }: Props) {
       }
     })();
   }, [joined]);
+
+  // ---- ルーム選択:ルーム名を確定してアバター選択画面へ進む ----
+  const handleSelectRoom = useCallback(() => {
+    setRoomName(roomNameInput.trim() || DEFAULT_ROOM_NAME);
+    setRoomSelected(true);
+  }, [roomNameInput]);
+
+  // ---- 退出:バーチャル空間から抜けてルーム選択画面に戻る ----
+  // joinedをfalseにすることで、Realtimeチャンネルの購読解除・マイクや
+  // 画面共有ストリームの解放・WebRTC接続のクローズなど、既存の
+  // 「joined依存のエフェクトのクリーンアップ」が一通り走る。playersは
+  // ここで明示的に空にしておかないと、次に入室した際に前のルームの
+  // 参加者が残ったまま表示されてしまう。
+  const handleLeaveRoom = useCallback(() => {
+    setJoined(false);
+    setPlayers({});
+    setRoomSelected(false);
+  }, []);
 
   // ---- 入室処理 ----
   const handleJoin = useCallback(() => {
@@ -978,7 +1000,7 @@ export default function AvatarSpace({ initialName }: Props) {
     const connectChannel = () => {
       if (cancelled) return;
 
-      const channel = supabase.channel(ROOM_NAME, {
+      const channel = supabase.channel(`avatar-room-${roomName}`, {
         config: { presence: { key: selfId.current } },
       });
       channelRef.current = channel;
@@ -1265,6 +1287,7 @@ export default function AvatarSpace({ initialName }: Props) {
     };
   }, [
     joined,
+    roomName,
     getOrCreatePeerConnection,
     flushPendingCandidates,
     ensureLocalVideoAttached,
@@ -1858,13 +1881,44 @@ export default function AvatarSpace({ initialName }: Props) {
     setSettingsOpen(false);
   }, [settingsNameInput, settingsAvatar, settingsStatus]);
 
+  // ---- ルーム選択画面(Googleログイン後、最初に必ずここへ来る) ----
+  if (!roomSelected) {
+    return (
+      <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
+        <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+          <h1 className="mb-1 text-lg font-bold text-slate-800">
+            ルームを選択
+          </h1>
+          <p className="mb-4 text-sm text-slate-500">
+            入室するルーム名を入力してください
+          </p>
+
+          <input
+            autoFocus
+            value={roomNameInput}
+            onChange={(e) => setRoomNameInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSelectRoom()}
+            placeholder={DEFAULT_ROOM_NAME}
+            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          />
+          <button
+            onClick={handleSelectRoom}
+            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+          >
+            入室
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ---- 入室前:名前入力・アバター選択モーダル ----
   if (!joined) {
     return (
       <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
         <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
           <h1 className="mb-1 text-lg font-bold text-slate-800">
-            Grovina Officeに入室
+            {roomName}に入室
           </h1>
           <p className="mb-4 text-sm text-slate-500">
             アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)
@@ -1952,7 +2006,7 @@ export default function AvatarSpace({ initialName }: Props) {
             />
           </div>
           <span className="hidden text-sm font-semibold sm:inline">
-            Grovina Office
+            {roomName}
           </span>
         </div>
 
@@ -2385,24 +2439,37 @@ export default function AvatarSpace({ initialName }: Props) {
               </div>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* チャット入力 */}
-      <div className="flex items-center gap-2 border-t border-slate-700 bg-slate-900 px-4 py-2">
-        <input
-          value={chatInput}
-          onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendChat()}
-          placeholder="メッセージを入力してEnter(PCは WASD / 矢印キー、スマホは左下のボタンで移動)"
-          className="flex-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-slate-400"
-        />
-        <button
-          onClick={sendChat}
-          className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600"
-        >
-          送信
-        </button>
+          {/* 退出:ルーム選択画面へ戻る */}
+          <div className="mt-3">
+            <button
+              onClick={handleLeaveRoom}
+              className="w-full rounded-lg bg-red-900/60 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-900"
+            >
+              🚪 退出
+            </button>
+          </div>
+
+          {/* チャット入力(以前は画面下部にあったが、サイドバー最下部へ移動した) */}
+          <div className="mt-auto border-t border-slate-700 pt-3">
+            <p className="mb-2 text-[10px] leading-relaxed text-slate-400">
+              移動:PCは WASD / 矢印キー、スマホは左下のボタン
+            </p>
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && sendChat()}
+              placeholder="メッセージを入力してEnter"
+              className="mb-2 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-slate-400"
+            />
+            <button
+              onClick={sendChat}
+              className="w-full rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600"
+            >
+              送信
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* スマホ用移動ボタン(sm以上の画面では非表示) */}
