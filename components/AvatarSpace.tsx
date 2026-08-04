@@ -26,7 +26,7 @@ import {
   DEFAULT_OBSTACLES,
   DEFAULT_MEETING_ZONES,
   AVATAR_IMAGES,
-  ROOMS,
+  Room,
 } from "@/lib/types";
 import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
@@ -70,9 +70,15 @@ type DragState = {
 
 type Props = {
   initialName?: string;
+  rooms: Room[];
+  maxPeoplePerRoom: number;
 };
 
-export default function AvatarSpace({ initialName }: Props) {
+export default function AvatarSpace({
+  initialName,
+  rooms,
+  maxPeoplePerRoom,
+}: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
   // 同じクライアント生成関数を使う(以前は素のcreateClientを使っており、
@@ -81,8 +87,12 @@ export default function AvatarSpace({ initialName }: Props) {
   const [supabase] = useState(() => createClient());
   // ---- ルーム選択(Googleログイン後、最初に必ずここへ遷移する) ----
   const [roomSelected, setRoomSelected] = useState(false);
-  const [selectedRoomId, setSelectedRoomId] = useState(ROOMS[0].id);
-  const [roomName, setRoomName] = useState(ROOMS[0].name);
+  const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
+  // roomIdはRealtimeチャンネル名・map_layoutの検索キーに使う「確定した」ID。
+  // roomNameは表示用(ヘッダー・入室モーダルのタイトル)。
+  const [roomId, setRoomId] = useState("");
+  const [roomName, setRoomName] = useState("");
+  const [roomJoinError, setRoomJoinError] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
@@ -228,10 +238,12 @@ export default function AvatarSpace({ initialName }: Props) {
 
   // ---- ルーム選択:選んだルームを確定してアバター選択画面へ進む ----
   const handleSelectRoom = useCallback(() => {
-    const room = ROOMS.find((r) => r.id === selectedRoomId) ?? ROOMS[0];
+    const room = rooms.find((r) => r.id === selectedRoomId) ?? rooms[0];
+    if (!room) return; // ルームが1つも無い(管理者がまだ作成していない)場合
+    setRoomId(room.id);
     setRoomName(room.name);
     setRoomSelected(true);
-  }, [selectedRoomId]);
+  }, [rooms, selectedRoomId]);
 
   // ---- 退出:バーチャル空間から抜けてルーム選択画面に戻る ----
   // joinedをfalseにすることで、Realtimeチャンネルの購読解除・マイクや
@@ -247,6 +259,7 @@ export default function AvatarSpace({ initialName }: Props) {
 
   // ---- 入室処理 ----
   const handleJoin = useCallback(() => {
+    setRoomJoinError(null);
     const name = nameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
     // マップ中央が障害物と重なっていたら、その障害物の上端のすぐ上へ押し出す
     const spawn = resolveSpawnPosition(
@@ -287,7 +300,7 @@ export default function AvatarSpace({ initialName }: Props) {
       const { data } = await supabase
         .from("map_layout")
         .select("obstacles, meeting_area")
-        .eq("id", "default")
+        .eq("room_id", roomId)
         .maybeSingle();
       if (!data) return;
 
@@ -341,7 +354,7 @@ export default function AvatarSpace({ initialName }: Props) {
         setMeetingZones(loaded);
       }
     })();
-  }, [joined]);
+  }, [joined, roomId, supabase]);
 
   // ---- マップレイアウト:他の人へ配信し、Supabaseにも保存する ----
   const saveLayout = useCallback(
@@ -353,12 +366,16 @@ export default function AvatarSpace({ initialName }: Props) {
       });
       supabase
         .from("map_layout")
-        .upsert({
-          id: "default",
-          obstacles: nextObstacles,
-          meeting_area: nextZones,
-          updated_at: new Date().toISOString(),
-        })
+        .upsert(
+          {
+            id: roomId,
+            room_id: roomId,
+            obstacles: nextObstacles,
+            meeting_area: nextZones,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "room_id" },
+        )
         .then(({ error }) => {
           if (error) {
             // eslint-disable-next-line no-console
@@ -366,7 +383,7 @@ export default function AvatarSpace({ initialName }: Props) {
           }
         });
     },
-    [],
+    [roomId, supabase],
   );
 
   // ---- 現在画面に表示されているマップ上の中心座標を取得(新規アイテムの設置位置に使用) ----
@@ -1001,7 +1018,7 @@ export default function AvatarSpace({ initialName }: Props) {
     const connectChannel = () => {
       if (cancelled) return;
 
-      const channel = supabase.channel(`avatar-room-${roomName}`, {
+      const channel = supabase.channel(`avatar-room-${roomId}`, {
         config: { presence: { key: selfId.current } },
       });
       channelRef.current = channel;
@@ -1255,6 +1272,21 @@ export default function AvatarSpace({ initialName }: Props) {
         })
         .subscribe(async (status) => {
           if (status === "SUBSCRIBED" && selfState.current) {
+            // 人数上限チェック(プランごとのルーム定員)。presenceの状態は
+            // SUBSCRIBED時点で既にサーバーから受け取っているものを見る。
+            // 複数人が全く同時に入室した場合の厳密な排他制御まではできない
+            // (クライアント側のベストエフォートな制限)。
+            const currentCount = Object.keys(channel.presenceState()).length;
+            if (currentCount >= maxPeoplePerRoom) {
+              cancelled = true;
+              channel.unsubscribe();
+              if (channelRef.current === channel) channelRef.current = null;
+              setRoomJoinError(
+                `このルームは満員です(最大${maxPeoplePerRoom}人)。しばらくしてから再度お試しください。`,
+              );
+              setJoined(false);
+              return;
+            }
             await channel.track(selfState.current);
           }
           if (
@@ -1288,7 +1320,8 @@ export default function AvatarSpace({ initialName }: Props) {
     };
   }, [
     joined,
-    roomName,
+    roomId,
+    maxPeoplePerRoom,
     getOrCreatePeerConnection,
     flushPendingCandidates,
     ensureLocalVideoAttached,
@@ -1894,8 +1927,14 @@ export default function AvatarSpace({ initialName }: Props) {
             入室するルームを選んでください
           </p>
 
+          {rooms.length === 0 && (
+            <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              まだルームがありません。管理画面からルームを作成してください。
+            </p>
+          )}
+
           <div className="mb-4 grid grid-cols-2 gap-2">
-            {ROOMS.map((room) => (
+            {rooms.map((room) => (
               <button
                 key={room.id}
                 type="button"
@@ -1921,7 +1960,8 @@ export default function AvatarSpace({ initialName }: Props) {
 
           <button
             onClick={handleSelectRoom}
-            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+            disabled={rooms.length === 0}
+            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
             入室
           </button>
@@ -1941,6 +1981,12 @@ export default function AvatarSpace({ initialName }: Props) {
           <p className="mb-4 text-sm text-slate-500">
             アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)
           </p>
+
+          {roomJoinError && (
+            <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+              {roomJoinError}
+            </p>
+          )}
 
           <div className="mb-4">
             <AvatarPicker

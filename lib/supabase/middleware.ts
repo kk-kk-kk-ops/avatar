@@ -2,8 +2,9 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_MAX_AGE } from "./constants";
 
-// 認証不要でアクセスできるパス
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+// 認証不要でアクセスできるパス("/"はTOPページ。ログイン済みなら
+// page.tsx側でプラン選択/管理画面/ルーム選択へ振り分ける)
+const PUBLIC_PATHS = ["/", "/auth/callback"];
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some(
@@ -53,14 +54,8 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // 未ログインで、ログイン不要なページ以外へアクセスした場合は/loginへ
+  // 未ログインで、ログイン不要なページ以外へアクセスした場合はTOPへ
   if (!user && !isPublicPath(pathname)) {
-    const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  // ログイン済みで/loginへアクセスした場合はトップページへ
-  if (user && pathname === "/login") {
     return NextResponse.redirect(new URL("/", request.url));
   }
 

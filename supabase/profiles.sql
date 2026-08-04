@@ -11,6 +11,14 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- アカウント(契約単位)への所属とロール。account_idがnullの間は
+-- 「まだプラン未選択・未招待の新規ユーザー」を表す。
+-- accounts.sqlを先に実行しておくこと(account_idの外部キー参照のため)。
+alter table public.profiles
+  add column if not exists account_id uuid references public.accounts(id) on delete set null;
+alter table public.profiles
+  add column if not exists role text check (role in ('admin', 'guest'));
+
 alter table public.profiles enable row level security;
 
 -- 本人だけが自分のプロフィールを閲覧できる

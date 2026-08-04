@@ -1,21 +1,33 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 export default function GoogleLoginButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // TOPページに招待リンク(?invite=トークン)経由で来た場合、OAuthの
+  // リダイレクト先にも引き継いでおく。Googleの認証画面を経由しても
+  // クエリはそのまま保持されるため、/auth/callback側で招待トークンを
+  // 受け取ってゲストとしてアカウントに紐付けられる。
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite");
 
   const handleLogin = async () => {
     setLoading(true);
     setError(null);
     try {
       const supabase = createClient();
+      const callbackUrl = new URL(
+        "/auth/callback",
+        window.location.origin,
+      );
+      if (inviteToken) callbackUrl.searchParams.set("invite", inviteToken);
       const { error: signInError } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: callbackUrl.toString(),
         },
       });
       if (signInError) {

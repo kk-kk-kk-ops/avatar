@@ -77,21 +77,72 @@ export function getAvatarSpritePath(
   return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.png`;
 }
 
-// ルーム選択画面で選べるルーム一覧。今は1つだけだが、後で追加しやすいよう
-// 配列にしてある(name部分がSupabase RealtimeのチャンネルIDにも使われる)。
+// ルーム(バーチャル空間)。Supabaseのroomsテーブルの行に対応する
+// (roomsテーブルはaccount単位で複数持てる)。
 export type Room = {
   id: string;
+  accountId: string;
   name: string;
   previewImage: string;
 };
 
-export const ROOMS: Room[] = [
+// 契約単位の組織。Supabaseのaccountsテーブルの行に対応する。
+export type Account = {
+  id: string;
+  name: string;
+  plan: PlanId;
+  trialEndsAt: string | null;
+  ownerUserId: string;
+  inviteToken: string;
+};
+
+export type ProfileRole = "admin" | "guest";
+
+export type PlanId = "free" | "light" | "standard" | "pro";
+
+// 各プランの上限(ルーム数、ルームごとの同時接続人数)と表示用ラベル。
+// 料金・上限はサービス側の固定値のためDBではなくここで管理する。
+export const PLANS: Record<
+  PlanId,
   {
-    id: "grovina-office",
-    name: "Grovina Office",
-    previewImage: "/map-background.webp",
+    label: string;
+    subLabel: string;
+    priceLabel: string;
+    maxRooms: number;
+    maxPeoplePerRoom: number;
+  }
+> = {
+  free: {
+    label: "無料で試す【7日間】",
+    subLabel: "(スタンダードプラン)",
+    priceLabel: "無料",
+    maxRooms: 3,
+    maxPeoplePerRoom: 20,
   },
-];
+  light: {
+    label: "ライトプラン",
+    subLabel: "(1ルーム10名)",
+    priceLabel: "980円/月",
+    maxRooms: 1,
+    maxPeoplePerRoom: 10,
+  },
+  standard: {
+    label: "スタンダードプラン",
+    subLabel: "(3ルーム20名)",
+    priceLabel: "2980円",
+    maxRooms: 3,
+    maxPeoplePerRoom: 20,
+  },
+  pro: {
+    label: "プロプラン",
+    subLabel: "(5ルーム30名)",
+    priceLabel: "4980円",
+    maxRooms: 5,
+    maxPeoplePerRoom: 30,
+  },
+};
+
+export const FREE_TRIAL_DAYS = 7;
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
