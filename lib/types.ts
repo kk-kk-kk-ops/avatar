@@ -126,7 +126,7 @@ export const PLANS: Record<
   }
 > = {
   free: {
-    label: "無料で試す【7日間】",
+    label: "無料お試し（7日間）",
     subLabel: "(スタンダードプラン)",
     priceLabel: "無料",
     priceYen: 0,
@@ -134,7 +134,7 @@ export const PLANS: Record<
     maxPeoplePerRoom: 20,
   },
   light: {
-    label: "ライトプラン",
+    label: "ライト",
     subLabel: "(1ルーム10名)",
     priceLabel: "980円/月",
     priceYen: 980,
@@ -142,7 +142,7 @@ export const PLANS: Record<
     maxPeoplePerRoom: 10,
   },
   standard: {
-    label: "スタンダードプラン",
+    label: "スタンダード",
     subLabel: "(3ルーム20名)",
     priceLabel: "2980円",
     priceYen: 2980,
@@ -150,7 +150,7 @@ export const PLANS: Record<
     maxPeoplePerRoom: 20,
   },
   pro: {
-    label: "プロプラン",
+    label: "プロ",
     subLabel: "(5ルーム30名)",
     priceLabel: "4980円",
     priceYen: 4980,

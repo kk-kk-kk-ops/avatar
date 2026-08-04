@@ -24,7 +24,9 @@ export default async function PlanPage() {
           プランを選択
         </h1>
         <p className="mb-6 text-sm text-slate-500">
-          まずはプランを選んで始めましょう。無料お試しはいつでもプラン変更できます。
+          まずは無料でお試しください
+          <br />
+          7日間じっくり体験してから、ご希望のプランをお選びいただけます。
         </p>
         <PlanSelector />
       </div>
