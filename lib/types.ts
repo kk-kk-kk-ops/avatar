@@ -163,6 +163,10 @@ export const PLANS: Record<
 
 export const FREE_TRIAL_DAYS = 7;
 
+// マスター権限を持つアカウントは、プランのルーム数上限に関わらずここまで
+// 作成できる(運用担当者自身のアカウントのため)。
+export const MASTER_MAX_ROOMS = 10;
+
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
 export const AVATAR_RADIUS = 45; // アバターの表示サイズ計算に使う半径(当たり判定には使わない)

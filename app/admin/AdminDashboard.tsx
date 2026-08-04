@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { PlanId, Room } from "@/lib/types";
-import { PLANS } from "@/lib/types";
 import OnlineCount from "./OnlineCount";
 import RoomManager from "./RoomManager";
 import InvitePanel from "./InvitePanel";
@@ -22,12 +21,14 @@ type TemplateOption = { id: string; name: string };
 export default function AdminDashboard({
   rooms,
   plan,
+  maxRooms,
   trialEndsAt,
   inviteToken,
   templates,
 }: {
   rooms: Room[];
   plan: PlanId;
+  maxRooms: number;
   trialEndsAt: string | null;
   inviteToken: string;
   templates: TemplateOption[];
@@ -54,11 +55,7 @@ export default function AdminDashboard({
 
       {tab === "dashboard" && <OnlineCount rooms={rooms} />}
       {tab === "rooms" && (
-        <RoomManager
-          rooms={rooms}
-          maxRooms={PLANS[plan].maxRooms}
-          templates={templates}
-        />
+        <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
       )}
       {tab === "invite" && <InvitePanel inviteToken={inviteToken} />}
       {tab === "billing" && (

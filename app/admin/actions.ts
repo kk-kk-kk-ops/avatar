@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { PLANS } from "@/lib/types";
+import { PLANS, MASTER_MAX_ROOMS } from "@/lib/types";
 
 async function requireAdminAccount() {
   const supabase = createClient();
@@ -19,11 +19,17 @@ async function requireAdminAccount() {
     .maybeSingle();
   if (!account) redirect("/plan");
 
-  return { supabase, account };
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_master")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  return { supabase, account, isMaster: profile?.is_master === true };
 }
 
 export async function addRoom(templateId: string) {
-  const { supabase, account } = await requireAdminAccount();
+  const { supabase, account, isMaster } = await requireAdminAccount();
 
   const { data: template } = await supabase
     .from("templates")
@@ -37,7 +43,9 @@ export async function addRoom(templateId: string) {
     .select("id", { count: "exact", head: true })
     .eq("account_id", account.id);
 
-  const maxRooms = PLANS[account.plan as keyof typeof PLANS].maxRooms;
+  const maxRooms = isMaster
+    ? MASTER_MAX_ROOMS
+    : PLANS[account.plan as keyof typeof PLANS].maxRooms;
   if ((count ?? 0) >= maxRooms) {
     throw new Error(
       `現在のプランではルームを${maxRooms}個までしか作成できません。プランを変更してください。`,

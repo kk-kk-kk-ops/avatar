@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
-import type { PlanId, Room } from "@/lib/types";
+import { PLANS, MASTER_MAX_ROOMS, type PlanId, type Room } from "@/lib/types";
 import AdminDashboard from "./AdminDashboard";
 import LogoutButton from "@/components/auth/LogoutButton";
 
@@ -43,6 +43,9 @@ export default async function AdminPage() {
     .select("id, name")
     .order("created_at", { ascending: true });
 
+  const plan = (account?.plan as PlanId) ?? "free";
+  const maxRooms = state.isMaster ? MASTER_MAX_ROOMS : PLANS[plan].maxRooms;
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
@@ -75,7 +78,8 @@ export default async function AdminPage() {
       <main className="mx-auto max-w-3xl px-6 py-8">
         <AdminDashboard
           rooms={rooms}
-          plan={(account?.plan as PlanId) ?? "free"}
+          plan={plan}
+          maxRooms={maxRooms}
           trialEndsAt={account?.trial_ends_at ?? null}
           inviteToken={account?.invite_token ?? ""}
           templates={templateRows ?? []}
