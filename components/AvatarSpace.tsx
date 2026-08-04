@@ -531,11 +531,19 @@ export default function AvatarSpace({ initialName }: Props) {
       // なることがあった。交渉が落ち着いている("stable")時だけ実行する。
       if (pc.signalingState !== "stable") return;
 
-      const senderTrackIds = new Set(
+      // 「senderとしてtrackが付いているか」ではなく「実際にoffer/answerの
+      // やり取りでネゴシエーション済み(mid = m-lineが割り当て済み)か」で
+      // 判定する。相手(offer送信側)がその時点で映像を持っていなかった場合、
+      // 最初のofferには映像用のm-line自体が無く、こちらがaddTrackしていても
+      // answerには乗らない(WebRTCの仕様上、answerはofferに無いm-lineを
+      // 追加できない)。以前はsenderの存在だけを見ていたため、この
+      // 「track はあるが未ネゴシエーション」の状態を「対応済み」と誤判定し、
+      // 再送信(renegotiation)が行われないままになっていた。
+      const negotiatedTrackIds = new Set(
         pc
-          .getSenders()
-          .map((s) => s.track?.id)
-          .filter((id): id is string => !!id),
+          .getTransceivers()
+          .filter((t) => t.mid !== null && t.sender.track)
+          .map((t) => t.sender.track!.id),
       );
       const myStreams = [
         localStreamRef.current,
@@ -546,11 +554,15 @@ export default function AvatarSpace({ initialName }: Props) {
       const addedTracks: MediaStreamTrack[] = [];
       myStreams.forEach((stream) => {
         stream.getTracks().forEach((track) => {
-          if (!senderTrackIds.has(track.id)) {
+          if (negotiatedTrackIds.has(track.id)) return;
+          // trackを送るsender自体は既にある場合、addTrackし直すと重複
+          // senderになってしまうため、無い場合だけ追加する。
+          const existingSender = pc.getSenders().find((s) => s.track === track);
+          if (!existingSender) {
             pc.addTrack(track, stream);
             addedTracks.push(track);
-            needsRenegotiation = true;
           }
+          needsRenegotiation = true;
         });
       });
       if (!needsRenegotiation) return;
