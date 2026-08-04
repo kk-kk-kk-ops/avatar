@@ -14,6 +14,7 @@ create table if not exists public.rooms (
 alter table public.rooms enable row level security;
 
 -- 自分の所属アカウントのルームだけ閲覧可能(admin・guest共通)
+drop policy if exists "rooms: select own account" on public.rooms;
 create policy "rooms: select own account"
   on public.rooms for select
   using (
@@ -23,6 +24,7 @@ create policy "rooms: select own account"
   );
 
 -- 追加・変更・削除は自分がオーナーのアカウントのルームのみ(admin操作)
+drop policy if exists "rooms: modify own account as owner" on public.rooms;
 create policy "rooms: modify own account as owner"
   on public.rooms for all
   using (

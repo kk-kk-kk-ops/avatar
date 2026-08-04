@@ -30,11 +30,13 @@ alter table public.accounts enable row level security;
 -- accounts_policies.sql側で作成する(profiles.sql実行後でないと作れないため)。
 
 -- 作成はログイン済みユーザーが自分をオーナーとして作る場合のみ(プラン選択画面から)
+drop policy if exists "accounts: insert own" on public.accounts;
 create policy "accounts: insert own"
   on public.accounts for insert
   with check (auth.uid() = owner_user_id);
 
 -- 更新(プラン変更・招待トークン再発行など)はオーナーのみ
+drop policy if exists "accounts: update own" on public.accounts;
 create policy "accounts: update own"
   on public.accounts for update
   using (auth.uid() = owner_user_id)
