@@ -130,6 +130,9 @@ export default function AvatarSpace({ initialName }: Props) {
   const pendingCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(
     new Map(),
   );
+  // 相手ごとに「今offerを作成・送信している最中か」を記録する。ほぼ同時に
+  // 双方からofferが届く交渉の衝突(グレア)を検知するために使う。
+  const makingOffer = useRef<Map<string, boolean>>(new Map());
   const lastTrackedZoneId = useRef<string | null>(null);
   const wasMovingRef = useRef(false);
   const lastMoveSentAt = useRef(0);
@@ -516,6 +519,37 @@ export default function AvatarSpace({ initialName }: Props) {
     return map;
   }, []);
 
+  // offerを作成し、setLocalDescriptionしてから相手へ送信する共通処理。
+  // (以前は7箇所前後で同じ3行がほぼそのまま重複していた)
+  // 送信中はmakingOfferをtrueにしておき、ほぼ同時に相手からもofferが
+  // 届いた場合の衝突(グレア)判定にwebrtc-offerハンドラ側で使う。
+  const sendOffer = useCallback(
+    async (
+      peerId: string,
+      pc: RTCPeerConnection,
+      offerOptions?: RTCOfferOptions,
+    ) => {
+      makingOffer.current.set(peerId, true);
+      try {
+        const offer = await pc.createOffer(offerOptions);
+        await pc.setLocalDescription(offer);
+        channelRef.current?.send({
+          type: "broadcast",
+          event: "webrtc-offer",
+          payload: {
+            from: selfId.current,
+            to: peerId,
+            sdp: offer,
+            videoTrackPurposes: buildVideoTrackPurposes(),
+          },
+        });
+      } finally {
+        makingOffer.current.set(peerId, false);
+      }
+    },
+    [buildVideoTrackPurposes],
+  );
+
   // 接続がすでにできている相手に対して、自分が今送っているはずのトラック
   // (マイク・画面共有・カメラ)がまだ正しく乗っていなければ、追加して
   // 再送信する。接続する順番やタイミングによっては、最初のofferの時点では
@@ -568,18 +602,7 @@ export default function AvatarSpace({ initialName }: Props) {
       if (!needsRenegotiation) return;
 
       try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        channelRef.current?.send({
-          type: "broadcast",
-          event: "webrtc-offer",
-          payload: {
-            from: selfId.current,
-            to: peerId,
-            sdp: offer,
-            videoTrackPurposes: buildVideoTrackPurposes(),
-          },
-        });
+        await sendOffer(peerId, pc);
       } catch {
         // 失敗した場合、追加したトラックをsenderから外し、次回のチェックで
         // 「まだ乗っていない」と判定させて再試行できるようにする
@@ -595,32 +618,24 @@ export default function AvatarSpace({ initialName }: Props) {
         });
       }
     },
-    [buildVideoTrackPurposes],
+    [sendOffer],
   );
 
   // 一時的な回線の乱れで切れた場合、自動で再接続を試みる
   // 接続が不安定になった際、自分がofferを送る側(IDが小さい方)だけが
   // iceRestartオプション付きで再接続を試みる(双方が同時に送ると衝突するため)
-  const restartIce = useCallback(async (peerId: string) => {
-    const pc = peerConnections.current.get(peerId);
-    if (!pc || selfId.current >= peerId) return;
-    try {
-      const offer = await pc.createOffer({ iceRestart: true });
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: {
-          from: selfId.current,
-          to: peerId,
-          sdp: offer,
-          videoTrackPurposes: buildVideoTrackPurposes(),
-        },
-      });
-    } catch {
-      // 失敗した場合は次回の切断検知時に再度試みる
-    }
-  }, []);
+  const restartIce = useCallback(
+    async (peerId: string) => {
+      const pc = peerConnections.current.get(peerId);
+      if (!pc || selfId.current >= peerId) return;
+      try {
+        await sendOffer(peerId, pc, { iceRestart: true });
+      } catch {
+        // 失敗した場合は次回の切断検知時に再度試みる
+      }
+    },
+    [sendOffer],
+  );
 
   const getOrCreatePeerConnection = useCallback(
     (peerId: string) => {
@@ -731,20 +746,9 @@ export default function AvatarSpace({ initialName }: Props) {
   const startCall = useCallback(
     async (peerId: string) => {
       const pc = getOrCreatePeerConnection(peerId);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: {
-          from: selfId.current,
-          to: peerId,
-          sdp: offer,
-          videoTrackPurposes: buildVideoTrackPurposes(),
-        },
-      });
+      await sendOffer(peerId, pc);
     },
-    [getOrCreatePeerConnection, buildVideoTrackPurposes],
+    [getOrCreatePeerConnection, sendOffer],
   );
 
   const closePeerConnection = useCallback((peerId: string) => {
@@ -785,15 +789,9 @@ export default function AvatarSpace({ initialName }: Props) {
         if (!alreadyAttached)
           pc.addTrack(track, localStreamRef.current as MediaStream);
       });
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: { from: selfId.current, to: peerId, sdp: offer },
-      });
+      await sendOffer(peerId, pc);
     }
-  }, []);
+  }, [sendOffer]);
 
   // ---- 画面共有 ----
   // 開始:すでに接続中の相手へ映像トラックを追加して再送信を開始する
@@ -806,20 +804,9 @@ export default function AvatarSpace({ initialName }: Props) {
         if (!alreadyAttached)
           pc.addTrack(track, screenStreamRef.current as MediaStream);
       });
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: {
-          from: selfId.current,
-          to: peerId,
-          sdp: offer,
-          videoTrackPurposes: buildVideoTrackPurposes(),
-        },
-      });
+      await sendOffer(peerId, pc);
     }
-  }, [buildVideoTrackPurposes]);
+  }, [sendOffer]);
 
   const stopScreenShare = useCallback(async () => {
     const stream = screenStreamRef.current;
@@ -841,20 +828,9 @@ export default function AvatarSpace({ initialName }: Props) {
         .filter((s) => s.track && trackIds.has(s.track.id));
       targetSenders.forEach((s) => pc.removeTrack(s));
       if (targetSenders.length === 0) continue;
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: {
-          from: selfId.current,
-          to: peerId,
-          sdp: offer,
-          videoTrackPurposes: buildVideoTrackPurposes(),
-        },
-      });
+      await sendOffer(peerId, pc);
     }
-  }, [buildVideoTrackPurposes]);
+  }, [sendOffer]);
 
   const startScreenShare = useCallback(async () => {
     setShareError(null);
@@ -914,20 +890,9 @@ export default function AvatarSpace({ initialName }: Props) {
         if (!alreadyAttached)
           pc.addTrack(track, cameraStreamRef.current as MediaStream);
       });
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: {
-          from: selfId.current,
-          to: peerId,
-          sdp: offer,
-          videoTrackPurposes: buildVideoTrackPurposes(),
-        },
-      });
+      await sendOffer(peerId, pc);
     }
-  }, [buildVideoTrackPurposes]);
+  }, [sendOffer]);
 
   const stopVideoCall = useCallback(async () => {
     const stream = cameraStreamRef.current;
@@ -949,20 +914,9 @@ export default function AvatarSpace({ initialName }: Props) {
         .filter((s) => s.track && trackIds.has(s.track.id));
       targetSenders.forEach((s) => pc.removeTrack(s));
       if (targetSenders.length === 0) continue;
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "webrtc-offer",
-        payload: {
-          from: selfId.current,
-          to: peerId,
-          sdp: offer,
-          videoTrackPurposes: buildVideoTrackPurposes(),
-        },
-      });
+      await sendOffer(peerId, pc);
     }
-  }, [buildVideoTrackPurposes]);
+  }, [sendOffer]);
 
   const startVideoCall = useCallback(async () => {
     setCallError(null);
@@ -1163,7 +1117,25 @@ export default function AvatarSpace({ initialName }: Props) {
             });
           }
           const pc = getOrCreatePeerConnection(from);
+
+          // 交渉の衝突(グレア)対策:自分もちょうどofferを送ろうとしている
+          // 最中に相手からofferが届くことがある(例:こちらが画面共有を
+          // ONにした直後に、相手側の未ネゴシエーションtrackの再送信が
+          // 重なる等)。IDの大小で固定した「polite(譲る側)」だけが自分の
+          // offerを取り消して相手のofferを受け入れ、politeでない側は
+          // 自分のofferを優先して届いたofferを無視する。これをしないと
+          // 片方のsetRemoteDescriptionが失敗し、次の再試行まで映像/音声が
+          // 更新されないことがあった。
+          const polite = selfId.current >= from;
+          const offerCollision =
+            makingOffer.current.get(from) === true ||
+            pc.signalingState !== "stable";
+          if (offerCollision && !polite) return;
+
           try {
+            if (offerCollision) {
+              await pc.setLocalDescription({ type: "rollback" });
+            }
             await pc.setRemoteDescription(new RTCSessionDescription(sdp));
             // awaitで待っている間に、相手が離れて再度近づく等でこの接続が
             // 破棄・作り直しされていた場合、もうこのpcは無関係なので中断する
