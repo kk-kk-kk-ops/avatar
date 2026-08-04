@@ -23,6 +23,7 @@ end $$;
 -- (ゲストはマップ編集不可。管理者だけがレイアウトを変更できる想定)
 -- 閲覧(select)はルームプレビュー等でも使うため、これまで通り誰でも可能なままにする。
 drop policy if exists "map_layout is editable by authenticated users" on public.map_layout;
+drop policy if exists "map_layout is editable by room owner" on public.map_layout;
 
 create policy "map_layout is editable by room owner"
   on public.map_layout for all
