@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
 import {
   MAP_WIDTH,
@@ -34,7 +34,7 @@ type DragState =
       originHeight: number;
     };
 
-const DISPLAY_WIDTH = 720;
+const MAX_DISPLAY_WIDTH = 720;
 
 // テンプレートの背景画像上に障害物・ミーティングエリアを配置編集する。
 // マップ編集はここに一本化されており、個々のルームでは編集できない。
@@ -56,9 +56,36 @@ export default function TemplateEditor({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dragState = useRef<DragState | null>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [displaySize, setDisplaySize] = useState(MAX_DISPLAY_WIDTH);
 
-  const scale = DISPLAY_WIDTH / MAP_WIDTH;
-  const displayHeight = MAP_HEIGHT * scale;
+  // 画面(特に縦幅が小さいノートPCなど)にマップ全体が収まるよう、表示サイズを
+  // 「横幅に入る幅」と「縦幅に入る高さ」の小さい方に合わせて動的に決める。
+  // MAP_WIDTH===MAP_HEIGHT(正方形)なので1辺の長さだけで良い。
+  // (CSSのaspect-ratio+max-heightだけだと横幅と縦幅が独立して決まってしまい、
+  // マップの下側がコンテナからはみ出て見えなくなっていたため、JS側で
+  // 実測して正方形を保証する)
+  useEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+    const recompute = () => {
+      const availableWidth = el.clientWidth;
+      const availableHeight = window.innerHeight * 0.6;
+      setDisplaySize(
+        Math.max(240, Math.min(MAX_DISPLAY_WIDTH, availableWidth, availableHeight)),
+      );
+    };
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    observer.observe(el);
+    window.addEventListener("resize", recompute);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", recompute);
+    };
+  }, []);
+
+  const scale = displaySize / MAP_WIDTH;
 
   const handlePointerDown = (
     e: React.PointerEvent,
@@ -237,12 +264,13 @@ export default function TemplateEditor({
         </button>
       </div>
 
-      <div
-        className="relative touch-none overflow-hidden rounded-lg border border-slate-300 bg-slate-700"
-        style={{ width: DISPLAY_WIDTH, height: displayHeight }}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-      >
+      <div ref={measureRef} className="w-full" style={{ maxWidth: MAX_DISPLAY_WIDTH }}>
+        <div
+          className="relative touch-none overflow-hidden rounded-lg border border-slate-300 bg-slate-700"
+          style={{ width: displaySize, height: displaySize }}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        >
         <div
           className="absolute left-0 top-0 origin-top-left"
           style={{
@@ -307,6 +335,7 @@ export default function TemplateEditor({
               />
             </div>
           ))}
+          </div>
         </div>
       </div>
     </div>
