@@ -1,7 +1,16 @@
 -- アカウント(契約単位の組織)テーブル。
 -- Supabaseダッシュボード → SQL Editor に貼り付けて実行してください。
--- profiles.sql・rooms.sql・map_layout_room.sql と合わせて実行すること
--- (rooms.sqlがaccountsを外部キー参照するため、accounts.sqlを先に実行する)。
+--
+-- 実行順序(重要・循環参照があるため必ずこの順で):
+--   1. accounts.sql (これ)
+--   2. profiles.sql (profiles.account_id/roleカラムを追加)
+--   3. rooms.sql (SELECTポリシーがprofiles.account_idを参照するため、
+--      profiles.sqlより後に実行する)
+--   4. accounts_policies.sql (accountsのSELECTポリシーもprofiles.account_id
+--      を参照するため、profiles.sqlの後でないと作成できない)
+--   5. invite_lookup_function.sql
+--   6. migrate_existing_owner.sql
+--   7. map_layout_room.sql
 
 create table if not exists public.accounts (
   id uuid primary key default gen_random_uuid(),
@@ -17,13 +26,8 @@ create table if not exists public.accounts (
 
 alter table public.accounts enable row level security;
 
--- 自分が所属している(オーナー、またはprofiles.account_idが一致する)アカウントだけ閲覧可能
-create policy "accounts: select own"
-  on public.accounts for select
-  using (
-    auth.uid() = owner_user_id
-    or id in (select account_id from public.profiles where user_id = auth.uid())
-  );
+-- SELECTポリシー(profiles.account_idを参照するもの)は
+-- accounts_policies.sql側で作成する(profiles.sql実行後でないと作れないため)。
 
 -- 作成はログイン済みユーザーが自分をオーナーとして作る場合のみ(プラン選択画面から)
 create policy "accounts: insert own"

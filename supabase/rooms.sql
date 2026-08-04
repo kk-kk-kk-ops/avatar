@@ -1,6 +1,7 @@
 -- ルーム(バーチャル空間)テーブル。1アカウントが複数ルームを持てる。
 -- Supabaseダッシュボード → SQL Editor に貼り付けて実行してください。
--- accounts.sqlを先に実行しておくこと。
+-- accounts.sql・profiles.sqlを先に実行しておくこと(下のSELECTポリシーが
+-- profiles.account_idを参照するため、profiles.sqlより後に実行する必要がある)。
 
 create table if not exists public.rooms (
   id uuid primary key default gen_random_uuid(),
