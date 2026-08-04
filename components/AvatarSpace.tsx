@@ -26,6 +26,7 @@ import {
   DEFAULT_OBSTACLES,
   DEFAULT_MEETING_ZONES,
   AVATAR_IMAGES,
+  ROOMS,
 } from "@/lib/types";
 import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
@@ -37,7 +38,6 @@ import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LogoutButton from "./auth/LogoutButton";
 
-const DEFAULT_ROOM_NAME = "Grovina Office";
 const COLORS = [
   "#F97316",
   "#3B82F6",
@@ -81,8 +81,8 @@ export default function AvatarSpace({ initialName }: Props) {
   const [supabase] = useState(() => createClient());
   // ---- ルーム選択(Googleログイン後、最初に必ずここへ遷移する) ----
   const [roomSelected, setRoomSelected] = useState(false);
-  const [roomNameInput, setRoomNameInput] = useState(DEFAULT_ROOM_NAME);
-  const [roomName, setRoomName] = useState(DEFAULT_ROOM_NAME);
+  const [selectedRoomId, setSelectedRoomId] = useState(ROOMS[0].id);
+  const [roomName, setRoomName] = useState(ROOMS[0].name);
   const [joined, setJoined] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
@@ -226,11 +226,12 @@ export default function AvatarSpace({ initialName }: Props) {
     })();
   }, [joined]);
 
-  // ---- ルーム選択:ルーム名を確定してアバター選択画面へ進む ----
+  // ---- ルーム選択:選んだルームを確定してアバター選択画面へ進む ----
   const handleSelectRoom = useCallback(() => {
-    setRoomName(roomNameInput.trim() || DEFAULT_ROOM_NAME);
+    const room = ROOMS.find((r) => r.id === selectedRoomId) ?? ROOMS[0];
+    setRoomName(room.name);
     setRoomSelected(true);
-  }, [roomNameInput]);
+  }, [selectedRoomId]);
 
   // ---- 退出:バーチャル空間から抜けてルーム選択画面に戻る ----
   // joinedをfalseにすることで、Realtimeチャンネルの購読解除・マイクや
@@ -1890,17 +1891,34 @@ export default function AvatarSpace({ initialName }: Props) {
             ルームを選択
           </h1>
           <p className="mb-4 text-sm text-slate-500">
-            入室するルーム名を入力してください
+            入室するルームを選んでください
           </p>
 
-          <input
-            autoFocus
-            value={roomNameInput}
-            onChange={(e) => setRoomNameInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSelectRoom()}
-            placeholder={DEFAULT_ROOM_NAME}
-            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-          />
+          <div className="mb-4 grid grid-cols-2 gap-2">
+            {ROOMS.map((room) => (
+              <button
+                key={room.id}
+                type="button"
+                onClick={() => setSelectedRoomId(room.id)}
+                className={`overflow-hidden rounded-lg border-2 bg-slate-100 text-left transition-colors ${
+                  selectedRoomId === room.id
+                    ? "border-slate-900"
+                    : "border-transparent hover:border-slate-300"
+                }`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={room.previewImage}
+                  alt={room.name}
+                  className="aspect-video w-full object-cover"
+                />
+                <p className="truncate px-2 py-1.5 text-xs font-semibold text-slate-700">
+                  {room.name}
+                </p>
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={handleSelectRoom}
             className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"

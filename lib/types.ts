@@ -77,6 +77,22 @@ export function getAvatarSpritePath(
   return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.png`;
 }
 
+// ルーム選択画面で選べるルーム一覧。今は1つだけだが、後で追加しやすいよう
+// 配列にしてある(name部分がSupabase RealtimeのチャンネルIDにも使われる)。
+export type Room = {
+  id: string;
+  name: string;
+  previewImage: string;
+};
+
+export const ROOMS: Room[] = [
+  {
+    id: "grovina-office",
+    name: "Grovina Office",
+    previewImage: "/map-background.webp",
+  },
+];
+
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
 export const AVATAR_RADIUS = 45; // アバターの表示サイズ計算に使う半径(当たり判定には使わない)
