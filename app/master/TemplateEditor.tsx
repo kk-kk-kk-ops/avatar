@@ -1,0 +1,314 @@
+"use client";
+
+import { useRef, useState } from "react";
+import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
+import {
+  MAP_WIDTH,
+  MAP_HEIGHT,
+  NEW_ITEM_SIZE,
+  clampPosition,
+  clampSize,
+  randomItemId,
+} from "@/lib/types";
+import { updateTemplateLayout, replaceTemplateImage } from "./actions";
+
+type ItemType = "obstacle" | "zone";
+
+type DragState =
+  | {
+      mode: "move";
+      itemType: ItemType;
+      id: string;
+      startX: number;
+      startY: number;
+      originX: number;
+      originY: number;
+    }
+  | {
+      mode: "resize";
+      itemType: ItemType;
+      id: string;
+      startX: number;
+      startY: number;
+      originWidth: number;
+      originHeight: number;
+    };
+
+const DISPLAY_WIDTH = 720;
+
+// テンプレートの背景画像上に障害物・ミーティングエリアを配置編集する。
+// マップ編集はここに一本化されており、個々のルームでは編集できない。
+export default function TemplateEditor({
+  template,
+  onClose,
+}: {
+  template: MapTemplate;
+  onClose: () => void;
+}) {
+  const [obstacles, setObstacles] = useState<Obstacle[]>(template.obstacles);
+  const [meetingZones, setMeetingZones] = useState<MeetingZone[]>(
+    template.meetingZones,
+  );
+  const [backgroundImageUrl, setBackgroundImageUrl] = useState(
+    template.backgroundImageUrl,
+  );
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dragState = useRef<DragState | null>(null);
+
+  const scale = DISPLAY_WIDTH / MAP_WIDTH;
+  const displayHeight = MAP_HEIGHT * scale;
+
+  const handlePointerDown = (
+    e: React.PointerEvent,
+    itemType: ItemType,
+    id: string,
+    mode: "move" | "resize",
+  ) => {
+    e.stopPropagation();
+    const list = itemType === "obstacle" ? obstacles : meetingZones;
+    const item = list.find((i) => i.id === id);
+    if (!item) return;
+    dragState.current =
+      mode === "move"
+        ? {
+            mode,
+            itemType,
+            id,
+            startX: e.clientX,
+            startY: e.clientY,
+            originX: item.x,
+            originY: item.y,
+          }
+        : {
+            mode,
+            itemType,
+            id,
+            startX: e.clientX,
+            startY: e.clientY,
+            originWidth: item.width,
+            originHeight: item.height,
+          };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const drag = dragState.current;
+    if (!drag) return;
+    const dx = (e.clientX - drag.startX) / scale;
+    const dy = (e.clientY - drag.startY) / scale;
+    const setList = drag.itemType === "obstacle" ? setObstacles : setMeetingZones;
+    setList((prev) =>
+      prev.map((item) => {
+        if (item.id !== drag.id) return item;
+        if (drag.mode === "move") {
+          const pos = clampPosition(
+            drag.originX + dx,
+            drag.originY + dy,
+            item.width,
+            item.height,
+          );
+          return { ...item, ...pos };
+        }
+        const size = clampSize(
+          item.x,
+          item.y,
+          drag.originWidth + dx,
+          drag.originHeight + dy,
+        );
+        return { ...item, ...size };
+      }),
+    );
+  };
+
+  const handlePointerUp = () => {
+    dragState.current = null;
+  };
+
+  const addObstacle = () => {
+    setObstacles((prev) => [
+      ...prev,
+      {
+        id: randomItemId("obstacle"),
+        x: 100,
+        y: 100,
+        width: NEW_ITEM_SIZE,
+        height: NEW_ITEM_SIZE,
+        label: "🧱 障害物",
+      },
+    ]);
+  };
+
+  const addMeetingZone = () => {
+    setMeetingZones((prev) => [
+      ...prev,
+      {
+        id: randomItemId("meeting"),
+        x: 100,
+        y: 100,
+        width: NEW_ITEM_SIZE * 2,
+        height: NEW_ITEM_SIZE * 2,
+        label: "ミーティングエリア",
+      },
+    ]);
+  };
+
+  const removeObstacle = (id: string) =>
+    setObstacles((prev) => prev.filter((o) => o.id !== id));
+  const removeMeetingZone = (id: string) =>
+    setMeetingZones((prev) => prev.filter((z) => z.id !== id));
+
+  const handleSave = async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      await updateTemplateLayout(template.id, obstacles, meetingZones);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存に失敗しました");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.set("image", file);
+      const url = await replaceTemplateImage(template.id, formData);
+      setBackgroundImageUrl(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "画像の変更に失敗しました");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-bold text-slate-800">{template.name}</p>
+        <button
+          onClick={onClose}
+          className="text-xs text-slate-500 hover:text-slate-800"
+        >
+          閉じる
+        </button>
+      </div>
+
+      {error && (
+        <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+          {error}
+        </p>
+      )}
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={addObstacle}
+          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+        >
+          ＋障害物
+        </button>
+        <button
+          onClick={addMeetingZone}
+          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+        >
+          ＋ミーティングエリア
+        </button>
+        <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+          {uploading ? "アップロード中..." : "背景画像を変更"}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleImageChange}
+            disabled={uploading}
+          />
+        </label>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="ml-auto rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+        >
+          {saving ? "保存中..." : "レイアウトを保存"}
+        </button>
+      </div>
+
+      <div
+        className="relative touch-none overflow-hidden rounded-lg border border-slate-300 bg-slate-700"
+        style={{ width: DISPLAY_WIDTH, height: displayHeight }}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
+        <div
+          className="absolute left-0 top-0 origin-top-left"
+          style={{
+            width: MAP_WIDTH,
+            height: MAP_HEIGHT,
+            transform: `scale(${scale})`,
+            backgroundImage: `url('${backgroundImageUrl}')`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
+          }}
+        >
+          {meetingZones.map((zone) => (
+            <div
+              key={zone.id}
+              onPointerDown={(e) => handlePointerDown(e, "zone", zone.id, "move")}
+              className="absolute cursor-move rounded-xl border border-slate-300 bg-slate-500/50 p-2"
+              style={{
+                left: zone.x,
+                top: zone.y,
+                width: zone.width,
+                height: zone.height,
+              }}
+            >
+              <span className="text-xs text-white">{zone.label}</span>
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => removeMeetingZone(zone.id)}
+                className="absolute right-1 top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+              >
+                ×
+              </button>
+              <div
+                onPointerDown={(e) =>
+                  handlePointerDown(e, "zone", zone.id, "resize")
+                }
+                className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize bg-slate-200"
+              />
+            </div>
+          ))}
+
+          {obstacles.map((o) => (
+            <div
+              key={o.id}
+              onPointerDown={(e) => handlePointerDown(e, "obstacle", o.id, "move")}
+              className="absolute flex cursor-move items-center justify-center rounded border border-amber-400 bg-amber-500/60 text-center text-[10px] text-white"
+              style={{ left: o.x, top: o.y, width: o.width, height: o.height }}
+            >
+              {o.label}
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => removeObstacle(o.id)}
+                className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+              >
+                ×
+              </button>
+              <div
+                onPointerDown={(e) =>
+                  handlePointerDown(e, "obstacle", o.id, "resize")
+                }
+                className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize bg-slate-200"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

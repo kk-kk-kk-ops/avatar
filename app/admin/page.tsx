@@ -26,16 +26,22 @@ export default async function AdminPage() {
 
   const { data: roomRows } = await supabase
     .from("rooms")
-    .select("id, account_id, name, preview_image")
+    .select("id, account_id, template_id, name, preview_image")
     .eq("account_id", state.accountId)
     .order("created_at", { ascending: true });
 
   const rooms: Room[] = (roomRows ?? []).map((r) => ({
     id: r.id,
     accountId: r.account_id,
+    templateId: r.template_id,
     name: r.name,
     previewImage: r.preview_image,
   }));
+
+  const { data: templateRows } = await supabase
+    .from("templates")
+    .select("id, name")
+    .order("created_at", { ascending: true });
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -48,6 +54,14 @@ export default async function AdminPage() {
           </span>
         </div>
         <div className="flex items-center gap-3">
+          {state.isMaster && (
+            <Link
+              href="/master"
+              className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+            >
+              マスター画面へ
+            </Link>
+          )}
           <Link
             href="/rooms"
             className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
@@ -64,6 +78,7 @@ export default async function AdminPage() {
           plan={(account?.plan as PlanId) ?? "free"}
           trialEndsAt={account?.trial_ends_at ?? null}
           inviteToken={account?.invite_token ?? ""}
+          templates={templateRows ?? []}
         />
       </main>
     </div>

@@ -17,16 +17,20 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "billing", label: "契約情報" },
 ];
 
+type TemplateOption = { id: string; name: string };
+
 export default function AdminDashboard({
   rooms,
   plan,
   trialEndsAt,
   inviteToken,
+  templates,
 }: {
   rooms: Room[];
   plan: PlanId;
   trialEndsAt: string | null;
   inviteToken: string;
+  templates: TemplateOption[];
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
 
@@ -50,7 +54,11 @@ export default function AdminDashboard({
 
       {tab === "dashboard" && <OnlineCount rooms={rooms} />}
       {tab === "rooms" && (
-        <RoomManager rooms={rooms} maxRooms={PLANS[plan].maxRooms} />
+        <RoomManager
+          rooms={rooms}
+          maxRooms={PLANS[plan].maxRooms}
+          templates={templates}
+        />
       )}
       {tab === "invite" && <InvitePanel inviteToken={inviteToken} />}
       {tab === "billing" && (

@@ -28,6 +28,7 @@ export default async function Home({
 
   if (user) {
     const state = await resolveUserRouteState(supabase, user.id);
+    if (state.isMaster) redirect("/master");
     if (state.type === "no-account") redirect("/plan");
     if (state.type === "admin") redirect("/admin");
     redirect("/rooms");

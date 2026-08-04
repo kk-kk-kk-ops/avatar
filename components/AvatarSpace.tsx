@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -16,9 +17,6 @@ import {
   findMeetingZoneId,
   rectIntersectsRect,
   resolveSpawnPosition,
-  clampPosition,
-  clampSize,
-  randomItemId,
   PROXIMITY_RADIUS,
   NEW_ITEM_SIZE,
   Obstacle,
@@ -56,28 +54,20 @@ function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
 
-type DragState = {
-  kind: "obstacle" | "meetingZone";
-  mode: "move" | "resize";
-  id: string;
-  startX: number;
-  startY: number;
-  originX: number;
-  originY: number;
-  originWidth: number;
-  originHeight: number;
-};
-
 type Props = {
   initialName?: string;
   rooms: Room[];
   maxPeoplePerRoom: number;
+  isAccountAdmin: boolean;
+  isMaster: boolean;
 };
 
 export default function AvatarSpace({
   initialName,
   rooms,
   maxPeoplePerRoom,
+  isAccountAdmin,
+  isMaster,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -126,8 +116,9 @@ export default function AvatarSpace({
     peerId: string;
     kind: "screen" | "camera";
   } | null>(null);
-  const [editMode, setEditMode] = useState(false);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [backgroundImageUrl, setBackgroundImageUrl] = useState(
+    "/map-background.webp",
+  );
   const [obstacles, setObstacles] = useState<Obstacle[]>(DEFAULT_OBSTACLES);
   const [meetingZones, setMeetingZones] = useState<MeetingZone[]>(
     DEFAULT_MEETING_ZONES,
@@ -135,7 +126,6 @@ export default function AvatarSpace({
 
   const obstaclesRef = useRef<Obstacle[]>(DEFAULT_OBSTACLES);
   const meetingZonesRef = useRef<MeetingZone[]>(DEFAULT_MEETING_ZONES);
-  const dragStateRef = useRef<DragState | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
@@ -293,16 +283,26 @@ export default function AvatarSpace({
     meetingZonesRef.current = meetingZones;
   }, [meetingZones]);
 
-  // ---- マップレイアウト:Supabaseから保存済みの配置を読み込む(なければ初期値のまま) ----
+  // ---- マップレイアウト:選んだルームのテンプレートから読み込む ----
+  // マップの編集はマスターがテンプレートに対して行う運用に一本化した
+  // ため、ルーム側では読み込みのみ(保存・追加・削除・ドラッグ編集は
+  // 廃止)。テンプレートは全ルーム共通のマスターデータなので、
+  // 各ルームで個別に保存する必要がない。
   useEffect(() => {
     if (!joined) return;
+    const room = rooms.find((r) => r.id === roomId);
+    if (!room?.templateId) return;
     (async () => {
       const { data } = await supabase
-        .from("map_layout")
-        .select("obstacles, meeting_area")
-        .eq("room_id", roomId)
+        .from("templates")
+        .select("background_image_url, obstacles, meeting_area")
+        .eq("id", room.templateId)
         .maybeSingle();
       if (!data) return;
+
+      if (data.background_image_url) {
+        setBackgroundImageUrl(data.background_image_url);
+      }
 
       if (Array.isArray(data.obstacles)) {
         const loaded = (data.obstacles as Array<Partial<Obstacle>>).map(
@@ -337,7 +337,6 @@ export default function AvatarSpace({
         }
       }
 
-      // 過去バージョンは単一オブジェクトで保存していたため、配列に正規化する
       const rawZones = data.meeting_area;
       if (rawZones) {
         const zonesArray = Array.isArray(rawZones) ? rawZones : [rawZones];
@@ -354,192 +353,7 @@ export default function AvatarSpace({
         setMeetingZones(loaded);
       }
     })();
-  }, [joined, roomId, supabase]);
-
-  // ---- マップレイアウト:他の人へ配信し、Supabaseにも保存する ----
-  const saveLayout = useCallback(
-    (nextObstacles: Obstacle[], nextZones: MeetingZone[]) => {
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "layout-update",
-        payload: { obstacles: nextObstacles, meetingZones: nextZones },
-      });
-      supabase
-        .from("map_layout")
-        .upsert(
-          {
-            id: roomId,
-            room_id: roomId,
-            obstacles: nextObstacles,
-            meeting_area: nextZones,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "room_id" },
-        )
-        .then(({ error }) => {
-          if (error) {
-            // eslint-disable-next-line no-console
-            console.error("マップレイアウトの保存に失敗しました", error);
-          }
-        });
-    },
-    [roomId, supabase],
-  );
-
-  // ---- 現在画面に表示されているマップ上の中心座標を取得(新規アイテムの設置位置に使用) ----
-  const getViewportCenter = useCallback(() => {
-    const self = players[selfId.current];
-    const maxX = Math.max(MAP_WIDTH - viewport.width, 0);
-    const maxY = Math.max(MAP_HEIGHT - viewport.height, 0);
-    const camX = self
-      ? Math.min(Math.max(self.x - viewport.width / 2, 0), maxX)
-      : 0;
-    const camY = self
-      ? Math.min(Math.max(self.y - viewport.height / 2, 0), maxY)
-      : 0;
-    return {
-      x: camX + viewport.width / 2,
-      y: camY + viewport.height / 2,
-    };
-  }, [players, viewport]);
-
-  // ---- マップ編集:障害物・ミーティングエリアの追加 ----
-  const addObstacle = useCallback(() => {
-    const center = getViewportCenter();
-    const pos = clampPosition(
-      Math.round(center.x - NEW_ITEM_SIZE / 2),
-      Math.round(center.y - NEW_ITEM_SIZE / 2),
-      NEW_ITEM_SIZE,
-      NEW_ITEM_SIZE,
-    );
-    const item: Obstacle = {
-      id: randomItemId("obstacle"),
-      x: pos.x,
-      y: pos.y,
-      width: NEW_ITEM_SIZE,
-      height: NEW_ITEM_SIZE,
-      label: "🧱 障害物",
-    };
-    setEditMode(true);
-    setAddMenuOpen(false);
-    setObstacles((prev) => {
-      const next = [...prev, item];
-      saveLayout(next, meetingZonesRef.current);
-      return next;
-    });
-  }, [saveLayout, getViewportCenter]);
-
-  const addMeetingZone = useCallback(() => {
-    const center = getViewportCenter();
-    const pos = clampPosition(
-      Math.round(center.x - NEW_ITEM_SIZE / 2),
-      Math.round(center.y - NEW_ITEM_SIZE / 2),
-      NEW_ITEM_SIZE,
-      NEW_ITEM_SIZE,
-    );
-    const item: MeetingZone = {
-      id: randomItemId("meeting"),
-      x: pos.x,
-      y: pos.y,
-      width: NEW_ITEM_SIZE,
-      height: NEW_ITEM_SIZE,
-      label: "ミーティングエリア",
-    };
-    setEditMode(true);
-    setAddMenuOpen(false);
-    setMeetingZones((prev) => {
-      const next = [...prev, item];
-      saveLayout(obstaclesRef.current, next);
-      return next;
-    });
-  }, [saveLayout, getViewportCenter]);
-
-  // ---- マップ編集:削除 ----
-  const removeObstacle = useCallback(
-    (id: string) => {
-      setObstacles((prev) => {
-        const next = prev.filter((o) => o.id !== id);
-        saveLayout(next, meetingZonesRef.current);
-        return next;
-      });
-    },
-    [saveLayout],
-  );
-
-  const removeMeetingZone = useCallback(
-    (id: string) => {
-      setMeetingZones((prev) => {
-        const next = prev.filter((z) => z.id !== id);
-        saveLayout(obstaclesRef.current, next);
-        return next;
-      });
-    },
-    [saveLayout],
-  );
-
-  // ---- マップ編集:ドラッグ(移動・リサイズ共通) ----
-  const handleLayoutDragStart = useCallback(
-    (
-      e: React.PointerEvent,
-      kind: "obstacle" | "meetingZone",
-      id: string,
-      mode: "move" | "resize",
-    ) => {
-      if (!editMode) return;
-      e.stopPropagation();
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      const list = kind === "obstacle" ? obstacles : meetingZones;
-      const origin = list.find((item) => item.id === id);
-      if (!origin) return;
-      dragStateRef.current = {
-        kind,
-        mode,
-        id,
-        startX: e.clientX,
-        startY: e.clientY,
-        originX: origin.x,
-        originY: origin.y,
-        originWidth: origin.width,
-        originHeight: origin.height,
-      };
-    },
-    [editMode, obstacles, meetingZones],
-  );
-
-  const handleLayoutDragMove = useCallback((e: React.PointerEvent) => {
-    const drag = dragStateRef.current;
-    if (!drag) return;
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
-
-    const updateItem = <T extends Obstacle | MeetingZone>(item: T): T => {
-      if (item.id !== drag.id) return item;
-      if (drag.mode === "move") {
-        // 10px単位でスナップさせ、揃えやすくする。マップの外へは出せない。
-        const snappedX = Math.round((drag.originX + dx) / 10) * 10;
-        const snappedY = Math.round((drag.originY + dy) / 10) * 10;
-        const pos = clampPosition(snappedX, snappedY, item.width, item.height);
-        return { ...item, x: pos.x, y: pos.y };
-      }
-      // リサイズ:左上(x,y)は固定し、右下方向にサイズだけ変える。最小サイズ・マップ外を制限。
-      const snappedW = Math.round((drag.originWidth + dx) / 10) * 10;
-      const snappedH = Math.round((drag.originHeight + dy) / 10) * 10;
-      const size = clampSize(item.x, item.y, snappedW, snappedH);
-      return { ...item, width: size.width, height: size.height };
-    };
-
-    if (drag.kind === "obstacle") {
-      setObstacles((prev) => prev.map(updateItem));
-    } else {
-      setMeetingZones((prev) => prev.map(updateItem));
-    }
-  }, []);
-
-  const handleLayoutDragEnd = useCallback(() => {
-    if (!dragStateRef.current) return;
-    dragStateRef.current = null;
-    saveLayout(obstaclesRef.current, meetingZonesRef.current);
-  }, [saveLayout]);
+  }, [joined, roomId, rooms, supabase]);
 
   // ---- WebRTC:音声接続のヘルパー関数群 ----
   const flushPendingCandidates = useCallback(
@@ -2233,113 +2047,43 @@ export default function AvatarSpace({
               height: MAP_HEIGHT,
               transformOrigin: "0 0",
               transform: `scale(${mapScale}) translate(${-cameraX}px, ${-cameraY}px)`,
-              backgroundImage: "url('/map-background.webp')",
+              backgroundImage: `url('${backgroundImageUrl}')`,
               backgroundSize: "cover",
               backgroundPosition: "center",
               backgroundRepeat: "no-repeat",
               backgroundColor: "#334155",
             }}
           >
-            {/* ミーティングエリア(複数設置可能)。編集モード中はドラッグで移動・リサイズ・削除できる */}
+            {/* ミーティングエリア(複数設置可能)。配置はマスターがテンプレート側で編集する
+                (ルーム内での編集は廃止)。 */}
             {meetingZones.map((zone) => (
               <div
                 key={zone.id}
-                onPointerDown={(e) =>
-                  handleLayoutDragStart(e, "meetingZone", zone.id, "move")
-                }
-                onPointerMove={handleLayoutDragMove}
-                onPointerUp={handleLayoutDragEnd}
-                className={`absolute flex items-start rounded-xl border p-2 ${
-                  editMode
-                    ? "cursor-move border-dashed border-amber-400 bg-slate-600/80"
-                    : "border-slate-500 bg-slate-600/60"
-                }`}
+                className="absolute flex items-start rounded-xl border border-slate-500 bg-slate-600/60 p-2"
                 style={{
                   left: zone.x,
                   top: zone.y,
                   width: zone.width,
                   height: zone.height,
-                  touchAction: editMode ? "none" : undefined,
                 }}
               >
                 <span className="text-[11px] text-slate-300">{zone.label}</span>
-                {editMode && (
-                  <>
-                    <button
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => removeMeetingZone(zone.id)}
-                      className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                      aria-label="ミーティングエリアを削除"
-                    >
-                      ✕
-                    </button>
-                    <div
-                      onPointerDown={(e) =>
-                        handleLayoutDragStart(
-                          e,
-                          "meetingZone",
-                          zone.id,
-                          "resize",
-                        )
-                      }
-                      onPointerMove={handleLayoutDragMove}
-                      onPointerUp={handleLayoutDragEnd}
-                      className="absolute -right-1 -bottom-1 h-4 w-4 cursor-nwse-resize rounded-sm bg-amber-400"
-                      style={{ touchAction: "none" }}
-                    />
-                  </>
-                )}
               </div>
             ))}
 
-            {/* 休憩エリアは削除しました */}
-
-            {/* 障害物(机・観葉植物・棚など)。編集モード中はドラッグで移動・リサイズ・削除できる。
-                非編集時は見た目に出さず、当たり判定だけの透明な壁として機能する */}
+            {/* 障害物(机・観葉植物・棚など)。見た目には出さず、当たり判定だけの
+                透明な壁として機能する。配置はマスターがテンプレート側で編集する。 */}
             {obstacles.map((o) => (
               <div
                 key={o.id}
-                onPointerDown={(e) =>
-                  handleLayoutDragStart(e, "obstacle", o.id, "move")
-                }
-                onPointerMove={handleLayoutDragMove}
-                onPointerUp={handleLayoutDragEnd}
-                className={`absolute flex items-center justify-center rounded-md text-[10px] ${
-                  editMode
-                    ? "cursor-move border border-dashed border-amber-400 bg-amber-800/70 text-amber-50 shadow-inner"
-                    : "border-none bg-transparent text-transparent"
-                }`}
+                className="absolute border-none bg-transparent"
                 style={{
                   left: o.x,
                   top: o.y,
                   width: o.width,
                   height: o.height,
-                  touchAction: editMode ? "none" : undefined,
                 }}
-              >
-                {editMode && o.label}
-                {editMode && (
-                  <>
-                    <button
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={() => removeObstacle(o.id)}
-                      className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                      aria-label="障害物を削除"
-                    >
-                      ✕
-                    </button>
-                    <div
-                      onPointerDown={(e) =>
-                        handleLayoutDragStart(e, "obstacle", o.id, "resize")
-                      }
-                      onPointerMove={handleLayoutDragMove}
-                      onPointerUp={handleLayoutDragEnd}
-                      className="absolute -right-1 -bottom-1 h-4 w-4 cursor-nwse-resize rounded-sm bg-amber-400"
-                      style={{ touchAction: "none" }}
-                    />
-                  </>
-                )}
-              </div>
+              />
             ))}
 
             {/* 自分の音声が届く範囲の目安(マイクON時のみ表示。位置は毎フレームDOM操作で更新) */}
@@ -2453,59 +2197,10 @@ export default function AvatarSpace({
               ))}
           </ul>
 
-          {/* マップ編集モードの切り替え・追加メニュー */}
+          {/* 退出:ルーム選択画面へ戻る
+              (マップ編集はマスターのテンプレート編集に一本化したため、
+              ここにあった「マップを編集」ボタンは撤去した) */}
           <div className="mt-4 border-t border-slate-700 pt-3">
-            <button
-              onClick={() => {
-                setEditMode((v) => !v);
-                setAddMenuOpen(false);
-              }}
-              className={`w-full rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
-                editMode
-                  ? "bg-amber-500 text-slate-900 hover:bg-amber-400"
-                  : "bg-slate-700 text-white hover:bg-slate-600"
-              }`}
-            >
-              {editMode ? "✅ 編集モードを終了" : "✏️ マップを編集"}
-            </button>
-
-            {editMode && (
-              <div className="mt-2 space-y-2">
-                <p className="text-[10px] leading-relaxed text-slate-400">
-                  枠をドラッグで移動、右下の■で大きさ変更、✕で削除できます(PC推奨)。
-                  マップの外には出せません。
-                </p>
-
-                <div className="relative">
-                  <button
-                    onClick={() => setAddMenuOpen((v) => !v)}
-                    className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
-                  >
-                    ➕ 追加
-                  </button>
-                  {addMenuOpen && (
-                    <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-lg border border-slate-600 bg-slate-800 shadow-lg">
-                      <button
-                        onClick={addObstacle}
-                        className="block w-full px-3 py-2 text-left text-xs text-white hover:bg-slate-700"
-                      >
-                        🧱 障害物を追加
-                      </button>
-                      <button
-                        onClick={addMeetingZone}
-                        className="block w-full px-3 py-2 text-left text-xs text-white hover:bg-slate-700"
-                      >
-                        💬 ミーティングエリアを追加
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 退出:ルーム選択画面へ戻る */}
-          <div className="mt-3">
             <button
               onClick={handleLeaveRoom}
               className="w-full rounded-lg bg-red-900/60 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-900"
@@ -2644,7 +2339,23 @@ export default function AvatarSpace({
               </button>
             </div>
 
-            <div className="mt-4 border-t border-slate-200 pt-4">
+            <div className="mt-4 space-y-2 border-t border-slate-200 pt-4">
+              {isAccountAdmin && (
+                <Link
+                  href="/admin"
+                  className="block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
+                >
+                  管理画面へ
+                </Link>
+              )}
+              {isMaster && (
+                <Link
+                  href="/master"
+                  className="block w-full rounded-lg bg-emerald-50 py-2 text-center text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+                >
+                  マスター画面へ
+                </Link>
+              )}
               <LogoutButton className="w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100" />
             </div>
           </div>

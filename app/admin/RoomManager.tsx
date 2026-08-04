@@ -3,18 +3,21 @@
 import { useState, useTransition } from "react";
 import type { Room } from "@/lib/types";
 import { addRoom, deleteRoom, renameRoom } from "./actions";
-import { ROOM_TEMPLATES } from "./roomTemplates";
+
+type TemplateOption = { id: string; name: string };
 
 export default function RoomManager({
   rooms,
   maxRooms,
+  templates,
 }: {
   rooms: Room[];
   maxRooms: number;
+  templates: TemplateOption[];
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [templateId, setTemplateId] = useState(ROOM_TEMPLATES[0].id);
+  const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
@@ -141,7 +144,7 @@ export default function RoomManager({
             onChange={(e) => setTemplateId(e.target.value)}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           >
-            {ROOM_TEMPLATES.map((t) => (
+            {templates.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
@@ -150,7 +153,7 @@ export default function RoomManager({
         </div>
         <button
           onClick={handleAdd}
-          disabled={pending || rooms.length >= maxRooms}
+          disabled={pending || rooms.length >= maxRooms || templates.length === 0}
           className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
         >
           ➕ ルーム追加

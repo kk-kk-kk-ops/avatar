@@ -12,18 +12,24 @@ type Props = {
   initialName?: string;
   rooms: Room[];
   maxPeoplePerRoom: number;
+  isAccountAdmin: boolean;
+  isMaster: boolean;
 };
 
 export default function AvatarSpaceLoader({
   initialName,
   rooms,
   maxPeoplePerRoom,
+  isAccountAdmin,
+  isMaster,
 }: Props) {
   return (
     <AvatarSpace
       initialName={initialName}
       rooms={rooms}
       maxPeoplePerRoom={maxPeoplePerRoom}
+      isAccountAdmin={isAccountAdmin}
+      isMaster={isMaster}
     />
   );
 }

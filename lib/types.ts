@@ -82,8 +82,20 @@ export function getAvatarSpritePath(
 export type Room = {
   id: string;
   accountId: string;
+  templateId: string | null;
   name: string;
   previewImage: string;
+};
+
+// マップのひな形。Supabaseのtemplatesテーブルの行に対応する。
+// マップ編集はマスターがテンプレートに対して行い、個々のルームは常に
+// 紐づくテンプレートのレイアウトを参照する(ルーム自身は編集不可)。
+export type MapTemplate = {
+  id: string;
+  name: string;
+  backgroundImageUrl: string;
+  obstacles: Obstacle[];
+  meetingZones: MeetingZone[];
 };
 
 // 契約単位の組織。Supabaseのaccountsテーブルの行に対応する。
@@ -108,6 +120,7 @@ export const PLANS: Record<
     label: string;
     subLabel: string;
     priceLabel: string;
+    priceYen: number; // 概算のサブスク合計金額集計に使う(Stripe連携後は実額に置き換える)
     maxRooms: number;
     maxPeoplePerRoom: number;
   }
@@ -116,6 +129,7 @@ export const PLANS: Record<
     label: "無料で試す【7日間】",
     subLabel: "(スタンダードプラン)",
     priceLabel: "無料",
+    priceYen: 0,
     maxRooms: 3,
     maxPeoplePerRoom: 20,
   },
@@ -123,6 +137,7 @@ export const PLANS: Record<
     label: "ライトプラン",
     subLabel: "(1ルーム10名)",
     priceLabel: "980円/月",
+    priceYen: 980,
     maxRooms: 1,
     maxPeoplePerRoom: 10,
   },
@@ -130,6 +145,7 @@ export const PLANS: Record<
     label: "スタンダードプラン",
     subLabel: "(3ルーム20名)",
     priceLabel: "2980円",
+    priceYen: 2980,
     maxRooms: 3,
     maxPeoplePerRoom: 20,
   },
@@ -137,6 +153,7 @@ export const PLANS: Record<
     label: "プロプラン",
     subLabel: "(5ルーム30名)",
     priceLabel: "4980円",
+    priceYen: 4980,
     maxRooms: 5,
     maxPeoplePerRoom: 30,
   },

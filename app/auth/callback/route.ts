@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { MASTER_EMAILS } from "@/lib/masterEmails";
 
 // Googleログイン後、SupabaseがこのURLへリダイレクトしてくる。
 // ここで認可コードをセッションに交換し、プロフィールの作成/更新を行う。
@@ -63,6 +64,19 @@ export async function GET(request: NextRequest) {
   if (upsertError) {
     // eslint-disable-next-line no-console
     console.error("プロフィールの保存に失敗しました", upsertError);
+  }
+
+  // マスター権限メールのリストに載っていれば、毎回ログイン時に
+  // is_masterを付与しておく(既にtrueなら実質no-op)。
+  if (email && MASTER_EMAILS.includes(email)) {
+    const { error: masterError } = await supabase
+      .from("profiles")
+      .update({ is_master: true })
+      .eq("user_id", user.id);
+    if (masterError) {
+      // eslint-disable-next-line no-console
+      console.error("マスター権限の付与に失敗しました", masterError);
+    }
   }
 
   // 招待リンク(?invite=トークン)経由のログインなら、そのアカウントへ

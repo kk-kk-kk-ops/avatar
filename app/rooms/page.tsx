@@ -14,6 +14,7 @@ export default async function RoomsPage() {
   if (!user) redirect("/");
 
   const state = await resolveUserRouteState(supabase, user.id);
+  if (state.isMaster && state.type === "no-account") redirect("/master");
   if (state.type === "no-account") redirect("/plan");
 
   const [{ data: profile }, { data: account }, { data: roomRows }] =
@@ -30,7 +31,7 @@ export default async function RoomsPage() {
         .single(),
       supabase
         .from("rooms")
-        .select("id, account_id, name, preview_image")
+        .select("id, account_id, template_id, name, preview_image")
         .eq("account_id", state.accountId)
         .order("created_at", { ascending: true }),
     ]);
@@ -38,6 +39,7 @@ export default async function RoomsPage() {
   const rooms: Room[] = (roomRows ?? []).map((r) => ({
     id: r.id,
     accountId: r.account_id,
+    templateId: r.template_id,
     name: r.name,
     previewImage: r.preview_image,
   }));
@@ -49,6 +51,8 @@ export default async function RoomsPage() {
       initialName={profile?.display_name ?? undefined}
       rooms={rooms}
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
+      isAccountAdmin={state.type === "admin"}
+      isMaster={state.isMaster}
     />
   );
 }

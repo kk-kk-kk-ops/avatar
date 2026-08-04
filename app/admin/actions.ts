@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { PLANS } from "@/lib/types";
-import { ROOM_TEMPLATES } from "./roomTemplates";
 
 async function requireAdminAccount() {
   const supabase = createClient();
@@ -25,8 +24,13 @@ async function requireAdminAccount() {
 
 export async function addRoom(templateId: string) {
   const { supabase, account } = await requireAdminAccount();
-  const template =
-    ROOM_TEMPLATES.find((t) => t.id === templateId) ?? ROOM_TEMPLATES[0];
+
+  const { data: template } = await supabase
+    .from("templates")
+    .select("id, name, background_image_url")
+    .eq("id", templateId)
+    .maybeSingle();
+  if (!template) throw new Error("テンプレートが見つかりません");
 
   const { count } = await supabase
     .from("rooms")
@@ -42,8 +46,9 @@ export async function addRoom(templateId: string) {
 
   const { error } = await supabase.from("rooms").insert({
     account_id: account.id,
+    template_id: template.id,
     name: template.name,
-    preview_image: template.previewImage,
+    preview_image: template.background_image_url,
   });
   if (error) throw new Error("ルームの作成に失敗しました");
 
