@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import type { MapTemplate } from "@/lib/types";
 import { createTemplate, deleteTemplate } from "./actions";
+import { uploadTemplateImageClient } from "./uploadTemplateImage";
 import TemplateEditor from "./TemplateEditor";
 
 export default function TemplateManager({
@@ -25,12 +26,10 @@ export default function TemplateManager({
       setError("テンプレート名と背景画像を入力してください");
       return;
     }
-    const formData = new FormData();
-    formData.set("name", name.trim());
-    formData.set("image", file);
     startTransition(async () => {
       try {
-        await createTemplate(formData);
+        const backgroundImageUrl = await uploadTemplateImageClient(file);
+        await createTemplate(name.trim(), backgroundImageUrl);
         setName("");
         setFile(null);
         setCreating(false);

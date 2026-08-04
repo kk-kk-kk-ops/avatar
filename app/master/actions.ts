@@ -22,34 +22,18 @@ async function requireMaster() {
   return { supabase };
 }
 
-async function uploadTemplateImage(
-  supabase: Awaited<ReturnType<typeof requireMaster>>["supabase"],
-  file: File,
-) {
-  const path = `${crypto.randomUUID()}-${file.name}`;
-  const { error: uploadError } = await supabase.storage
-    .from("template-images")
-    .upload(path, file, { contentType: file.type });
-  if (uploadError) throw new Error("画像のアップロードに失敗しました");
-
-  const {
-    data: { publicUrl },
-  } = supabase.storage.from("template-images").getPublicUrl(path);
-  return publicUrl;
-}
-
-export async function createTemplate(formData: FormData) {
+// 画像自体はクライアント側からSupabase Storageへ直接アップロード済み
+// (uploadTemplateImageClient参照)。ここではURL文字列を受け取ってDBに
+// 保存するだけ。
+export async function createTemplate(name: string, backgroundImageUrl: string) {
   const { supabase } = await requireMaster();
-  const name = String(formData.get("name") ?? "").trim();
-  const file = formData.get("image") as File | null;
-  if (!name) throw new Error("テンプレート名を入力してください");
-  if (!file || file.size === 0) throw new Error("背景画像を選択してください");
-
-  const publicUrl = await uploadTemplateImage(supabase, file);
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("テンプレート名を入力してください");
+  if (!backgroundImageUrl) throw new Error("背景画像を選択してください");
 
   const { error } = await supabase.from("templates").insert({
-    name,
-    background_image_url: publicUrl,
+    name: trimmed,
+    background_image_url: backgroundImageUrl,
   });
   if (error) throw new Error("テンプレートの作成に失敗しました");
 
@@ -87,22 +71,18 @@ export async function updateTemplateLayout(
 
 export async function replaceTemplateImage(
   templateId: string,
-  formData: FormData,
+  backgroundImageUrl: string,
 ) {
   const { supabase } = await requireMaster();
-  const file = formData.get("image") as File | null;
-  if (!file || file.size === 0) throw new Error("画像を選択してください");
-
-  const publicUrl = await uploadTemplateImage(supabase, file);
+  if (!backgroundImageUrl) throw new Error("画像を選択してください");
 
   const { error } = await supabase
     .from("templates")
-    .update({ background_image_url: publicUrl })
+    .update({ background_image_url: backgroundImageUrl })
     .eq("id", templateId);
   if (error) throw new Error("画像の更新に失敗しました");
 
   revalidatePath("/master");
-  return publicUrl;
 }
 
 export async function deleteTemplate(templateId: string) {

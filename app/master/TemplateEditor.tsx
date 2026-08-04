@@ -14,6 +14,7 @@ import {
   replaceTemplateImage,
   renameTemplate,
 } from "./actions";
+import { uploadTemplateImageClient } from "./uploadTemplateImage";
 
 type ItemType = "obstacle" | "zone";
 
@@ -236,9 +237,8 @@ export default function TemplateEditor({
     setError(null);
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.set("image", file);
-      const url = await replaceTemplateImage(template.id, formData);
+      const url = await uploadTemplateImageClient(file);
+      await replaceTemplateImage(template.id, url);
       setBackgroundImageUrl(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "画像の変更に失敗しました");
