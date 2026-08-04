@@ -22,7 +22,7 @@ export type PlayerState = {
 export const PRESENCE_STATUS_COLORS: Record<PresenceStatus, string> = {
   available: "#22c55e", // 緑:通話可能
   busy: "#ef4444", // 赤:取込み中
-  away: "#f97316", // オレンジ:離席中
+  away: "#eab308", // 黄:離席中
 };
 
 export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {

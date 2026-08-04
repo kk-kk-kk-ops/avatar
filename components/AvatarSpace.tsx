@@ -1005,7 +1005,8 @@ export default function AvatarSpace({ initialName }: Props) {
                 current.avatarImage !== p.avatarImage ||
                 current.micOn !== p.micOn ||
                 current.sharingScreen !== p.sharingScreen ||
-                current.inCall !== p.inCall
+                current.inCall !== p.inCall ||
+                current.status !== p.status
               ) {
                 next[p.id] = {
                   ...current,
@@ -1015,6 +1016,7 @@ export default function AvatarSpace({ initialName }: Props) {
                   micOn: p.micOn,
                   sharingScreen: p.sharingScreen,
                   inCall: p.inCall,
+                  status: p.status,
                 };
                 changed = true;
               }
@@ -1074,7 +1076,9 @@ export default function AvatarSpace({ initialName }: Props) {
               current.sharingScreen !== p.sharingScreen ||
               current.inCall !== p.inCall ||
               current.meetingZoneId !== p.meetingZoneId ||
-              current.message !== p.message
+              current.message !== p.message ||
+              current.dir !== p.dir ||
+              current.status !== p.status
             ) {
               return {
                 ...prev,
@@ -1605,9 +1609,16 @@ export default function AvatarSpace({ initialName }: Props) {
         if (
           self &&
           next[self.id] &&
-          (next[self.id].x !== self.x || next[self.id].y !== self.y)
+          (next[self.id].x !== self.x ||
+            next[self.id].y !== self.y ||
+            next[self.id].dir !== self.dir)
         ) {
-          next[self.id] = { ...next[self.id], x: self.x, y: self.y };
+          next[self.id] = {
+            ...next[self.id],
+            x: self.x,
+            y: self.y,
+            dir: self.dir,
+          };
           changed = true;
         }
 

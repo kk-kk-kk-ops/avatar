@@ -7,6 +7,7 @@ import {
   AVATAR_RADIUS,
   AVATAR_HITBOX_HEIGHT,
   CHAT_BUBBLE_DURATION_MS,
+  PRESENCE_STATUS_COLORS,
   getAvatarSpritePath,
   getAvatarThumbnail,
 } from "@/lib/types";
@@ -94,7 +95,13 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         </div>
       )}
 
-      <span className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+      <span className="absolute -top-6 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+        <span
+          className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{
+            backgroundColor: PRESENCE_STATUS_COLORS[player.status ?? "available"],
+          }}
+        />
         {player.name}
       </span>
 
