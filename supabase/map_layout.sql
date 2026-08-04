@@ -10,13 +10,18 @@ create table if not exists public.map_layout (
 
 alter table public.map_layout enable row level security;
 
--- 誰でも読み取り可能(表示用)
+-- 誰でも読み取り可能(表示用。マップの見た目は未ログインでも問題ない想定)
 create policy "map_layout is viewable by everyone"
   on public.map_layout for select
   using (true);
 
--- 誰でも編集可能(このアプリはログイン機能がないため、簡易的に全員編集可にしています)
-create policy "map_layout is editable by everyone"
+-- 編集はログイン済みユーザーのみ(Googleログイン導入前は「誰でも編集可」に
+-- していたが、anon keyはクライアントに公開されるためログインなしで誰でも
+-- 直接Supabase APIを叩いて改ざん・削除できてしまっていた。ログイン必須に
+-- 変更する場合は、既存のポリシーを一度削除してから作り直すこと)。
+drop policy if exists "map_layout is editable by everyone" on public.map_layout;
+
+create policy "map_layout is editable by authenticated users"
   on public.map_layout for all
-  using (true)
-  with check (true);
+  using (auth.uid() is not null)
+  with check (auth.uid() is not null);

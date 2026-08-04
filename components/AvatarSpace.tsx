@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RealtimeChannel } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/client";
 import {
   PlayerState,
   MAP_WIDTH,
@@ -70,6 +70,12 @@ type Props = {
 };
 
 export default function AvatarSpace({ initialName }: Props) {
+  // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
+  // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
+  // 同じクライアント生成関数を使う(以前は素のcreateClientを使っており、
+  // auth.uid()がRLS側で常にnullになっていた)。useStateの遅延初期化で
+  // マウント時に一度だけ生成する。
+  const [supabase] = useState(() => createClient());
   const [joined, setJoined] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
@@ -1013,7 +1019,7 @@ export default function AvatarSpace({ initialName }: Props) {
             let changed = false;
             const next = { ...prev };
             Object.values(state).forEach((entries) => {
-              const p = entries[0] as unknown as PlayerState;
+              const p = entries[0] as PlayerState;
               if (p.id === selfId.current) return;
               const current = next[p.id];
               if (!current) {
@@ -1275,7 +1281,7 @@ export default function AvatarSpace({ initialName }: Props) {
       const state = channel.presenceState<PlayerState>();
       const presentIds = new Set<string>();
       Object.values(state).forEach((entries) => {
-        const p = entries[0] as unknown as PlayerState;
+        const p = entries[0] as PlayerState;
         presentIds.add(p.id);
       });
 
@@ -1300,7 +1306,7 @@ export default function AvatarSpace({ initialName }: Props) {
 
         // 実際には在室しているのに、こちらで把握できていない相手を追加
         Object.values(state).forEach((entries) => {
-          const p = entries[0] as unknown as PlayerState;
+          const p = entries[0] as PlayerState;
           if (p.id !== selfId.current && !next[p.id]) {
             next[p.id] = p;
             changed = true;

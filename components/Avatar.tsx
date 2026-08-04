@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   AVATAR_IMAGES,
   PlayerState,
@@ -45,10 +45,25 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
     [],
   );
 
+  // 吹き出しは「表示中に他の理由で再描画が起きない限りDate.now()が
+  // 再評価されず消えない」問題があったため、タイマーで明示的に非表示へ
+  // 切り替える(位置更新はDOM操作のみでReactの再描画を経由しないため、
+  // 他のstate変化が起きないと自然には再描画されない)。
+  const [bubbleExpired, setBubbleExpired] = useState(false);
+  useEffect(() => {
+    if (!player.message || !player.messageAt) return;
+    setBubbleExpired(false);
+    const remaining = CHAT_BUBBLE_DURATION_MS - (Date.now() - player.messageAt);
+    if (remaining <= 0) {
+      setBubbleExpired(true);
+      return;
+    }
+    const timer = setTimeout(() => setBubbleExpired(true), remaining);
+    return () => clearTimeout(timer);
+  }, [player.message, player.messageAt]);
+
   const showBubble =
-    player.message &&
-    player.messageAt &&
-    Date.now() - player.messageAt < CHAT_BUBBLE_DURATION_MS;
+    !!player.message && !!player.messageAt && !bubbleExpired;
   const showMicBadge = player.micOn !== undefined;
   const avatarImage = player.avatarImage || AVATAR_IMAGES[0];
 
@@ -97,4 +112,8 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   );
 });
 
-export default Avatar;
+// playersステートは誰か一人が変化するたびに新しいオブジェクト参照になり、
+// 親(AvatarSpace)は必ず再描画される。memo化しないと、変化していない
+// プレイヤーのAvatarまで毎回再描画されてしまうため、propsが変わって
+// いない場合はスキップされるようにする。
+export default memo(Avatar);
