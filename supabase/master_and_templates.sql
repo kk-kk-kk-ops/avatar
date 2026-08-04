@@ -10,6 +10,28 @@
 alter table public.profiles
   add column if not exists is_master boolean not null default false;
 
+-- is_masterの判定はSECURITY DEFINER関数を介して行う。ポリシー内で直接
+-- 「exists (select 1 from profiles where ...)」のようにprofilesテーブルを
+-- 素朴にサブクエリすると、そのサブクエリ自体がprofilesのSELECTポリシー
+-- (このあと作るprofiles: select masterを含む)を再評価しようとして無限に
+-- 再帰してしまう(Postgresエラー42P17 infinite recursion detected in
+-- policy for relation "profiles")。関数はテーブル所有者の権限で実行され
+-- RLSを経由しないため、この再帰を避けられる。
+create or replace function public.is_master(uid uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(
+    (select is_master from public.profiles where user_id = uid),
+    false
+  );
+$$;
+
+grant execute on function public.is_master(uuid) to authenticated;
+
 -- テンプレート(部屋のひな形)。背景画像・障害物・ミーティングエリアの配置を
 -- マスターだけが編集できる。個々のルームは自分でレイアウトを持たず、常に
 -- 紐づくtemplateのレイアウトを参照する(マップ編集は撤去し、マスターの
@@ -36,18 +58,8 @@ create policy "templates: select authenticated"
 drop policy if exists "templates: modify master" on public.templates;
 create policy "templates: modify master"
   on public.templates for all
-  using (
-    exists (
-      select 1 from public.profiles
-      where user_id = auth.uid() and is_master = true
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.profiles
-      where user_id = auth.uid() and is_master = true
-    )
-  );
+  using (public.is_master(auth.uid()))
+  with check (public.is_master(auth.uid()));
 
 -- rooms: どのテンプレートを使っているか
 alter table public.rooms
@@ -68,10 +80,7 @@ create policy "template-images: master insert"
   on storage.objects for insert
   with check (
     bucket_id = 'template-images'
-    and exists (
-      select 1 from public.profiles
-      where user_id = auth.uid() and is_master = true
-    )
+    and public.is_master(auth.uid())
   );
 
 drop policy if exists "template-images: master update" on storage.objects;
@@ -79,10 +88,7 @@ create policy "template-images: master update"
   on storage.objects for update
   using (
     bucket_id = 'template-images'
-    and exists (
-      select 1 from public.profiles
-      where user_id = auth.uid() and is_master = true
-    )
+    and public.is_master(auth.uid())
   );
 
 drop policy if exists "template-images: master delete" on storage.objects;
@@ -90,10 +96,7 @@ create policy "template-images: master delete"
   on storage.objects for delete
   using (
     bucket_id = 'template-images'
-    and exists (
-      select 1 from public.profiles
-      where user_id = auth.uid() and is_master = true
-    )
+    and public.is_master(auth.uid())
   );
 
 -- マスターはダッシュボードの集計のため、プラットフォーム全体の
@@ -103,32 +106,17 @@ create policy "template-images: master delete"
 drop policy if exists "profiles: select master" on public.profiles;
 create policy "profiles: select master"
   on public.profiles for select
-  using (
-    exists (
-      select 1 from public.profiles me
-      where me.user_id = auth.uid() and me.is_master = true
-    )
-  );
+  using (public.is_master(auth.uid()));
 
 drop policy if exists "accounts: select master" on public.accounts;
 create policy "accounts: select master"
   on public.accounts for select
-  using (
-    exists (
-      select 1 from public.profiles
-      where user_id = auth.uid() and is_master = true
-    )
-  );
+  using (public.is_master(auth.uid()));
 
 drop policy if exists "rooms: select master" on public.rooms;
 create policy "rooms: select master"
   on public.rooms for select
-  using (
-    exists (
-      select 1 from public.profiles
-      where user_id = auth.uid() and is_master = true
-    )
-  );
+  using (public.is_master(auth.uid()));
 
 -- k.one.for.all.k@gmail.com には即座にマスター権限を付与する
 -- (info@grovina-studio.comは初回ログイン時にアプリ側のコードで自動付与される)
