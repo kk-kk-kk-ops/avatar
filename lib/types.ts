@@ -31,15 +31,49 @@ export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
   away: "離席中",
 };
 
-// public/avatar 内の選択可能なアバター画像一覧
+// public/avatar 内の選択可能なアバター画像一覧。
+// 拡張子なしのパス(例: "/avatar/goo")は「向きごとの画像を持つフォルダ」を
+// 表し、front/back/left/right.pngを向きに応じて出し分ける
+// (getAvatarSpritePath参照)。拡張子ありのパスは従来通り1枚絵のアバター。
 export const AVATAR_IMAGES = [
-  "/avatar/goo.png",
-  "/avatar/kids1.png",
-  "/avatar/kids2.png",
-  "/avatar/men.png",
-  "/avatar/rabi.png",
-  "/avatar/woman.png",
+  "/avatar/goo",
+  "/avatar/kids1",
+  "/avatar/kids2",
+  "/avatar/men",
+  "/avatar/rabi",
+  "/avatar/woman",
 ];
+
+// 向き(dir)ごとのファイル名
+const AVATAR_DIR_FILENAMES: Record<PlayerState["dir"], string> = {
+  up: "back",
+  down: "front",
+  left: "left",
+  right: "right",
+};
+
+// アバター選択一覧やプレビューで使う「代表画像」。フォルダ形式ならfront.png、
+// 1枚絵ならそのままの画像を返す。
+export function getAvatarThumbnail(avatarImage: string): string {
+  return isAvatarFolder(avatarImage)
+    ? `${avatarImage}/front.png`
+    : avatarImage;
+}
+
+// avatarImageが拡張子を持たない場合、向きごとの画像を持つフォルダとみなす。
+function isAvatarFolder(avatarImage: string): boolean {
+  return !/\.[a-zA-Z0-9]+$/.test(avatarImage);
+}
+
+// 移動方向(dir)に応じたアバター画像のパスを返す。フォルダ形式でない
+// (=1枚絵の)アバターは向きが変わっても常に同じ画像を返す。
+export function getAvatarSpritePath(
+  avatarImage: string,
+  dir: PlayerState["dir"],
+): string {
+  if (!isAvatarFolder(avatarImage)) return avatarImage;
+  return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.png`;
+}
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;

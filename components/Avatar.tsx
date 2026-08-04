@@ -7,6 +7,8 @@ import {
   AVATAR_RADIUS,
   AVATAR_HITBOX_HEIGHT,
   CHAT_BUBBLE_DURATION_MS,
+  getAvatarSpritePath,
+  getAvatarThumbnail,
 } from "@/lib/types";
 
 type Props = {
@@ -66,6 +68,19 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
     !!player.message && !!player.messageAt && !bubbleExpired;
   const showMicBadge = player.micOn !== undefined;
   const avatarImage = player.avatarImage || AVATAR_IMAGES[0];
+  const spriteSrc = getAvatarSpritePath(avatarImage, player.dir);
+
+  // 向きごとの画像(back/front/left/right.png)が用意されていないアバターも
+  // あるため、読み込みに失敗した場合はfront.png(1枚絵のアバターはそのまま
+  // 同じ画像)にフォールバックする。向きが変わった際は改めて読み込みを
+  // 試したいので、spriteSrcが変わるたびにエラー状態をリセットする。
+  const [spriteLoadFailed, setSpriteLoadFailed] = useState(false);
+  useEffect(() => {
+    setSpriteLoadFailed(false);
+  }, [spriteSrc]);
+  const displaySrc = spriteLoadFailed
+    ? getAvatarThumbnail(avatarImage)
+    : spriteSrc;
 
   return (
     <div
@@ -86,8 +101,9 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
       {/* アバター画像(背景・枠なしでそのまま表示) */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={avatarImage}
+        src={displaySrc}
         alt={player.name}
+        onError={() => setSpriteLoadFailed(true)}
         className="h-full w-full object-contain drop-shadow-md"
       />
 

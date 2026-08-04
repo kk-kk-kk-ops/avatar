@@ -1,6 +1,6 @@
 "use client";
 
-import { AVATAR_IMAGES } from "@/lib/types";
+import { AVATAR_IMAGES, getAvatarThumbnail } from "@/lib/types";
 
 type Props = {
   selected: string;
@@ -23,7 +23,7 @@ export default function AvatarPicker({ selected, onSelect }: Props) {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={image}
+            src={getAvatarThumbnail(image)}
             alt="アバター"
             className="h-full w-full object-contain"
           />
