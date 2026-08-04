@@ -56,6 +56,20 @@ export async function createTemplate(formData: FormData) {
   revalidatePath("/master");
 }
 
+export async function renameTemplate(templateId: string, name: string) {
+  const { supabase } = await requireMaster();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("テンプレート名を入力してください");
+
+  const { error } = await supabase
+    .from("templates")
+    .update({ name: trimmed })
+    .eq("id", templateId);
+  if (error) throw new Error("テンプレート名の変更に失敗しました");
+
+  revalidatePath("/master");
+}
+
 export async function updateTemplateLayout(
   templateId: string,
   obstacles: Obstacle[],

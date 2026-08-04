@@ -1,6 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // Server Actionsのデフォルト上限(1MB)だとテンプレートの背景画像
+    // アップロードが弾かれてしまうため引き上げる。
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
+  },
   // ページを常に最新の状態で取得させる(ブラウザ・Vercelのキャッシュを無効化)。
   // これにより、デプロイ後にリロードすればキャッシュクリア不要で最新版が表示される。
   async headers() {

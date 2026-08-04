@@ -26,7 +26,19 @@ export default async function MasterPage() {
   const state = await resolveUserRouteState(supabase, user.id);
   if (!state.isMaster) redirect("/");
 
-  const { data: accountRows } = await supabase.from("accounts").select("plan");
+  // マスター権限を持つユーザーが所有するアカウントは、集計上は課金対象の
+  // 一般テナントとして扱わない(運用担当者自身のアカウントのため)。
+  const { data: masterProfileRows } = await supabase
+    .from("profiles")
+    .select("user_id")
+    .eq("is_master", true);
+  const masterUserIds = new Set(
+    (masterProfileRows ?? []).map((p) => p.user_id),
+  );
+
+  const { data: accountRows } = await supabase
+    .from("accounts")
+    .select("plan, owner_user_id");
   const planCounts: Record<PlanId, number> = {
     free: 0,
     light: 0,
@@ -35,6 +47,7 @@ export default async function MasterPage() {
   };
   let subscriptionTotalYen = 0;
   (accountRows ?? []).forEach((a) => {
+    if (masterUserIds.has(a.owner_user_id)) return;
     const plan = a.plan as PlanId;
     if (!(plan in planCounts)) return;
     planCounts[plan] += 1;

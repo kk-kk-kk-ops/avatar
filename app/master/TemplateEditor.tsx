@@ -10,7 +10,11 @@ import {
   clampSize,
   randomItemId,
 } from "@/lib/types";
-import { updateTemplateLayout, replaceTemplateImage } from "./actions";
+import {
+  updateTemplateLayout,
+  replaceTemplateImage,
+  renameTemplate,
+} from "./actions";
 
 type ItemType = "obstacle" | "zone";
 
@@ -55,6 +59,10 @@ export default function TemplateEditor({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState(template.name);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(template.name);
+  const [renaming, setRenaming] = useState(false);
   const dragState = useRef<DragState | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [displaySize, setDisplaySize] = useState(MAX_DISPLAY_WIDTH);
@@ -197,6 +205,25 @@ export default function TemplateEditor({
     }
   };
 
+  const handleRename = async () => {
+    setError(null);
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      setError("テンプレート名を入力してください");
+      return;
+    }
+    setRenaming(true);
+    try {
+      await renameTemplate(template.id, trimmed);
+      setName(trimmed);
+      setEditingName(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "テンプレート名の変更に失敗しました");
+    } finally {
+      setRenaming(false);
+    }
+  };
+
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -216,8 +243,44 @@ export default function TemplateEditor({
 
   return (
     <div className="rounded-xl border border-slate-200 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-sm font-bold text-slate-800">{template.name}</p>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        {editingName ? (
+          <div className="flex items-center gap-1">
+            <input
+              autoFocus
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleRename()}
+              className="rounded border border-slate-300 px-2 py-1 text-sm outline-none focus:border-slate-500"
+            />
+            <button
+              onClick={handleRename}
+              disabled={renaming}
+              className="rounded bg-slate-900 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              保存
+            </button>
+            <button
+              onClick={() => {
+                setEditingName(false);
+                setNameInput(name);
+              }}
+              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600"
+            >
+              キャンセル
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-bold text-slate-800">{name}</p>
+            <button
+              onClick={() => setEditingName(true)}
+              className="text-xs text-slate-500 hover:text-slate-800"
+            >
+              名前変更
+            </button>
+          </div>
+        )}
         <button
           onClick={onClose}
           className="text-xs text-slate-500 hover:text-slate-800"
