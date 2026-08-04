@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_MAX_AGE } from "./constants";
 
 // 認証不要でアクセスできるパス
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/dev-preview"];
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some(

@@ -5,6 +5,9 @@ import { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import {
   PlayerState,
+  PresenceStatus,
+  PRESENCE_STATUS_COLORS,
+  PRESENCE_STATUS_LABELS,
   MAP_WIDTH,
   MAP_HEIGHT,
   AVATAR_HITBOX_WIDTH,
@@ -82,6 +85,8 @@ export default function AvatarSpace({ initialName }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsNameInput, setSettingsNameInput] = useState("");
   const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
+  const [settingsStatus, setSettingsStatus] =
+    useState<PresenceStatus>("available");
   const [chatInput, setChatInput] = useState("");
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const playersRef = useRef<Record<string, PlayerState>>({});
@@ -221,6 +226,7 @@ export default function AvatarSpace({ initialName }: Props) {
       name,
       color: randomColor(),
       avatarImage: selectedAvatar,
+      status: "available",
       x: spawn.x,
       y: spawn.y,
       dir: "down",
@@ -1807,10 +1813,11 @@ export default function AvatarSpace({ initialName }: Props) {
     // messageAt を上書きするので、自動的に「新しいメッセージで上書き」される。
   }, [chatInput]);
 
-  // ---- 入室後の設定変更(名前・アバター画像) ----
+  // ---- 入室後の設定変更(名前・アバター画像・在席ステータス) ----
   const openSettings = useCallback(() => {
     setSettingsNameInput(selfState.current?.name ?? "");
     setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
+    setSettingsStatus(selfState.current?.status ?? "available");
     setSettingsOpen(true);
   }, []);
 
@@ -1820,11 +1827,12 @@ export default function AvatarSpace({ initialName }: Props) {
       settingsNameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
     selfState.current.name = name;
     selfState.current.avatarImage = settingsAvatar;
+    selfState.current.status = settingsStatus;
     const updated = selfState.current;
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
     channelRef.current?.track(updated);
     setSettingsOpen(false);
-  }, [settingsNameInput, settingsAvatar]);
+  }, [settingsNameInput, settingsAvatar, settingsStatus]);
 
   // ---- 入室前:名前入力・アバター選択モーダル ----
   if (!joined) {
@@ -1952,14 +1960,7 @@ export default function AvatarSpace({ initialName }: Props) {
             <div className="shrink-0">
               <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
             </div>
-            <button
-              onClick={openSettings}
-              className="shrink-0 rounded p-1.5 text-sm hover:bg-white/10"
-              aria-label="アバター・名前の設定"
-              title="アバター・名前を変更"
-            >
-              ⚙️
-            </button>
+            {/* 設定アイコンはサイドバーの「自分」欄に移動した */}
             {/* スマホのみ表示するハンバーガーボタン */}
             <button
               onClick={() => setShowParticipants((v) => !v)}
@@ -2257,7 +2258,7 @@ export default function AvatarSpace({ initialName }: Props) {
           } fixed inset-y-0 right-0 z-40 w-64 flex-col overflow-y-auto border-l border-slate-700 bg-slate-900 p-3 text-white sm:static sm:z-auto sm:flex sm:w-52 sm:shrink-0`}
         >
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-xs font-semibold text-slate-400">参加者</h2>
+            <h2 className="text-xs font-semibold text-slate-400">自分</h2>
             <button
               onClick={() => setShowParticipants(false)}
               className="text-slate-400 hover:text-white sm:hidden"
@@ -2266,19 +2267,48 @@ export default function AvatarSpace({ initialName }: Props) {
               ✕
             </button>
           </div>
-          <ul className="space-y-1">
-            {playerList.map((p) => (
-              <li key={p.id} className="flex items-center gap-2 text-sm">
+          {selfPlayer && (
+            <div className="mb-3 flex items-center justify-between gap-2 text-sm">
+              <div className="flex min-w-0 items-center gap-2">
                 <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: p.color }}
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor:
+                      PRESENCE_STATUS_COLORS[selfPlayer.status ?? "available"],
+                  }}
                 />
-                {p.name}
-                {p.id === selfId.current && (
-                  <span className="text-[10px] text-slate-400">(あなた)</span>
-                )}
-              </li>
-            ))}
+                <span className="truncate">{selfPlayer.name}</span>
+                <span className="shrink-0 text-[10px] text-slate-400">
+                  (あなた)
+                </span>
+              </div>
+              <button
+                onClick={openSettings}
+                className="shrink-0 rounded p-1 text-sm hover:bg-white/10"
+                aria-label="アバター・名前の設定"
+                title="アバター・名前を変更"
+              >
+                ⚙️
+              </button>
+            </div>
+          )}
+
+          <h2 className="mb-2 text-xs font-semibold text-slate-400">参加者</h2>
+          <ul className="space-y-1">
+            {playerList
+              .filter((p) => p.id !== selfId.current)
+              .map((p) => (
+                <li key={p.id} className="flex items-center gap-2 text-sm">
+                  <span
+                    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{
+                      backgroundColor:
+                        PRESENCE_STATUS_COLORS[p.status ?? "available"],
+                    }}
+                  />
+                  <span className="truncate">{p.name}</span>
+                </li>
+              ))}
           </ul>
 
           {/* マップ編集モードの切り替え・追加メニュー */}
@@ -2414,6 +2444,35 @@ export default function AvatarSpace({ initialName }: Props) {
               placeholder="例:みく"
               className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
             />
+
+            <div className="mb-4">
+              <p className="mb-2 text-xs font-semibold text-slate-500">
+                ステータス
+              </p>
+              <div className="flex flex-col gap-2">
+                {(
+                  Object.keys(PRESENCE_STATUS_LABELS) as PresenceStatus[]
+                ).map((status) => (
+                  <label
+                    key={status}
+                    className="flex items-center gap-2 text-sm text-slate-700"
+                  >
+                    <input
+                      type="radio"
+                      name="presence-status"
+                      value={status}
+                      checked={settingsStatus === status}
+                      onChange={() => setSettingsStatus(status)}
+                    />
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: PRESENCE_STATUS_COLORS[status] }}
+                    />
+                    {PRESENCE_STATUS_LABELS[status]}
+                  </label>
+                ))}
+              </div>
+            </div>
 
             <div className="flex gap-2">
               <button

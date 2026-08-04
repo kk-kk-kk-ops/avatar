@@ -1,3 +1,6 @@
+// 在席ステータス(通話可能/取込み中/離席中)。参加者一覧の丸アイコンの色に使う。
+export type PresenceStatus = "available" | "busy" | "away";
+
 export type PlayerState = {
   id: string; // ブラウザごとのランダムID(ゲストID)
   name: string;
@@ -13,6 +16,19 @@ export type PlayerState = {
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
   inCall?: boolean; // ビデオ通話中かどうか(相手にも表示する)
   avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)
+  status?: PresenceStatus; // 在席ステータス(未設定時はavailable扱い)
+};
+
+export const PRESENCE_STATUS_COLORS: Record<PresenceStatus, string> = {
+  available: "#22c55e", // 緑:通話可能
+  busy: "#ef4444", // 赤:取込み中
+  away: "#f97316", // オレンジ:離席中
+};
+
+export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
+  available: "通話可能",
+  busy: "取込み中",
+  away: "離席中",
 };
 
 // public/avatar 内の選択可能なアバター画像一覧
