@@ -1,9 +1,11 @@
 -- 既存の「Grovina Office」ルーム(map_layout id='default')を、
 -- k.one.for.all.k@gmail.com のアカウントへ移行する一回限りのスクリプト。
 -- Supabaseダッシュボード → SQL Editor に貼り付けて実行してください。
--- accounts.sql / rooms.sql / profiles.sql / map_layout_room.sql を
--- 先に実行しておくこと。このスクリプトも一度だけ実行すればよい
--- (再実行しても同じ結果になるよう存在チェックを入れている)。
+-- accounts.sql → profiles.sql → rooms.sql → map_layout_room.sql の順で
+-- 先に実行しておくこと(特にmap_layout_room.sqlは必ずこれより先。
+-- map_layout.room_id列はそちらで追加されるため)。このスクリプトも
+-- 一度だけ実行すればよい(再実行しても同じ結果になるよう存在チェックを
+-- 入れている)。
 --
 -- 注:プランは暫定でproにしている(開発・運用担当者のアカウントのため、
 -- ルーム数・人数の上限で作業が止まらないようにする想定)。変更したい

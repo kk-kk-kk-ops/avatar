@@ -1,7 +1,9 @@
 -- map_layoutをルームごとに分けるための拡張。
 -- Supabaseダッシュボード → SQL Editor に貼り付けて実行してください。
--- accounts.sql・rooms.sql・migrate_existing_owner.sql を先に実行しておくこと
--- (room_idの外部キー参照、および既存の1行を実在のルームへ紐付けるため)。
+-- accounts.sql・rooms.sqlを先に実行しておくこと(room_idの外部キー参照のため)。
+-- migrate_existing_owner.sqlより先に、必ずこのファイルを実行すること
+-- (migrate_existing_owner.sqlはこのファイルで追加されるroom_id列を
+-- 更新するため、room_id列が存在しないと42703エラーになる)。
 
 alter table public.map_layout
   add column if not exists room_id uuid references public.rooms(id) on delete cascade;

@@ -9,8 +9,9 @@
 --   4. accounts_policies.sql (accountsのSELECTポリシーもprofiles.account_id
 --      を参照するため、profiles.sqlの後でないと作成できない)
 --   5. invite_lookup_function.sql
---   6. migrate_existing_owner.sql
---   7. map_layout_room.sql
+--   6. map_layout_room.sql (map_layout.room_idカラムを追加)
+--   7. migrate_existing_owner.sql (map_layout.room_idを更新するため、
+--      map_layout_room.sqlより後に実行する)
 
 create table if not exists public.accounts (
   id uuid primary key default gen_random_uuid(),
