@@ -37,6 +37,8 @@ export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
 // (getAvatarSpritePath参照)。拡張子ありのパスは従来通り1枚絵のアバター。
 export const AVATAR_IMAGES = [
   "/avatar/goo",
+  "/avatar/goo_blue",
+  "/avatar/goo_yewllow",
   "/avatar/kids1",
   "/avatar/kids2",
   "/avatar/men",

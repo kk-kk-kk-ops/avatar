@@ -9,7 +9,7 @@ type Props = {
 
 export default function AvatarPicker({ selected, onSelect }: Props) {
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-4 gap-1.5">
       {AVATAR_IMAGES.map((image) => (
         <button
           key={image}
