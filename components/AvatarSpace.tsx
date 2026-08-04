@@ -139,6 +139,16 @@ export default function AvatarSpace({ initialName }: Props) {
   // 双方からofferが届く交渉の衝突(グレア)を検知するために使う。
   const makingOffer = useRef<Map<string, boolean>>(new Map());
   const lastTrackedZoneId = useRef<string | null>(null);
+  // 定期同期(下記)で「前回同期した時の値」を覚えておくための記録。
+  // selfState.currentとplayers[自分のID]が同じオブジェクト参照になって
+  // いることがあり(入室直後など)、その場合next[self.id]とself自体を
+  // 比較しても常に「変化なし」判定になってしまうため、別途この記録と
+  // 比較することで参照の別名(エイリアス)状態に左右されないようにする。
+  const lastSelfSyncRef = useRef<{
+    x: number;
+    y: number;
+    dir: PlayerState["dir"];
+  } | null>(null);
   const wasMovingRef = useRef(false);
   const lastMoveSentAt = useRef(0);
 
@@ -1606,20 +1616,23 @@ export default function AvatarSpace({ initialName }: Props) {
         const next = { ...prev };
 
         const self = selfState.current;
-        if (
-          self &&
-          next[self.id] &&
-          (next[self.id].x !== self.x ||
-            next[self.id].y !== self.y ||
-            next[self.id].dir !== self.dir)
-        ) {
-          next[self.id] = {
-            ...next[self.id],
-            x: self.x,
-            y: self.y,
-            dir: self.dir,
-          };
-          changed = true;
+        if (self && next[self.id]) {
+          const last = lastSelfSyncRef.current;
+          if (
+            !last ||
+            last.x !== self.x ||
+            last.y !== self.y ||
+            last.dir !== self.dir
+          ) {
+            lastSelfSyncRef.current = { x: self.x, y: self.y, dir: self.dir };
+            next[self.id] = {
+              ...next[self.id],
+              x: self.x,
+              y: self.y,
+              dir: self.dir,
+            };
+            changed = true;
+          }
         }
 
         peerPositionsRef.current.forEach((pos, peerId) => {
