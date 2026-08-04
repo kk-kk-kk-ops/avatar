@@ -20,6 +20,7 @@ export default function PlanSelector() {
       startTransition(async () => {
         try {
           await startFreeTrial();
+          router.push("/admin");
         } catch {
           setError("開始に失敗しました。時間をおいて再度お試しください。");
         }
