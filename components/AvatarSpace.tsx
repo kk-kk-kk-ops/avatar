@@ -2118,7 +2118,7 @@ export default function AvatarSpace({ initialName }: Props) {
               height: MAP_HEIGHT,
               transformOrigin: "0 0",
               transform: `scale(${mapScale}) translate(${-cameraX}px, ${-cameraY}px)`,
-              backgroundImage: "url('/map-background.png')",
+              backgroundImage: "url('/map-background.webp')",
               backgroundSize: "cover",
               backgroundPosition: "center",
               backgroundRepeat: "no-repeat",
