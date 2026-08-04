@@ -8,11 +8,18 @@ import { createClient } from "@/lib/supabase/client";
 // Server Actionには結果のURL文字列だけを渡すことでこの上限を回避する。
 export async function uploadTemplateImageClient(file: File): Promise<string> {
   const supabase = createClient();
-  const path = `${crypto.randomUUID()}-${file.name}`;
+  // 元のファイル名(日本語を含むことがある)をそのままStorageのパスに使うと
+  // URLエンコーディングの問題でアップロードが失敗することがあるため、
+  // 拡張子だけを取り出しランダムなファイル名にする。
+  const extMatch = /\.[a-zA-Z0-9]+$/.exec(file.name);
+  const ext = extMatch ? extMatch[0] : "";
+  const path = `${crypto.randomUUID()}${ext}`;
   const { error } = await supabase.storage
     .from("template-images")
     .upload(path, file, { contentType: file.type });
-  if (error) throw new Error("画像のアップロードに失敗しました");
+  if (error) {
+    throw new Error(`画像のアップロードに失敗しました: ${error.message}`);
+  }
 
   const {
     data: { publicUrl },
