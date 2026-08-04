@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import type { Room } from "@/lib/types";
-import { addRoom, deleteRoom, renameRoom, ROOM_TEMPLATES } from "./actions";
+import { addRoom, deleteRoom, renameRoom } from "./actions";
+import { ROOM_TEMPLATES } from "./roomTemplates";
 
 export default function RoomManager({
   rooms,

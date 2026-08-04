@@ -4,12 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { PLANS } from "@/lib/types";
-
-// ルームテンプレート一覧。今はGrovina Office(既存のmap-background.webp)
-// のみだが、後で追加しやすいよう配列にしてある。
-export const ROOM_TEMPLATES = [
-  { id: "grovina-office", name: "Grovina Office", previewImage: "/map-background.webp" },
-];
+import { ROOM_TEMPLATES } from "./roomTemplates";
 
 async function requireAdminAccount() {
   const supabase = createClient();
