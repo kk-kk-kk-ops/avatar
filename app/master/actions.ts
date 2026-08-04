@@ -102,7 +102,9 @@ export async function deleteTemplate(templateId: string) {
     .from("templates")
     .delete()
     .eq("id", templateId);
-  if (error) throw new Error("テンプレートの削除に失敗しました");
+  if (error) {
+    throw new Error(`テンプレートの削除に失敗しました: ${error.message}`);
+  }
 
   revalidatePath("/master");
 }
