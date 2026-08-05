@@ -82,7 +82,9 @@ export async function GET(request: NextRequest) {
 
   // 招待リンク(?invite=トークン)経由のログインなら、そのアカウントへ
   // ゲストとして紐付ける(既に別アカウントのadmin/guestであっても
-  // 切り替える。招待は常にゲスト参加を優先する)。
+  // 切り替える。招待は常にゲスト参加を優先する)。ただし招待URLが
+  // 自分自身がオーナーのアカウントのものだった場合(自分の招待URL)は
+  // 何もせず、下の通常ルーティングに任せる。
   const inviteToken = searchParams.get("invite");
   if (inviteToken) {
     const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
@@ -94,6 +96,11 @@ export async function GET(request: NextRequest) {
       const errorCode =
         result.error === "invalid_invite" ? "invalid_invite" : "auth_failed";
       return NextResponse.redirect(`${origin}/?error=${errorCode}`);
+    }
+    // 他人の招待URL経由でゲスト参加した場合は、isMaster/管理者であっても
+    // 必ずルーム選択画面へ進む(自分の管理画面/マスター画面には戻さない)。
+    if (!result.isOwnAccount) {
+      return NextResponse.redirect(`${origin}/rooms`);
     }
   }
 

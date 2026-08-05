@@ -27,13 +27,14 @@ export default async function Home({
     data: { user },
   } = await supabase.auth.getUser();
 
+  const inviteToken = searchParams.invite;
+
   if (user) {
     // 既にログイン済みのブラウザで他人の招待URL(?invite=トークン)を
     // 開いた場合もゲストとして参加させる(Googleログインの
     // /auth/callbackはセッションが無い初回ログイン時にしか通らないため、
     // ここでも同じ処理をしないと、既に自分のアカウントを持つ管理者が
     // 招待URLを踏んでも自分の管理画面に戻ってしまっていた)。
-    const inviteToken = searchParams.invite;
     if (inviteToken) {
       const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
       if (!result.ok) {
@@ -44,6 +45,11 @@ export default async function Home({
         redirect(
           `/?error=${result.error === "invalid_invite" ? "invalid_invite" : "auth_failed"}`,
         );
+      }
+      // 他人の招待URL経由でゲスト参加した場合は、isMaster/管理者であっても
+      // 必ずルーム選択画面へ進む(自分の管理画面/マスター画面には戻さない)。
+      if (!result.isOwnAccount) {
+        redirect("/rooms");
       }
     }
 
@@ -61,15 +67,29 @@ export default async function Home({
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4">
       <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
+        <span
+          className={`mb-4 inline-block rounded-full px-3 py-1 text-xs font-semibold ${
+            inviteToken
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-slate-100 text-slate-600"
+          }`}
+        >
+          {inviteToken ? "ゲスト用ログイン" : "管理者用ログイン"}
+        </span>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/logo.png"
           alt="ロゴ"
           className="mx-auto mb-4 h-14 w-14 object-contain"
         />
-        <h1 className="mb-8 text-lg font-bold text-slate-800">
+        <h1 className="mb-2 text-lg font-bold text-slate-800">
           Grovina Office
         </h1>
+        <p className="mb-6 text-xs text-slate-500">
+          {inviteToken
+            ? "招待されたルームにゲストとして参加します"
+            : "管理者・マスター権限をお持ちの方はこちらからログインしてください"}
+        </p>
 
         {errorMessage && (
           <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
