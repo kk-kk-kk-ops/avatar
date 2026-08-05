@@ -87,6 +87,10 @@ export async function GET(request: NextRequest) {
   if (inviteToken) {
     const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
     if (!result.ok) {
+      if (result.error === "join_failed") {
+        // eslint-disable-next-line no-console
+        console.error("招待経由の参加に失敗しました", result.detail);
+      }
       const errorCode =
         result.error === "invalid_invite" ? "invalid_invite" : "auth_failed";
       return NextResponse.redirect(`${origin}/?error=${errorCode}`);
