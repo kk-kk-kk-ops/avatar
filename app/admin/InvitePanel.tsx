@@ -1,12 +1,21 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { regenerateInviteToken } from "./actions";
+import { regenerateInviteToken, updateInviteInviterName } from "./actions";
 
-export default function InvitePanel({ inviteToken }: { inviteToken: string }) {
+export default function InvitePanel({
+  inviteToken,
+  inviterName,
+}: {
+  inviteToken: string;
+  inviterName: string;
+}) {
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [savingName, startNameTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [nameInput, setNameInput] = useState(inviterName);
+  const [nameSaved, setNameSaved] = useState(false);
 
   const inviteUrl =
     typeof window !== "undefined"
@@ -40,6 +49,20 @@ export default function InvitePanel({ inviteToken }: { inviteToken: string }) {
     });
   };
 
+  const handleSaveName = () => {
+    setError(null);
+    setNameSaved(false);
+    startNameTransition(async () => {
+      try {
+        await updateInviteInviterName(nameInput);
+        setNameSaved(true);
+        setTimeout(() => setNameSaved(false), 2000);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "招待者名の更新に失敗しました");
+      }
+    });
+  };
+
   return (
     <div>
       <p className="mb-2 text-xs font-semibold text-slate-500">招待URL</p>
@@ -54,6 +77,25 @@ export default function InvitePanel({ inviteToken }: { inviteToken: string }) {
           className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
         >
           {copied ? "コピーしました" : "コピー"}
+        </button>
+      </div>
+
+      <p className="mb-1 mt-4 text-xs font-semibold text-slate-500">
+        招待者名(招待URLからのログイン画面に「〇〇〇さんからの招待」と表示されます)
+      </p>
+      <div className="mb-3 flex gap-2">
+        <input
+          value={nameInput}
+          onChange={(e) => setNameInput(e.target.value)}
+          placeholder="例: 山田太郎"
+          className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+        />
+        <button
+          onClick={handleSaveName}
+          disabled={savingName}
+          className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+        >
+          {savingName ? "保存中..." : nameSaved ? "保存しました" : "保存"}
         </button>
       </div>
 

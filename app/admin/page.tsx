@@ -18,7 +18,7 @@ export default async function AdminPage() {
 
   const { data: account } = await supabase
     .from("accounts")
-    .select("id, name, plan, trial_ends_at, invite_token")
+    .select("id, name, plan, trial_ends_at, invite_token, invite_inviter_name")
     .eq("id", state.accountId)
     .single();
 
@@ -58,6 +58,7 @@ export default async function AdminPage() {
       maxRooms={maxRooms}
       trialEndsAt={account?.trial_ends_at ?? null}
       inviteToken={account?.invite_token ?? ""}
+      inviterName={account?.invite_inviter_name ?? ""}
       templates={templates}
       showMasterLink={state.isMaster}
     />

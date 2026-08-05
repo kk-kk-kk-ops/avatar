@@ -46,13 +46,20 @@ export default async function RoomsPage() {
 
   const plan = (account?.plan as PlanId) ?? "free";
 
+  // このルームの中では、今いるアカウントの管理者(admin)である場合だけ
+  // 「管理画面へ」「マスター画面へ」を表示する。他人の招待URL経由で
+  // ゲスト参加している場合、たとえ自分自身がマスター権限を持っていても
+  // このルーム内では常にゲストとしてのみ振る舞う(自分の管理画面/
+  // マスター画面には行けないようにする)。
+  const isAccountAdmin = state.type === "admin";
+
   return (
     <AvatarSpaceLoader
       initialName={profile?.display_name ?? undefined}
       rooms={rooms}
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
-      isAccountAdmin={state.type === "admin"}
-      isMaster={state.isMaster}
+      isAccountAdmin={isAccountAdmin}
+      isMaster={isAccountAdmin && state.isMaster}
     />
   );
 }

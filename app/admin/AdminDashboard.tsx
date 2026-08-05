@@ -27,6 +27,7 @@ export default function AdminDashboard({
   maxRooms,
   trialEndsAt,
   inviteToken,
+  inviterName,
   templates,
   showMasterLink,
 }: {
@@ -36,27 +37,74 @@ export default function AdminDashboard({
   maxRooms: number;
   trialEndsAt: string | null;
   inviteToken: string;
+  inviterName: string;
   templates: TemplateOption[];
   showMasterLink: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const selectTab = (t: Tab) => {
+    setTab(t);
+    setSidebarOpen(false);
+  };
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-4">
+      {/* スマホ用ヘッダー: サイドバーは画面外に隠れているので、開くための
+          ハンバーガーボタンをここに置く(md以上では常時表示のサイドバー
+          側にロゴ・名前があるのでこちらは非表示にする)。 */}
+      <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:hidden">
+        <div className="flex min-w-0 items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Grovina" className="h-6 w-6 object-contain" />
+          <img src="/logo.png" alt="Grovina" className="h-6 w-6 shrink-0 object-contain" />
           <span className="truncate text-sm font-bold text-slate-800">
             {accountName}
           </span>
+        </div>
+        <button
+          onClick={() => setSidebarOpen(true)}
+          aria-label="メニューを開く"
+          className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-base"
+        >
+          ☰
+        </button>
+      </div>
+
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-56 shrink-0 -translate-x-full flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:static md:translate-x-0 ${
+          sidebarOpen ? "translate-x-0" : ""
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="Grovina" className="h-6 w-6 shrink-0 object-contain" />
+            <span className="truncate text-sm font-bold text-slate-800">
+              {accountName}
+            </span>
+          </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            aria-label="メニューを閉じる"
+            className="shrink-0 text-lg text-slate-400 md:hidden"
+          >
+            ×
+          </button>
         </div>
 
         <nav className="flex-1 space-y-1 p-3">
           {TABS.map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => selectTab(t.id)}
               className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
                 tab === t.id
                   ? "bg-slate-900 text-white"
@@ -87,13 +135,15 @@ export default function AdminDashboard({
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto bg-slate-50 p-6">
+      <main className="min-w-0 flex-1 overflow-y-auto bg-slate-50 p-6 pt-20 md:pt-6">
         <div className="mx-auto max-w-3xl">
           {tab === "dashboard" && <OnlineCount rooms={rooms} />}
           {tab === "rooms" && (
             <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
           )}
-          {tab === "invite" && <InvitePanel inviteToken={inviteToken} />}
+          {tab === "invite" && (
+            <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
+          )}
           {tab === "billing" && (
             <BillingPanel plan={plan} trialEndsAt={trialEndsAt} />
           )}

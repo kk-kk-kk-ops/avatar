@@ -96,3 +96,18 @@ export async function regenerateInviteToken() {
 
   revalidatePath("/admin");
 }
+
+// 招待URLからログイン画面に遷移したときに表示する招待者名
+// (「〇〇〇さんからの招待」の〇〇〇部分)を設定する。
+export async function updateInviteInviterName(name: string) {
+  const { supabase, account } = await requireAdminAccount();
+  const trimmed = name.trim();
+
+  const { error } = await supabase
+    .from("accounts")
+    .update({ invite_inviter_name: trimmed || null })
+    .eq("id", account.id);
+  if (error) throw new Error("招待者名の更新に失敗しました");
+
+  revalidatePath("/admin");
+}

@@ -64,6 +64,18 @@ export default async function Home({
     ? ERROR_MESSAGES[searchParams.error]
     : null;
 
+  // 未ログインで招待URL経由の場合、ログイン画面に「〇〇〇さんからの招待」
+  // と表示するため、招待者名だけ先に取得しておく(実際にゲストとして
+  // 参加させる処理はログイン後のjoinAccountViaInviteで行う)。
+  let inviterName: string | null = null;
+  if (inviteToken) {
+    const { data: accountRows } = await supabase.rpc(
+      "lookup_account_by_invite_token",
+      { token: inviteToken },
+    );
+    inviterName = accountRows?.[0]?.invite_inviter_name ?? null;
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4">
       <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
@@ -87,7 +99,9 @@ export default async function Home({
         </h1>
         <p className="mb-6 text-xs text-slate-500">
           {inviteToken
-            ? "招待されたルームにゲストとして参加します"
+            ? inviterName
+              ? `${inviterName}さんからの招待`
+              : "招待されたルームにゲストとして参加します"
             : "管理者・マスター権限をお持ちの方はこちらからログインしてください"}
         </p>
 
