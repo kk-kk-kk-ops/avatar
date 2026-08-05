@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
+import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
 import GoogleLoginButton from "@/components/auth/GoogleLoginButton";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -27,6 +28,21 @@ export default async function Home({
   } = await supabase.auth.getUser();
 
   if (user) {
+    // 既にログイン済みのブラウザで他人の招待URL(?invite=トークン)を
+    // 開いた場合もゲストとして参加させる(Googleログインの
+    // /auth/callbackはセッションが無い初回ログイン時にしか通らないため、
+    // ここでも同じ処理をしないと、既に自分のアカウントを持つ管理者が
+    // 招待URLを踏んでも自分の管理画面に戻ってしまっていた)。
+    const inviteToken = searchParams.invite;
+    if (inviteToken) {
+      const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
+      if (!result.ok) {
+        redirect(
+          `/?error=${result.error === "invalid_invite" ? "invalid_invite" : "auth_failed"}`,
+        );
+      }
+    }
+
     const state = await resolveUserRouteState(supabase, user.id);
     if (state.isMaster) redirect("/master");
     if (state.type === "no-account") redirect("/plan");

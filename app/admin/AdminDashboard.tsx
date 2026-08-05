@@ -16,7 +16,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "billing", label: "契約情報" },
 ];
 
-type TemplateOption = { id: string; name: string };
+type TemplateOption = { id: string; name: string; backgroundImageUrl: string };
 
 export default function AdminDashboard({
   rooms,

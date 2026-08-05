@@ -2,23 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 固定の高さ・overflow:hiddenは以前ここ(html,body全体)に付けていたが、
+   バーチャル空間(AvatarSpace)専用の「画面ぴったりに固定して動かさない」
+   挙動のためのものだった。全ページに適用されてしまっていたため、
+   管理画面・マスター画面などコンテンツが縦に長いページがスマホで
+   スクロールできなくなっていた。該当のスタイルはAvatarSpaceLoader側の
+   ラッパーに移し、ここでは通常ページ同様スクロール可能なままにする。 */
 html,
 body {
   padding: 0;
   margin: 0;
-  overscroll-behavior: none;
-  height: 100vh;
-  height: 100dvh; /* dvh対応ブラウザではこちらが優先して使われる */
   width: 100%;
   max-width: 100%;
-  /* 100vwはスクロールバー分の幅を含んでしまい、わずかな縦オーバーフローが
-     起きた瞬間に横スクロールバーが発生→その分だけ画面端が見切れる原因に
-     なるため使わない。overflow: hiddenでページ全体のスクロールも禁止し、
-     常に画面ぴったりに収める(矢印キーでの移動時のスクロールは別途
-     keydownハンドラ側のpreventDefault()で防いでいる)。 */
-  overflow: hidden;
-  overscroll-behavior-y: none;
-  touch-action: pan-x pan-y;
 }
 
 /* 横スクロールが必要な行(ツールバー等)でスクロールバーを隠すためのユーティリティ */

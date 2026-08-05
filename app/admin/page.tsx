@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
-import { PLANS, MASTER_MAX_ROOMS, type PlanId, type Room } from "@/lib/types";
+import { PLANS, type PlanId, type Room } from "@/lib/types";
 import AdminDashboard from "./AdminDashboard";
 import LogoutButton from "@/components/auth/LogoutButton";
 
@@ -40,11 +40,17 @@ export default async function AdminPage() {
 
   const { data: templateRows } = await supabase
     .from("templates")
-    .select("id, name")
+    .select("id, name, background_image_url")
     .order("created_at", { ascending: true });
 
+  const templates = (templateRows ?? []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    backgroundImageUrl: t.background_image_url,
+  }));
+
   const plan = (account?.plan as PlanId) ?? "free";
-  const maxRooms = state.isMaster ? MASTER_MAX_ROOMS : PLANS[plan].maxRooms;
+  const maxRooms = PLANS[plan].maxRooms;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -82,7 +88,7 @@ export default async function AdminPage() {
           maxRooms={maxRooms}
           trialEndsAt={account?.trial_ends_at ?? null}
           inviteToken={account?.invite_token ?? ""}
-          templates={templateRows ?? []}
+          templates={templates}
         />
       </main>
     </div>

@@ -16,7 +16,7 @@
 create table if not exists public.accounts (
   id uuid primary key default gen_random_uuid(),
   name text not null,
-  plan text not null default 'free' check (plan in ('free', 'light', 'standard', 'pro')),
+  plan text not null default 'free' check (plan in ('free', 'light', 'standard', 'pro', 'master')),
   trial_ends_at timestamptz, -- 無料お試しの終了日時(有料プランではnull)
   owner_user_id uuid not null references auth.users(id) on delete cascade,
   invite_token text not null unique default replace(gen_random_uuid()::text, '-', ''),

@@ -37,9 +37,15 @@ type DragState =
       originHeight: number;
     };
 
-const MAX_DISPLAY_WIDTH = 720;
+const MAX_DISPLAY_WIDTH = 1200;
 const MIN_MAP_SIZE = 400;
 const MAX_MAP_SIZE = 8000;
+
+function clampMapSize(rawInput: string, fallback: number): number {
+  const parsed = Number(rawInput);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(MAX_MAP_SIZE, Math.max(MIN_MAP_SIZE, parsed));
+}
 
 // テンプレートの背景画像上に障害物・ミーティングエリアを配置編集する。
 // マップ編集はここに一本化されており、個々のルームでは編集できない。
@@ -64,8 +70,15 @@ export default function TemplateEditor({
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(template.name);
   const [renaming, setRenaming] = useState(false);
-  const [mapWidth, setMapWidth] = useState(template.width);
-  const [mapHeight, setMapHeight] = useState(template.height);
+  // 入力欄には生の文字列を持たせ、自由に打ち直せるようにする(数値state
+  // に直接min/maxで丸めていると、例えば1900を消して2500と打ち直す途中の
+  // 「2」の時点でMIN_MAP_SIZEまで丸められてしまい、自由に入力できな
+  // かったため)。実際の計算に使う数値はここから都度導出し、範囲外や
+  // 未入力の場合だけテンプレートの元の値にフォールバックする。
+  const [mapWidthInput, setMapWidthInput] = useState(String(template.width));
+  const [mapHeightInput, setMapHeightInput] = useState(String(template.height));
+  const mapWidth = clampMapSize(mapWidthInput, template.width);
+  const mapHeight = clampMapSize(mapHeightInput, template.height);
   const dragState = useRef<DragState | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(MAX_DISPLAY_WIDTH);
@@ -81,7 +94,7 @@ export default function TemplateEditor({
     if (!el) return;
     const recompute = () => {
       setAvailableWidth(el.clientWidth);
-      setAvailableHeight(window.innerHeight * 0.6);
+      setAvailableHeight(window.innerHeight * 0.75);
     };
     recompute();
     const observer = new ResizeObserver(recompute);
@@ -352,35 +365,19 @@ export default function TemplateEditor({
           <span className="text-xs font-semibold text-slate-500">マップサイズ</span>
           <input
             type="number"
-            min={MIN_MAP_SIZE}
-            max={MAX_MAP_SIZE}
             step={100}
-            value={mapWidth}
-            onChange={(e) =>
-              setMapWidth(
-                Math.min(
-                  MAX_MAP_SIZE,
-                  Math.max(MIN_MAP_SIZE, Number(e.target.value) || mapWidth),
-                ),
-              )
-            }
+            value={mapWidthInput}
+            onChange={(e) => setMapWidthInput(e.target.value)}
+            onBlur={() => setMapWidthInput(String(mapWidth))}
             className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
           />
           <span className="text-xs text-slate-400">×</span>
           <input
             type="number"
-            min={MIN_MAP_SIZE}
-            max={MAX_MAP_SIZE}
             step={100}
-            value={mapHeight}
-            onChange={(e) =>
-              setMapHeight(
-                Math.min(
-                  MAX_MAP_SIZE,
-                  Math.max(MIN_MAP_SIZE, Number(e.target.value) || mapHeight),
-                ),
-              )
-            }
+            value={mapHeightInput}
+            onChange={(e) => setMapHeightInput(e.target.value)}
+            onBlur={() => setMapHeightInput(String(mapHeight))}
             className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
           />
           <span className="text-xs text-slate-400">px</span>

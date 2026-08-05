@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { MapTemplate } from "@/lib/types";
+import ConfirmModal from "@/components/ConfirmModal";
 import { createTemplate, deleteTemplate } from "./actions";
 import { uploadTemplateImageClient } from "./uploadTemplateImage";
 import TemplateEditor from "./TemplateEditor";
@@ -24,6 +25,7 @@ export default function TemplateManager({
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MapTemplate | null>(null);
 
   const editing = templates.find((t) => t.id === editingId) ?? null;
 
@@ -50,12 +52,12 @@ export default function TemplateManager({
   };
 
   const handleDelete = (id: string) => {
-    if (!window.confirm("このテンプレートを削除します。よろしいですか?")) return;
     setError(null);
     setPendingAction({ type: "delete", id });
     startTransition(async () => {
       try {
         await deleteTemplate(id);
+        setDeleteTarget(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "削除に失敗しました");
       } finally {
@@ -103,7 +105,7 @@ export default function TemplateManager({
                   編集
                 </button>
                 <button
-                  onClick={() => handleDelete(t.id)}
+                  onClick={() => setDeleteTarget(t)}
                   disabled={pending}
                   className="text-[10px] text-red-500 hover:text-red-700 disabled:opacity-60"
                 >
@@ -156,6 +158,19 @@ export default function TemplateManager({
         >
           ＋ 新規テンプレート作成
         </button>
+      )}
+
+      {deleteTarget && (
+        <ConfirmModal
+          title="テンプレートを削除"
+          message={`「${deleteTarget.name}」を削除します。この操作は取り消せません。よろしいですか?`}
+          pending={
+            pendingAction?.type === "delete" &&
+            pendingAction.id === deleteTarget.id
+          }
+          onConfirm={() => handleDelete(deleteTarget.id)}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   );

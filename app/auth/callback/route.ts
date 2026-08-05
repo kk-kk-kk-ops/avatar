@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { MASTER_EMAILS } from "@/lib/masterEmails";
+import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
 
 // Googleログイン後、SupabaseがこのURLへリダイレクトしてくる。
 // ここで認可コードをセッションに交換し、プロフィールの作成/更新を行う。
@@ -80,37 +81,15 @@ export async function GET(request: NextRequest) {
   }
 
   // 招待リンク(?invite=トークン)経由のログインなら、そのアカウントへ
-  // ゲストとして紐付ける。既に何らかのアカウントに所属済みの場合は
-  // 上書きしない(誤って別アカウントのゲストに切り替わるのを防ぐ)。
+  // ゲストとして紐付ける(既に別アカウントのadmin/guestであっても
+  // 切り替える。招待は常にゲスト参加を優先する)。
   const inviteToken = searchParams.get("invite");
   if (inviteToken) {
-    const { data: existingProfile } = await supabase
-      .from("profiles")
-      .select("account_id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (!existingProfile?.account_id) {
-      const { data: accountRows } = await supabase.rpc(
-        "lookup_account_by_invite_token",
-        { token: inviteToken },
-      );
-      const account = accountRows?.[0];
-
-      if (!account) {
-        return NextResponse.redirect(`${origin}/?error=invalid_invite`);
-      }
-
-      const { error: joinError } = await supabase
-        .from("profiles")
-        .update({ account_id: account.id, role: "guest" })
-        .eq("user_id", user.id);
-
-      if (joinError) {
-        // eslint-disable-next-line no-console
-        console.error("アカウントへの参加に失敗しました", joinError);
-        return NextResponse.redirect(`${origin}/?error=auth_failed`);
-      }
+    const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
+    if (!result.ok) {
+      const errorCode =
+        result.error === "invalid_invite" ? "invalid_invite" : "auth_failed";
+      return NextResponse.redirect(`${origin}/?error=${errorCode}`);
     }
   }
 

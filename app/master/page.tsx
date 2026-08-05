@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
@@ -14,7 +13,6 @@ import {
   type MeetingZone,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
-import LogoutButton from "@/components/auth/LogoutButton";
 
 // マスター画面。is_master=trueのアカウントだけがアクセスできる、
 // プラットフォーム全体の集計とテンプレート編集を行う画面。
@@ -46,6 +44,7 @@ export default async function MasterPage() {
     light: 0,
     standard: 0,
     pro: 0,
+    master: 0,
   };
   let subscriptionTotalYen = 0;
   (accountRows ?? []).forEach((a) => {
@@ -115,43 +114,14 @@ export default async function MasterPage() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-        <div className="flex items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Grovina" className="h-6 w-6 object-contain" />
-          <span className="text-sm font-bold text-slate-800">マスター画面</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {state.type === "admin" && (
-            <Link
-              href="/admin"
-              className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-            >
-              管理画面へ
-            </Link>
-          )}
-          {state.type !== "no-account" && (
-            <Link
-              href="/rooms"
-              className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-            >
-              ルームへ
-            </Link>
-          )}
-          <LogoutButton className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50" />
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-3xl px-6 py-8">
-        <MasterDashboard
-          planCounts={planCounts}
-          totalProfiles={totalProfiles ?? 0}
-          subscriptionTotalYen={subscriptionTotalYen}
-          rooms={rooms}
-          templates={templates}
-        />
-      </main>
-    </div>
+    <MasterDashboard
+      planCounts={planCounts}
+      totalProfiles={totalProfiles ?? 0}
+      subscriptionTotalYen={subscriptionTotalYen}
+      rooms={rooms}
+      templates={templates}
+      showAdminLink={state.type === "admin"}
+      showRoomsLink={state.type !== "no-account"}
+    />
   );
 }

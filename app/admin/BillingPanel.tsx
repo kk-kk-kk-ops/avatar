@@ -27,14 +27,16 @@ export default function BillingPanel({
             までです。
           </p>
         )}
-        <div className="mt-3 flex gap-2">
-          <Link
-            href="/plan"
-            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-          >
-            プラン変更
-          </Link>
-        </div>
+        {plan !== "master" && (
+          <div className="mt-3 flex gap-2">
+            <Link
+              href="/plan"
+              className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              プラン変更
+            </Link>
+          </div>
+        )}
       </div>
 
       <div>

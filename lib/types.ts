@@ -112,7 +112,7 @@ export type Account = {
 
 export type ProfileRole = "admin" | "guest";
 
-export type PlanId = "free" | "light" | "standard" | "pro";
+export type PlanId = "free" | "light" | "standard" | "pro" | "master";
 
 // 各プランの上限(ルーム数、ルームごとの同時接続人数)と表示用ラベル。
 // 料金・上限はサービス側の固定値のためDBではなくここで管理する。
@@ -159,13 +159,21 @@ export const PLANS: Record<
     maxRooms: 3,
     maxPeoplePerRoom: 30,
   },
+  // マスター権限を持つユーザー(運用担当者)自身のアカウント専用のプラン。
+  // 課金対象ではないため、通常のプラン選択画面(/plan)には絶対に
+  // 出さないこと(PLAN_ORDERに含めない)。マスター権限付与時にSQLで
+  // accounts.planへ直接設定する(migrate_existing_owner.sql等)。
+  master: {
+    label: "マスター",
+    subLabel: "（ルーム数：10　人数上限：30名）",
+    priceLabel: "-",
+    priceYen: 0,
+    maxRooms: 10,
+    maxPeoplePerRoom: 30,
+  },
 };
 
 export const FREE_TRIAL_DAYS = 7;
-
-// マスター権限を持つアカウントは、プランのルーム数上限に関わらずここまで
-// 作成できる(運用担当者自身のアカウントのため)。
-export const MASTER_MAX_ROOMS = 10;
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;

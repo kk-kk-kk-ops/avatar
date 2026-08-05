@@ -2,9 +2,10 @@
 
 import { useState, useTransition } from "react";
 import type { Room } from "@/lib/types";
+import ConfirmModal from "@/components/ConfirmModal";
 import { addRoom, deleteRoom, renameRoom } from "./actions";
 
-type TemplateOption = { id: string; name: string };
+type TemplateOption = { id: string; name: string; backgroundImageUrl: string };
 
 // どの操作が進行中かを個別に表示するため、useTransitionのpending
 // フラグだけでなく「どのルームの何をしているか」も保持する。
@@ -30,6 +31,8 @@ export default function RoomManager({
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Room | null>(null);
+  const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
 
   const handleAdd = () => {
     setError(null);
@@ -46,12 +49,12 @@ export default function RoomManager({
   };
 
   const handleDelete = (roomId: string) => {
-    if (!window.confirm("このルームを削除します。よろしいですか?")) return;
     setError(null);
     setPendingAction({ type: "delete", roomId });
     startTransition(async () => {
       try {
         await deleteRoom(roomId);
+        setDeleteTarget(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "ルームの削除に失敗しました");
       } finally {
@@ -138,7 +141,7 @@ export default function RoomManager({
                       名前変更
                     </button>
                     <button
-                      onClick={() => handleDelete(room.id)}
+                      onClick={() => setDeleteTarget(room)}
                       disabled={pending}
                       className="text-[10px] text-red-500 hover:text-red-700 disabled:opacity-60"
                     >
@@ -177,6 +180,14 @@ export default function RoomManager({
               </option>
             ))}
           </select>
+          {selectedTemplate && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={selectedTemplate.backgroundImageUrl}
+              alt={selectedTemplate.name}
+              className="mt-2 aspect-video w-full rounded-lg border border-slate-200 object-cover"
+            />
+          )}
         </div>
         <button
           onClick={handleAdd}
@@ -186,6 +197,19 @@ export default function RoomManager({
           {pendingAction?.type === "add" ? "追加中..." : "➕ ルーム追加"}
         </button>
       </div>
+
+      {deleteTarget && (
+        <ConfirmModal
+          title="ルームを削除"
+          message={`「${deleteTarget.name}」を削除します。この操作は取り消せません。よろしいですか?`}
+          pending={
+            pendingAction?.type === "delete" &&
+            pendingAction.roomId === deleteTarget.id
+          }
+          onConfirm={() => handleDelete(deleteTarget.id)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   );
 }
