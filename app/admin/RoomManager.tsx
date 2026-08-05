@@ -185,7 +185,7 @@ export default function RoomManager({
             <img
               src={selectedTemplate.backgroundImageUrl}
               alt={selectedTemplate.name}
-              className="mt-2 aspect-video w-full rounded-lg border border-slate-200 object-cover"
+              className="mt-2 aspect-video w-full rounded-lg border border-slate-200 bg-slate-100 object-contain"
             />
           )}
         </div>
