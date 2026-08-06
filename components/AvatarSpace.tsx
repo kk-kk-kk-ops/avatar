@@ -88,6 +88,11 @@ export default function AvatarSpace({
   const [roomId, setRoomId] = useState("");
   const [roomName, setRoomName] = useState("");
   const [roomJoinError, setRoomJoinError] = useState<string | null>(null);
+  // ルーム選択画面で各ルームのオンライン人数を表示するための集計。
+  // 自分自身はtrack()しない観測者としてpresenceチャンネルを覗くだけ。
+  const [roomOnlineCounts, setRoomOnlineCounts] = useState<
+    Record<string, number>
+  >({});
   const [joined, setJoined] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
@@ -1753,6 +1758,32 @@ export default function AvatarSpace({
     setSettingsOpen(false);
   }, [settingsNameInput, settingsAvatar, settingsStatus]);
 
+  // ルーム選択画面にいる間だけ、各ルームのRealtimeチャンネルにpresence
+  // 観測者として接続し、オンライン人数を取得する(入室後は不要なので
+  // roomSelectedになったら購読解除する)。
+  useEffect(() => {
+    if (roomSelected || rooms.length === 0) return;
+    const channels = rooms.map((room) => {
+      const channel = supabase.channel(`avatar-room-${room.id}`, {
+        config: { presence: { key: `observer-${randomId()}` } },
+      });
+      channel
+        .on("presence", { event: "sync" }, () => {
+          const state = channel.presenceState();
+          setRoomOnlineCounts((prev) => ({
+            ...prev,
+            [room.id]: Object.keys(state).length,
+          }));
+        })
+        .subscribe();
+      return channel;
+    });
+
+    return () => {
+      channels.forEach((channel) => supabase.removeChannel(channel));
+    };
+  }, [roomSelected, rooms, supabase]);
+
   // ---- ルーム選択画面(Googleログイン後、最初に必ずここへ来る) ----
   if (!roomSelected) {
     return (
@@ -1789,9 +1820,14 @@ export default function AvatarSpace({
                   alt={room.name}
                   className="aspect-video w-full object-cover"
                 />
-                <p className="truncate px-2 py-1.5 text-xs font-semibold text-slate-700">
-                  {room.name}
-                </p>
+                <div className="flex items-center justify-between gap-1 px-2 py-1.5">
+                  <p className="truncate text-xs font-semibold text-slate-700">
+                    {room.name}
+                  </p>
+                  <span className="shrink-0 text-[10px] font-semibold text-slate-500">
+                    {roomOnlineCounts[room.id] ?? 0}/{maxPeoplePerRoom}名
+                  </span>
+                </div>
               </button>
             ))}
           </div>
