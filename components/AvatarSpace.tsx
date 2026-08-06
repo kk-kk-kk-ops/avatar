@@ -257,10 +257,20 @@ export default function AvatarSpace({
   // 「joined依存のエフェクトのクリーンアップ」が一通り走る。playersは
   // ここで明示的に空にしておかないと、次に入室した際に前のルームの
   // 参加者が残ったまま表示されてしまう。
+  // マイク/ビデオ通話/画面共有のON/OFF表示状態も明示的にリセットする。
+  // クリーンアップ側はストリーム(実体)を止めるだけでこれらのReact
+  // stateまでは戻さないため、ここでリセットしないと次のルームでも
+  // ボタンがONのまま(かつストリームが無いのでOFFに戻せない)表示に
+  // なってしまっていた。
   const handleLeaveRoom = useCallback(() => {
     setJoined(false);
     setPlayers({});
     setRoomSelected(false);
+    setMicEnabled(false);
+    setMicError(null);
+    setScreenSharing(false);
+    setInCall(false);
+    setCallError(null);
   }, []);
 
   // ---- 入室処理 ----
