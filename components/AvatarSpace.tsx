@@ -259,8 +259,6 @@ export default function AvatarSpace({
     >
   >(new Map());
   const viewportRef = useRef({ width: 0, height: 0 });
-  // TURNサーバーの認証情報(サーバー経由で取得。取得できるまではSTUNのみで動作する)
-  const turnServersRef = useRef<RTCIceServer[]>([]);
 
   // 画面共有・ビデオ通話のエラーメッセージは5秒で自動的に消す
   useEffect(() => {
@@ -285,23 +283,6 @@ export default function AvatarSpace({
   useEffect(() => {
     remoteScreenStreamsRef.current = remoteScreenStreams;
   }, [remoteScreenStreams]);
-
-  // ---- TURNサーバーの認証情報を取得(取得できるまではSTUNのみで動作する) ----
-  useEffect(() => {
-    if (!joined) return;
-    (async () => {
-      try {
-        const res = await fetch("/api/turn-credentials");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data.iceServers)) {
-          turnServersRef.current = data.iceServers;
-        }
-      } catch {
-        // 取得できなくてもSTUNのみで動作を続ける
-      }
-    })();
-  }, [joined]);
 
   // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
@@ -682,12 +663,13 @@ export default function AvatarSpace({
       const existing = peerConnections.current.get(peerId);
       if (existing) return existing;
 
+      // TURN(Metered)はPhase5で撤去した。このPeerConnection自体、今は
+      // 何も運んでいないためSTUNのみで十分(Phase6で関数ごと削除予定)。
       const pc = new RTCPeerConnection({
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
           { urls: "stun:stun2.l.google.com:19302" },
-          ...turnServersRef.current,
         ],
       });
 
