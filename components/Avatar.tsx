@@ -26,7 +26,9 @@ export type AvatarHandle = {
 const DISPLAY_SIZE = AVATAR_RADIUS * 2; // アバター画像の表示サイズ(正方形)
 // 画像自体の上下に含まれる透明な余白を補正する値。
 // 数値を大きくするほど、見た目の足元が当たり判定ラインに近づく(=障害物との隙間が減る)。
-const FOOT_OFFSET = 20;
+// 画像内の透明な余白の割合は表示サイズが変わっても一定なので、
+// 元のサイズ(90px)で調整した比率(20/90)を維持して表示サイズに応じて算出する。
+const FOOT_OFFSET = DISPLAY_SIZE * (20 / 90);
 
 const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   { player, isSelf },

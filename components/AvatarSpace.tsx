@@ -171,6 +171,11 @@ export default function AvatarSpace({
   } | null>(null);
   const wasMovingRef = useRef(false);
   const lastMoveSentAt = useRef(0);
+  // 向き(dir)が変わった瞬間だけ即座にplayers stateへ反映するための記録。
+  // 位置の同期は0.2秒おきのままで十分だが、向き(スプライト画像)の切り替えは
+  // それだと最大0.2秒の遅延に感じられてしまうため、変化した瞬間だけここで
+  // 個別に同期する(移動中ずっと発火するわけではなく、向きが変わった時だけ)。
+  const lastSyncedDirRef = useRef<PlayerState["dir"] | null>(null);
 
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
@@ -381,6 +386,7 @@ export default function AvatarSpace({
             width: z.width ?? NEW_ITEM_SIZE,
             height: z.height ?? NEW_ITEM_SIZE,
             label: z.label ?? "ミーティングエリア",
+            kind: z.kind ?? "meeting",
           }),
         );
         setMeetingZones(loaded);
@@ -1385,6 +1391,16 @@ export default function AvatarSpace({
           } else if (dy !== 0) {
             self.dir = dy > 0 ? "down" : "up";
           }
+
+          if (self.dir !== lastSyncedDirRef.current) {
+            lastSyncedDirRef.current = self.dir;
+            const dir = self.dir;
+            setPlayers((prev) => {
+              const current = prev[self.id];
+              if (!current || current.dir === dir) return prev;
+              return { ...prev, [self.id]: { ...current, dir } };
+            });
+          }
         }
         self.moving = moving;
 
@@ -2125,21 +2141,36 @@ export default function AvatarSpace({
             }}
           >
             {/* ミーティングエリア(複数設置可能)。配置はマスターがテンプレート側で編集する
-                (ルーム内での編集は廃止)。 */}
-            {meetingZones.map((zone) => (
-              <div
-                key={zone.id}
-                className="absolute flex items-start rounded-xl border border-slate-500 bg-slate-600/60 p-2"
-                style={{
-                  left: zone.x,
-                  top: zone.y,
-                  width: zone.width,
-                  height: zone.height,
-                }}
-              >
-                <span className="text-[11px] text-slate-300">{zone.label}</span>
-              </div>
-            ))}
+                (ルーム内での編集は廃止)。「会議室」(kind: "conference")は機能は
+                同じ(同エリア内での自動音声接続)だが、見た目には存在が分からない
+                よう背景・枠・ラベルを一切出さない透明なエリアとして扱う。 */}
+            {meetingZones.map((zone) =>
+              zone.kind === "conference" ? (
+                <div
+                  key={zone.id}
+                  className="absolute bg-transparent"
+                  style={{
+                    left: zone.x,
+                    top: zone.y,
+                    width: zone.width,
+                    height: zone.height,
+                  }}
+                />
+              ) : (
+                <div
+                  key={zone.id}
+                  className="absolute flex items-start rounded-xl border border-slate-500 bg-slate-600/60 p-2"
+                  style={{
+                    left: zone.x,
+                    top: zone.y,
+                    width: zone.width,
+                    height: zone.height,
+                  }}
+                >
+                  <span className="text-[11px] text-slate-300">{zone.label}</span>
+                </div>
+              ),
+            )}
 
             {/* 障害物(机・観葉植物・棚など)。見た目には出さず、当たり判定だけの
                 透明な壁として機能する。配置はマスターがテンプレート側で編集する。 */}

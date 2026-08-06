@@ -14,6 +14,7 @@ import {
   renameTemplate,
 } from "./actions";
 import { uploadTemplateImageClient } from "./uploadTemplateImage";
+import ConfirmModal from "@/components/ConfirmModal";
 
 type ItemType = "obstacle" | "zone";
 
@@ -70,6 +71,7 @@ export default function TemplateEditor({
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(template.name);
   const [renaming, setRenaming] = useState(false);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   // 入力欄には生の文字列を持たせ、自由に打ち直せるようにする(数値state
   // に直接min/maxで丸めていると、例えば1900を消して2500と打ち直す途中の
   // 「2」の時点でMIN_MAP_SIZEまで丸められてしまい、自由に入力できな
@@ -151,37 +153,50 @@ export default function TemplateEditor({
           };
   };
 
+  // Obstacle/MeetingZoneのどちらであっても位置・サイズの計算内容は同じだが、
+  // MeetingZoneにkindフィールドが増えたことで2つのsetState関数の型が食い違い、
+  // 1つの共通コールバックとして呼び出すとTypeScriptが引数の型を推論できなく
+  // なるため、setObstacles/setMeetingZonesをそれぞれ個別に呼び分ける。
+  const applyDrag = <T extends { id: string; x: number; y: number; width: number; height: number }>(
+    prev: T[],
+    drag: DragState,
+    dx: number,
+    dy: number,
+  ): T[] =>
+    prev.map((item) => {
+      if (item.id !== drag.id) return item;
+      if (drag.mode === "move") {
+        const pos = clampPosition(
+          drag.originX + dx,
+          drag.originY + dy,
+          item.width,
+          item.height,
+          mapWidth,
+          mapHeight,
+        );
+        return { ...item, ...pos };
+      }
+      const size = clampSize(
+        item.x,
+        item.y,
+        drag.originWidth + dx,
+        drag.originHeight + dy,
+        mapWidth,
+        mapHeight,
+      );
+      return { ...item, ...size };
+    });
+
   const handlePointerMove = (e: React.PointerEvent) => {
     const drag = dragState.current;
     if (!drag) return;
     const dx = (e.clientX - drag.startX) / scale;
     const dy = (e.clientY - drag.startY) / scale;
-    const setList = drag.itemType === "obstacle" ? setObstacles : setMeetingZones;
-    setList((prev) =>
-      prev.map((item) => {
-        if (item.id !== drag.id) return item;
-        if (drag.mode === "move") {
-          const pos = clampPosition(
-            drag.originX + dx,
-            drag.originY + dy,
-            item.width,
-            item.height,
-            mapWidth,
-            mapHeight,
-          );
-          return { ...item, ...pos };
-        }
-        const size = clampSize(
-          item.x,
-          item.y,
-          drag.originWidth + dx,
-          drag.originHeight + dy,
-          mapWidth,
-          mapHeight,
-        );
-        return { ...item, ...size };
-      }),
-    );
+    if (drag.itemType === "obstacle") {
+      setObstacles((prev) => applyDrag(prev, drag, dx, dy));
+    } else {
+      setMeetingZones((prev) => applyDrag(prev, drag, dx, dy));
+    }
   };
 
   const handlePointerUp = () => {
@@ -212,6 +227,25 @@ export default function TemplateEditor({
         width: NEW_ITEM_SIZE * 2,
         height: NEW_ITEM_SIZE * 2,
         label: "ミーティングエリア",
+        kind: "meeting",
+      },
+    ]);
+  };
+
+  // 「会議室」: 機能(同じエリア内での自動音声接続)はミーティングエリアと
+  // 全く同じだが、バーチャル空間内では見た目に出さない(透明・枠なし・
+  // ラベル非表示)エリア。編集画面でだけ薄緑色+「会議室」と表示される。
+  const addConferenceRoom = () => {
+    setMeetingZones((prev) => [
+      ...prev,
+      {
+        id: randomItemId("conference"),
+        x: 100,
+        y: 100,
+        width: NEW_ITEM_SIZE * 2,
+        height: NEW_ITEM_SIZE * 2,
+        label: "会議室",
+        kind: "conference",
       },
     ]);
   };
@@ -278,9 +312,10 @@ export default function TemplateEditor({
   return (
     <div className="flex items-start gap-4">
       {/* 編集項目サイドバー: 名前変更〜各種編集操作を上から順に並べ、
-          一番下に「保存し終了」ボタンを置く(mt-autoで、右側の
-          プレビュー列と同じ高さまで押し下げる)。 */}
-      <div className="flex w-64 shrink-0 flex-col gap-4 self-stretch rounded-xl border border-slate-200 bg-white p-4">
+          一番下に「保存し終了」「保存せず終了」ボタンを置く。高さは
+          プレビュー(マップサイズ)に関わらず常に画面の高さいっぱいまで
+          伸ばす(sticky + 100vh基準の高さ指定)。 */}
+      <div className="sticky top-20 flex h-[calc(100vh-6.5rem)] w-64 shrink-0 flex-col gap-4 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 md:top-6 md:h-[calc(100vh-3rem)]">
         <div>
           {editingName ? (
             <div className="flex flex-wrap items-center gap-1">
@@ -313,18 +348,12 @@ export default function TemplateEditor({
               <p className="truncate text-sm font-bold text-slate-800">{name}</p>
               <button
                 onClick={() => setEditingName(true)}
-                className="shrink-0 text-xs text-slate-500 hover:text-slate-800"
+                className="shrink-0 rounded-lg border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
                 名前変更
               </button>
             </div>
           )}
-          <button
-            onClick={onClose}
-            className="mt-1 text-xs text-slate-500 hover:text-slate-800"
-          >
-            閉じる
-          </button>
         </div>
 
         {error && (
@@ -345,6 +374,12 @@ export default function TemplateEditor({
             className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
           >
             ＋ミーティングエリア
+          </button>
+          <button
+            onClick={addConferenceRoom}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            ＋会議室
           </button>
           <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
             {uploading ? "アップロード中..." : "背景画像を変更"}
@@ -421,14 +456,33 @@ export default function TemplateEditor({
           )}
         </div>
 
-        <button
-          onClick={handleSaveAndClose}
-          disabled={saving}
-          className="mt-auto rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-        >
-          {saving ? "保存中..." : "レイアウトを保存し終了"}
-        </button>
+        <div className="mt-auto flex flex-col gap-2">
+          <button
+            onClick={handleSaveAndClose}
+            disabled={saving}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+          >
+            {saving ? "保存中..." : "レイアウトを保存し終了"}
+          </button>
+          <button
+            onClick={() => setDiscardConfirmOpen(true)}
+            disabled={saving}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+          >
+            レイアウトを保存せず終了
+          </button>
+        </div>
       </div>
+
+      {discardConfirmOpen && (
+        <ConfirmModal
+          title="保存せず終了"
+          message="保存せず終了しますがよろしいですか?"
+          confirmLabel="終了する"
+          onConfirm={onClose}
+          onCancel={() => setDiscardConfirmOpen(false)}
+        />
+      )}
 
       {/* プレビュー: 残り幅いっぱい(画面右端)まで広げる */}
       <div ref={measureRef} className="min-w-0 flex-1">
@@ -453,7 +507,11 @@ export default function TemplateEditor({
               <div
                 key={zone.id}
                 onPointerDown={(e) => handlePointerDown(e, "zone", zone.id, "move")}
-                className="absolute cursor-move rounded-xl border border-slate-300 bg-slate-500/50 p-2"
+                className={`absolute cursor-move rounded-xl border p-2 ${
+                  zone.kind === "conference"
+                    ? "border-emerald-300 bg-emerald-200/60"
+                    : "border-slate-300 bg-slate-500/50"
+                }`}
                 style={{
                   left: zone.x * scale,
                   top: zone.y * scale,
@@ -461,7 +519,13 @@ export default function TemplateEditor({
                   height: zone.height * scale,
                 }}
               >
-                <span className="text-xs text-white">{zone.label}</span>
+                <span
+                  className={`text-xs ${
+                    zone.kind === "conference" ? "text-emerald-900" : "text-white"
+                  }`}
+                >
+                  {zone.label}
+                </span>
                 <button
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={() => removeMeetingZone(zone.id)}

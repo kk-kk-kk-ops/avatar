@@ -99,6 +99,7 @@ export default async function MasterPage() {
         width: z.width ?? NEW_ITEM_SIZE,
         height: z.height ?? NEW_ITEM_SIZE,
         label: z.label ?? "ミーティングエリア",
+        kind: z.kind ?? "meeting",
       }),
     );
 

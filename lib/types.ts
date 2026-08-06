@@ -177,7 +177,7 @@ export const FREE_TRIAL_DAYS = 7;
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
-export const AVATAR_RADIUS = 45; // アバターの表示サイズ計算に使う半径(当たり判定には使わない)
+export const AVATAR_RADIUS = 8.5; // アバターの表示サイズ計算に使う半径(17px×17px表示。当たり判定には使わない)
 export const AVATAR_HITBOX_WIDTH = 20; // 当たり判定の幅(px)
 export const AVATAR_HITBOX_HEIGHT = 20; // 当たり判定の高さ(px)
 export const MOVE_SPEED = 220; // px / sec
@@ -189,8 +189,17 @@ export type Rect = { x: number; y: number; width: number; height: number };
 // マップ上の障害物(机・観葉植物・棚など)。歩いて通り抜けられないようにする。
 export type Obstacle = Rect & { id: string; label: string };
 
-// ミーティングエリア(複数設置可能。同じエリアIDにいる人同士だけ自動で音声接続される)
-export type MeetingZone = Rect & { id: string; label: string };
+// ミーティングエリア(複数設置可能。同じエリアIDにいる人同士だけ自動で音声接続される)。
+// kind: "meeting"(デフォルト、省略時もこれと同じ扱い)はバーチャル空間内でも
+// 枠・背景色・ラベルが見える通常のミーティングエリア。"conference"(会議室)は
+// 機能(同エリア内での自動音声接続)は全く同じだが、バーチャル空間内では
+// 背景透明・枠なし・ラベル非表示にして、見た目には存在が分からない
+// エリアとして使う(テンプレート編集画面でだけ薄緑色+「会議室」と表示される)。
+export type MeetingZone = Rect & {
+  id: string;
+  label: string;
+  kind?: "meeting" | "conference";
+};
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
 export const MIN_ITEM_SIZE = 40; // これより小さくはできない
