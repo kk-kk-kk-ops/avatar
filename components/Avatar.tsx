@@ -82,7 +82,7 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
           このように親子関係にしている。 */}
       <div className="absolute -top-6 left-1/2 -translate-x-1/2">
         {showBubble && (
-          <div className="absolute bottom-full left-1/2 mb-1 w-[50px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-center text-[10px] leading-tight shadow-md">
+          <div className="absolute bottom-full left-1/2 mb-1 w-[150px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-center text-[10px] leading-tight shadow-md">
             {player.message}
           </div>
         )}

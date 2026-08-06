@@ -1850,7 +1850,7 @@ export default function AvatarSpace({
           </button>
 
           <LogoutButton
-            className="mt-2 w-full rounded-lg bg-slate-100 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-200"
+            className="mt-2 w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
             redirectTo={guestInviteToken ? `/?invite=${guestInviteToken}` : "/"}
           />
         </div>
@@ -2297,23 +2297,6 @@ export default function AvatarSpace({
               ))}
           </ul>
 
-          {/* 退出:ルーム選択画面へ戻る
-              (マップ編集はマスターのテンプレート編集に一本化したため、
-              ここにあった「マップを編集」ボタンは撤去した) */}
-          <div className="mt-4 border-t border-slate-700 pt-3">
-            <button
-              onClick={handleLeaveRoom}
-              className="w-full rounded-lg bg-red-900/60 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-900"
-            >
-              🚪 退出
-            </button>
-          </div>
-
-          <div className="mt-auto border-t border-slate-700 pt-3">
-            <p className="text-[10px] leading-relaxed text-slate-400">
-              移動:PCは WASD / 矢印キー、スマホは左下のボタン
-            </p>
-          </div>
         </div>
       </div>
 
@@ -2479,7 +2462,7 @@ export default function AvatarSpace({
                 }}
                 className="w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
               >
-                🚪 退出
+                退出
               </button>
             </div>
           </div>

@@ -59,8 +59,11 @@ export default function AvatarSettingsPanel({
 
         <p className="mb-2 text-xs font-semibold text-slate-500">プレビュー</p>
         <div className="mb-4 flex h-40 items-center justify-center rounded-lg bg-slate-700">
-          <div
-            className="rounded-sm bg-white/90"
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/avatar/goo/front.png"
+            alt="アバタープレビュー"
+            className="object-contain"
             style={{ width: previewSize, height: previewSize }}
           />
         </div>
