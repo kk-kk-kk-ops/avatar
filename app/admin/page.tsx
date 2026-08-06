@@ -52,7 +52,6 @@ export default async function AdminPage() {
 
   return (
     <AdminDashboard
-      accountName={account?.name ?? "管理画面"}
       rooms={rooms}
       plan={plan}
       maxRooms={maxRooms}

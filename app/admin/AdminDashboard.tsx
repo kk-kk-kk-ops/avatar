@@ -21,7 +21,6 @@ const TABS: { id: Tab; label: string }[] = [
 type TemplateOption = { id: string; name: string; backgroundImageUrl: string };
 
 export default function AdminDashboard({
-  accountName,
   rooms,
   plan,
   maxRooms,
@@ -31,7 +30,6 @@ export default function AdminDashboard({
   templates,
   showMasterLink,
 }: {
-  accountName: string;
   rooms: Room[];
   plan: PlanId;
   maxRooms: number;
@@ -56,11 +54,11 @@ export default function AdminDashboard({
           側にロゴ・名前があるのでこちらは非表示にする)。 */}
       <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-4 py-3 md:hidden">
         <div className="flex min-w-0 items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Globy" className="h-6 w-6 shrink-0 object-contain" />
-          <span className="truncate text-sm font-bold text-white">
-            {accountName}
-          </span>
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="Globy" className="h-4 w-4 object-contain" />
+          </div>
+          <span className="truncate text-sm font-bold text-white">Globy</span>
         </div>
         <button
           onClick={() => setSidebarOpen(true)}
@@ -85,11 +83,11 @@ export default function AdminDashboard({
       >
         <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-4">
           <div className="flex min-w-0 items-center gap-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Globy" className="h-6 w-6 shrink-0 object-contain" />
-            <span className="truncate text-sm font-bold text-white">
-              {accountName}
-            </span>
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.png" alt="Globy" className="h-4 w-4 object-contain" />
+            </div>
+            <span className="truncate text-sm font-bold text-white">Globy</span>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}

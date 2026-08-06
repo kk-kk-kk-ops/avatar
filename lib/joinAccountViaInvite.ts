@@ -1,19 +1,26 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type JoinInviteResult =
-  | { ok: true; isOwnAccount: boolean }
+  | { ok: true; isOwnAccount: boolean; viewOnly: boolean }
   | { ok: false; error: "invalid_invite" | "join_failed"; detail?: string };
 
-// 招待トークンのアカウントへゲストとして参加する。
-// - 招待URLが自分自身がオーナーのアカウントのものだった場合(自分の
-//   招待URLを踏んだ場合)は何もしない。呼び出し元は通常のルーティング
-//   (管理者なら/admin、マスターなら/masterなど)に進めばよい。
-// - それ以外(他人の招待URL)の場合は、既に別アカウントのadmin/guest
-//   であっても常にこのアカウントのゲストへ切り替える。呼び出し元は
-//   isMaster/管理者かどうかに関わらず/roomsへ進めること(管理者・
-//   マスター権限を持つ人が他人の招待URLを踏んだときに、ゲストとして
-//   では入れず自分の管理画面/マスター画面に戻ってしまっていた不具合の
-//   修正)。
+// 招待トークンのアカウントを扱う。3パターンに分岐する。
+// - 自分自身がオーナーのアカウントの招待URL(自分の招待URL)だった場合:
+//   何もしない(isOwnAccount: true)。呼び出し元は通常のルーティングに
+//   任せればよい。
+// - 既に自分自身の別アカウントを持っている(=どこかのadmin)場合:
+//   プロフィールは一切書き換えない(viewOnly: true)。ここでprofiles.
+//   account_id/roleを上書きしてしまうと、管理者がテスト等で他人の
+//   招待URLを一度踏んだだけで自分の管理者アカウントとの紐付けが永久に
+//   失われ、ログアウトしても二度と管理画面に戻れなくなる不具合になる
+//   (実際に発生した)。この場合、呼び出し元は/rooms?invite=トークンの
+//   ようにURLだけで一時的に対象アカウントを閲覧させ、プロフィールには
+//   何も残さない。
+// - それ以外(自分は現時点でどのアカウントも持っていない、純粋な
+//   ゲスト)の場合: 通常通りprofiles.account_id/roleを更新して恒久的に
+//   参加する(viewOnly: false)。招待URLを毎回踏まなくても次回から
+//   普通にログインするだけでこのアカウントのルームに入れるようにする
+//   ため。
 export async function joinAccountViaInvite(
   supabase: SupabaseClient,
   userId: string,
@@ -30,7 +37,19 @@ export async function joinAccountViaInvite(
   if (!account) return { ok: false, error: "invalid_invite" };
 
   if (account.owner_user_id === userId) {
-    return { ok: true, isOwnAccount: true };
+    return { ok: true, isOwnAccount: true, viewOnly: false };
+  }
+
+  const { data: ownedAccount, error: ownedError } = await supabase
+    .from("accounts")
+    .select("id")
+    .eq("owner_user_id", userId)
+    .maybeSingle();
+  if (ownedError) {
+    return { ok: false, error: "join_failed", detail: ownedError.message };
+  }
+  if (ownedAccount) {
+    return { ok: true, isOwnAccount: false, viewOnly: true };
   }
 
   const { data: existingProfile, error: selectError } = await supabase
@@ -52,5 +71,5 @@ export async function joinAccountViaInvite(
     }
   }
 
-  return { ok: true, isOwnAccount: false };
+  return { ok: true, isOwnAccount: false, viewOnly: false };
 }

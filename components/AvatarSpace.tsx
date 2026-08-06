@@ -1908,7 +1908,7 @@ export default function AvatarSpace({
             />
           </div>
           <span className="hidden text-sm font-semibold sm:inline">
-            {roomName}
+            Globy
           </span>
         </div>
 
@@ -2165,7 +2165,7 @@ export default function AvatarSpace({
         <div
           className={`${
             showParticipants ? "flex" : "hidden"
-          } fixed inset-y-0 right-0 z-40 w-64 flex-col overflow-y-auto border-l border-slate-700 bg-slate-900 p-3 text-white sm:static sm:z-auto sm:flex sm:w-52 sm:shrink-0`}
+          } fixed inset-y-0 left-0 z-40 w-64 flex-col overflow-y-auto border-r border-slate-700 bg-slate-900 p-3 text-white sm:static sm:z-auto sm:order-first sm:flex sm:w-52 sm:shrink-0`}
         >
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-xs font-semibold text-slate-400">自分</h2>

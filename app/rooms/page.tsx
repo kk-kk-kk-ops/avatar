@@ -6,12 +6,74 @@ import AvatarSpaceLoader from "@/components/AvatarSpaceLoader";
 
 // ルーム選択〜アバター選択〜入室までを担う画面。
 // admin・guestの両方がここへ来る(招待されたゲストはログイン後直接ここへ)。
-export default async function RoomsPage() {
+export default async function RoomsPage({
+  searchParams,
+}: {
+  searchParams: { invite?: string };
+}) {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
+
+  // 既に自分自身の別アカウントを持っている人(admin/masterなど)が
+  // 他人の招待URLを一時的に閲覧しているケース(viewOnly)。この場合
+  // プロフィールは一切書き換えていないため、URLのトークンから毎回
+  // 対象アカウントを解決する。ログイン状態(state)は本来の自分自身の
+  // ものなので、下の通常フローとは完全に分けて処理する。
+  const viewInviteToken = searchParams.invite;
+  if (viewInviteToken) {
+    const { data: viewAccountRows } = await supabase.rpc(
+      "lookup_account_by_invite_token",
+      { token: viewInviteToken },
+    );
+    const viewAccount = viewAccountRows?.[0];
+    if (viewAccount) {
+      const [{ data: profile }, { data: viewAccountFull }, { data: roomRows }] =
+        await Promise.all([
+          supabase
+            .from("profiles")
+            .select("display_name")
+            .eq("user_id", user.id)
+            .maybeSingle(),
+          supabase
+            .from("accounts")
+            .select("plan")
+            .eq("id", viewAccount.id)
+            .maybeSingle(),
+          supabase
+            .from("rooms")
+            .select("id, account_id, template_id, name, preview_image")
+            .eq("account_id", viewAccount.id)
+            .order("created_at", { ascending: true }),
+        ]);
+
+      const rooms: Room[] = (roomRows ?? []).map((r) => ({
+        id: r.id,
+        accountId: r.account_id,
+        templateId: r.template_id,
+        name: r.name,
+        previewImage: r.preview_image,
+      }));
+
+      const plan = (viewAccountFull?.plan as PlanId) ?? "free";
+
+      return (
+        <AvatarSpaceLoader
+          initialName={profile?.display_name ?? undefined}
+          rooms={rooms}
+          maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
+          isAccountAdmin={false}
+          isMaster={false}
+          // 自分自身は管理者用アカウントを持っているので、ログアウト後は
+          // ゲスト用ログインではなく管理者用ログイン(TOPページ)に戻す。
+          guestInviteToken={null}
+        />
+      );
+    }
+    // トークンが無効な場合は通常のルーティングにフォールスルーする。
+  }
 
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.isMaster && state.type === "no-account") redirect("/master");

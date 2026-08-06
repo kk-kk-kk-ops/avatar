@@ -46,6 +46,9 @@ export default async function Home({
           `/?error=${result.error === "invalid_invite" ? "invalid_invite" : "auth_failed"}`,
         );
       }
+      if (result.viewOnly) {
+        redirect(`/rooms?invite=${encodeURIComponent(inviteToken)}`);
+      }
       // 他人の招待URL経由でゲスト参加した場合は、isMaster/管理者であっても
       // 必ずルーム選択画面へ進む(自分の管理画面/マスター画面には戻さない)。
       if (!result.isOwnAccount) {
