@@ -362,6 +362,35 @@ grant execute on function public.list_rooms_by_invite_token(text) to authenticat
 
 
 -- ------------------------------------------------------------
+-- 9c. app_settings: アプリ全体で共有する設定(現状はアバターの表示
+--     サイズのみ)。1行(id='default')だけを使う。マスターだけが変更でき、
+--     ログイン済みの全員が閲覧できる(バーチャル空間の表示に必要なため)。
+-- ------------------------------------------------------------
+create table if not exists public.app_settings (
+  id text primary key default 'default',
+  avatar_size_px integer not null default 17,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.app_settings (id, avatar_size_px)
+values ('default', 17)
+on conflict (id) do nothing;
+
+alter table public.app_settings enable row level security;
+
+drop policy if exists "app_settings: select authenticated" on public.app_settings;
+create policy "app_settings: select authenticated"
+  on public.app_settings for select
+  using (auth.uid() is not null);
+
+drop policy if exists "app_settings: update master" on public.app_settings;
+create policy "app_settings: update master"
+  on public.app_settings for update
+  using (public.is_master(auth.uid()))
+  with check (public.is_master(auth.uid()));
+
+
+-- ------------------------------------------------------------
 -- 10. マスター権限アカウントの契約プランを'master'に揃える
 --     (プロプランではなく専用プラン。ルーム数10・人数上限30名、
 --     課金対象外。/plan の選択肢には出さない)

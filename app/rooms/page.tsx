@@ -35,14 +35,20 @@ export default async function RoomsPage({
       // アカウント(自分の所属先とは別のアカウント)のルームが常に
       // 0件になってしまう。トークンの一致を検証したうえでRLSを
       // 迂回するSECURITY DEFINER関数からルーム一覧を取得する。
-      const [{ data: profile }, { data: roomRows }] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("display_name")
-          .eq("user_id", user.id)
-          .maybeSingle(),
-        supabase.rpc("list_rooms_by_invite_token", { token: viewInviteToken }),
-      ]);
+      const [{ data: profile }, { data: roomRows }, { data: appSettings }] =
+        await Promise.all([
+          supabase
+            .from("profiles")
+            .select("display_name")
+            .eq("user_id", user.id)
+            .maybeSingle(),
+          supabase.rpc("list_rooms_by_invite_token", { token: viewInviteToken }),
+          supabase
+            .from("app_settings")
+            .select("avatar_size_px")
+            .eq("id", "default")
+            .maybeSingle(),
+        ]);
 
       const rooms: Room[] = (roomRows ?? []).map(
         (r: {
@@ -72,6 +78,7 @@ export default async function RoomsPage({
           // 自分自身は管理者用アカウントを持っているので、ログアウト後は
           // ゲスト用ログインではなく管理者用ログイン(TOPページ)に戻す。
           guestInviteToken={null}
+          avatarSizePx={appSettings?.avatar_size_px ?? undefined}
         />
       );
     }
@@ -82,7 +89,7 @@ export default async function RoomsPage({
   if (state.isMaster && state.type === "no-account") redirect("/master");
   if (state.type === "no-account") redirect("/plan");
 
-  const [{ data: profile }, { data: account }, { data: roomRows }] =
+  const [{ data: profile }, { data: account }, { data: roomRows }, { data: appSettings }] =
     await Promise.all([
       supabase
         .from("profiles")
@@ -99,6 +106,11 @@ export default async function RoomsPage({
         .select("id, account_id, template_id, name, preview_image")
         .eq("account_id", state.accountId)
         .order("created_at", { ascending: true }),
+      supabase
+        .from("app_settings")
+        .select("avatar_size_px")
+        .eq("id", "default")
+        .maybeSingle(),
     ]);
 
   const rooms: Room[] = (roomRows ?? []).map((r) => ({
@@ -131,6 +143,7 @@ export default async function RoomsPage({
       isAccountAdmin={isAccountAdmin}
       isMaster={isAccountAdmin && state.isMaster}
       guestInviteToken={guestInviteToken}
+      avatarSizePx={appSettings?.avatar_size_px ?? undefined}
     />
   );
 }

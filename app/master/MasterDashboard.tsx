@@ -7,8 +7,9 @@ import { PLANS } from "@/lib/types";
 import LogoutButton from "@/components/auth/LogoutButton";
 import MasterOnlineStats from "./MasterOnlineStats";
 import TemplateManager from "./TemplateManager";
+import AvatarSettingsPanel from "./AvatarSettingsPanel";
 
-type Tab = "dashboard" | "templates";
+type Tab = "dashboard" | "templates" | "avatar";
 
 export default function MasterDashboard({
   planCounts,
@@ -19,6 +20,7 @@ export default function MasterDashboard({
   showAdminLink,
   showRoomsLink,
   userEmail,
+  avatarSizePx,
 }: {
   planCounts: Record<PlanId, number>;
   totalProfiles: number;
@@ -28,6 +30,7 @@ export default function MasterDashboard({
   showAdminLink: boolean;
   showRoomsLink: boolean;
   userEmail: string;
+  avatarSizePx: number;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -110,6 +113,16 @@ export default function MasterDashboard({
           >
             テンプレート作成・編集
           </button>
+          <button
+            onClick={() => selectTab("avatar")}
+            className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
+              tab === "avatar"
+                ? "bg-red-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            アバター
+          </button>
         </nav>
 
         <div className="space-y-2 border-t border-slate-800 p-3">
@@ -178,6 +191,10 @@ export default function MasterDashboard({
         )}
 
         {tab === "templates" && <TemplateManager templates={templates} />}
+
+        {tab === "avatar" && (
+          <AvatarSettingsPanel initialSizePx={avatarSizePx} />
+        )}
       </main>
     </div>
   );

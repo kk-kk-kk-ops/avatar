@@ -6,7 +6,6 @@ import {
   PlayerState,
   AVATAR_RADIUS,
   AVATAR_HITBOX_HEIGHT,
-  CHAT_BUBBLE_DURATION_MS,
   PRESENCE_STATUS_COLORS,
   getAvatarSpritePath,
   getAvatarThumbnail,
@@ -15,6 +14,7 @@ import {
 type Props = {
   player: PlayerState;
   isSelf: boolean;
+  sizePx?: number; // アバター画像の表示サイズ(正方形、px)。マスター画面で設定可能。
 };
 
 export type AvatarHandle = {
@@ -23,18 +23,19 @@ export type AvatarHandle = {
   updatePosition: (x: number, y: number) => void;
 };
 
-const DISPLAY_SIZE = AVATAR_RADIUS * 2; // アバター画像の表示サイズ(正方形)
-// 画像自体の上下に含まれる透明な余白を補正する値。
-// 数値を大きくするほど、見た目の足元が当たり判定ラインに近づく(=障害物との隙間が減る)。
-// 画像内の透明な余白の割合は表示サイズが変わっても一定なので、
-// 元のサイズ(90px)で調整した比率(20/90)を維持して表示サイズに応じて算出する。
-const FOOT_OFFSET = DISPLAY_SIZE * (20 / 90);
+const DEFAULT_DISPLAY_SIZE = AVATAR_RADIUS * 2; // sizePx未指定時のフォールバック
 
 const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
-  { player, isSelf },
+  { player, isSelf, sizePx },
   ref,
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const displaySize = sizePx ?? DEFAULT_DISPLAY_SIZE;
+  // 画像自体の上下に含まれる透明な余白を補正する値。
+  // 数値を大きくするほど、見た目の足元が当たり判定ラインに近づく(=障害物との隙間が減る)。
+  // 画像内の透明な余白の割合は表示サイズが変わっても一定なので、
+  // 元のサイズ(90px)で調整した比率(20/90)を維持して表示サイズに応じて算出する。
+  const footOffset = displaySize * (20 / 90);
 
   useImperativeHandle(
     ref,
@@ -42,33 +43,17 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
       updatePosition: (x: number, y: number) => {
         const el = rootRef.current;
         if (!el) return;
-        const left = x - DISPLAY_SIZE / 2;
-        const top = y + AVATAR_HITBOX_HEIGHT / 2 - DISPLAY_SIZE + FOOT_OFFSET;
+        const left = x - displaySize / 2;
+        const top = y + AVATAR_HITBOX_HEIGHT / 2 - displaySize + footOffset;
         el.style.transform = `translate(${left}px, ${top}px)`;
       },
     }),
-    [],
+    [displaySize, footOffset],
   );
 
-  // 吹き出しは「表示中に他の理由で再描画が起きない限りDate.now()が
-  // 再評価されず消えない」問題があったため、タイマーで明示的に非表示へ
-  // 切り替える(位置更新はDOM操作のみでReactの再描画を経由しないため、
-  // 他のstate変化が起きないと自然には再描画されない)。
-  const [bubbleExpired, setBubbleExpired] = useState(false);
-  useEffect(() => {
-    if (!player.message || !player.messageAt) return;
-    setBubbleExpired(false);
-    const remaining = CHAT_BUBBLE_DURATION_MS - (Date.now() - player.messageAt);
-    if (remaining <= 0) {
-      setBubbleExpired(true);
-      return;
-    }
-    const timer = setTimeout(() => setBubbleExpired(true), remaining);
-    return () => clearTimeout(timer);
-  }, [player.message, player.messageAt]);
-
-  const showBubble =
-    !!player.message && !!player.messageAt && !bubbleExpired;
+  // 吹き出しは設定画面のチェックボックスで表示/非表示が切り替わる常時
+  // 表示方式(自動で消えるタイマーは持たない)。
+  const showBubble = !!player.showMessage && !!player.message;
   const showMicBadge = player.micOn !== undefined;
   const avatarImage = player.avatarImage || AVATAR_IMAGES[0];
   const spriteSrc = getAvatarSpritePath(avatarImage, player.dir);
@@ -89,23 +74,28 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
     <div
       ref={rootRef}
       className="absolute left-0 top-0 will-change-transform"
-      style={{ width: DISPLAY_SIZE, height: DISPLAY_SIZE }}
+      style={{ width: displaySize, height: displaySize }}
     >
-      {showBubble && (
-        <div className="absolute -top-14 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-white px-3 py-1 text-xs shadow-md border border-gray-200">
-          {player.message}
-        </div>
-      )}
-
-      <span className="absolute -top-6 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
-        <span
-          className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{
-            backgroundColor: PRESENCE_STATUS_COLORS[player.status ?? "available"],
-          }}
-        />
-        {player.name}
-      </span>
+      {/* 名前タグと吹き出しをまとめて1つの基準位置に固定し、吹き出しは
+          常にその真上(bottom-full)に積み上げる。吹き出しは改行して
+          高さが伸び縮みするため、名前タグ側の位置に影響しないよう
+          このように親子関係にしている。 */}
+      <div className="absolute -top-6 left-1/2 -translate-x-1/2">
+        {showBubble && (
+          <div className="absolute bottom-full left-1/2 mb-1 w-[50px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-center text-[10px] leading-tight shadow-md">
+            {player.message}
+          </div>
+        )}
+        <span className="flex items-center gap-1 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+          <span
+            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{
+              backgroundColor: PRESENCE_STATUS_COLORS[player.status ?? "available"],
+            }}
+          />
+          {player.name}
+        </span>
+      </div>
 
       {/* アバター画像(背景・枠なしでそのまま表示) */}
       {/* eslint-disable-next-line @next/next/no-img-element */}

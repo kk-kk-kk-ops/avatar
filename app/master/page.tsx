@@ -70,6 +70,12 @@ export default async function MasterPage() {
     previewImage: r.preview_image,
   }));
 
+  const { data: appSettings } = await supabase
+    .from("app_settings")
+    .select("avatar_size_px")
+    .eq("id", "default")
+    .maybeSingle();
+
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
@@ -124,6 +130,7 @@ export default async function MasterPage() {
       showAdminLink={state.type === "admin"}
       showRoomsLink={state.type !== "no-account"}
       userEmail={user.email ?? ""}
+      avatarSizePx={appSettings?.avatar_size_px ?? 17}
     />
   );
 }

@@ -14,6 +14,7 @@ import {
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
   MOVE_SPEED,
+  MESSAGE_MAX_LENGTH,
   findMeetingZoneId,
   rectIntersectsRect,
   resolveSpawnPosition,
@@ -64,6 +65,9 @@ type Props = {
   // トークン。ログアウト後、管理者用ログイン画面ではなく元の招待URLの
   // ゲスト用ログイン画面に戻すために使う。
   guestInviteToken?: string | null;
+  // アバターの表示サイズ(px、正方形)。マスター画面で設定できる
+  // app_settings.avatar_size_pxの値。未指定時はAvatar側のデフォルトを使う。
+  avatarSizePx?: number;
 };
 
 export default function AvatarSpace({
@@ -73,6 +77,7 @@ export default function AvatarSpace({
   isAccountAdmin,
   isMaster,
   guestInviteToken,
+  avatarSizePx,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -101,7 +106,8 @@ export default function AvatarSpace({
   const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
   const [settingsStatus, setSettingsStatus] =
     useState<PresenceStatus>("available");
-  const [chatInput, setChatInput] = useState("");
+  const [settingsMessageInput, setSettingsMessageInput] = useState("");
+  const [settingsShowMessage, setSettingsShowMessage] = useState(false);
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const playersRef = useRef<Record<string, PlayerState>>({});
   const remoteScreenStreamsRef = useRef<Record<string, MediaStream>>({});
@@ -909,7 +915,9 @@ export default function AvatarSpace({
                 current.micOn !== p.micOn ||
                 current.sharingScreen !== p.sharingScreen ||
                 current.inCall !== p.inCall ||
-                current.status !== p.status
+                current.status !== p.status ||
+                current.message !== p.message ||
+                current.showMessage !== p.showMessage
               ) {
                 next[p.id] = {
                   ...current,
@@ -920,6 +928,8 @@ export default function AvatarSpace({
                   sharingScreen: p.sharingScreen,
                   inCall: p.inCall,
                   status: p.status,
+                  message: p.message,
+                  showMessage: p.showMessage,
                 };
                 changed = true;
               }
@@ -980,6 +990,7 @@ export default function AvatarSpace({
               current.inCall !== p.inCall ||
               current.meetingZoneId !== p.meetingZoneId ||
               current.message !== p.message ||
+              current.showMessage !== p.showMessage ||
               current.dir !== p.dir ||
               current.status !== p.status
             ) {
@@ -989,16 +1000,6 @@ export default function AvatarSpace({
               };
             }
             return prev;
-          });
-        })
-        .on("broadcast", { event: "chat" }, ({ payload }) => {
-          const { id, message } = payload as { id: string; message: string };
-          setPlayers((prev) => {
-            if (!prev[id]) return prev;
-            return {
-              ...prev,
-              [id]: { ...prev[id], message, messageAt: Date.now() },
-            };
           });
         })
         .on("broadcast", { event: "layout-update" }, ({ payload }) => {
@@ -1733,41 +1734,13 @@ export default function AvatarSpace({
     keysDown.current.delete(key);
   }, []);
 
-  // ---- チャット送信 ----
-  const sendChat = useCallback(() => {
-    const message = chatInput.trim();
-    if (!message || !selfState.current) return;
-    const id = selfState.current.id;
-    const messageAt = Date.now();
-
-    // selfState自体にもmessageを持たせる。移動ループが毎フレーム
-    // selfStateの内容でplayersを上書きするため、ここに含めないと
-    // 自分の吹き出しだけ次のフレームで消えてしまう。
-    selfState.current.message = message;
-    selfState.current.messageAt = messageAt;
-
-    setPlayers((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], message, messageAt },
-    }));
-
-    channelRef.current?.send({
-      type: "broadcast",
-      event: "chat",
-      payload: { id, message },
-    });
-
-    setChatInput("");
-    // 吹き出しの自動非表示は移動ループの再描画(毎フレーム)で判定されるため、
-    // ここでタイマーを持つ必要はない。次のメッセージ送信時は上のsetPlayersが
-    // messageAt を上書きするので、自動的に「新しいメッセージで上書き」される。
-  }, [chatInput]);
-
-  // ---- 入室後の設定変更(名前・アバター画像・在席ステータス) ----
+  // ---- 入室後の設定変更(名前・アバター画像・在席ステータス・吹き出し) ----
   const openSettings = useCallback(() => {
     setSettingsNameInput(selfState.current?.name ?? "");
     setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
     setSettingsStatus(selfState.current?.status ?? "available");
+    setSettingsMessageInput(selfState.current?.message ?? "");
+    setSettingsShowMessage(selfState.current?.showMessage ?? false);
     setSettingsOpen(true);
   }, []);
 
@@ -1778,11 +1751,21 @@ export default function AvatarSpace({
     selfState.current.name = name;
     selfState.current.avatarImage = settingsAvatar;
     selfState.current.status = settingsStatus;
+    selfState.current.message = settingsMessageInput
+      .trim()
+      .slice(0, MESSAGE_MAX_LENGTH);
+    selfState.current.showMessage = settingsShowMessage;
     const updated = selfState.current;
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
     channelRef.current?.track(updated);
     setSettingsOpen(false);
-  }, [settingsNameInput, settingsAvatar, settingsStatus]);
+  }, [
+    settingsNameInput,
+    settingsAvatar,
+    settingsStatus,
+    settingsMessageInput,
+    settingsShowMessage,
+  ]);
 
   // ルーム選択画面にいる間だけ、各ルームのRealtimeチャンネルにpresence
   // 観測者として接続し、オンライン人数を取得する(入室後は不要なので
@@ -1865,6 +1848,11 @@ export default function AvatarSpace({
           >
             入室
           </button>
+
+          <LogoutButton
+            className="mt-2 w-full rounded-lg bg-slate-100 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-200"
+            redirectTo={guestInviteToken ? `/?invite=${guestInviteToken}` : "/"}
+          />
         </div>
       </div>
     );
@@ -1875,9 +1863,19 @@ export default function AvatarSpace({
     return (
       <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
         <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-          <h1 className="mb-1 text-lg font-bold text-slate-800">
-            {roomName}に入室
-          </h1>
+          <div className="mb-1 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setRoomSelected(false)}
+              aria-label="ルーム選択に戻る"
+              className="shrink-0 text-lg text-slate-500 hover:text-slate-800"
+            >
+              ←
+            </button>
+            <h1 className="text-lg font-bold text-slate-800">
+              {roomName}に入室
+            </h1>
+          </div>
           <p className="mb-4 text-sm text-slate-500">
             アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)
           </p>
@@ -1907,7 +1905,7 @@ export default function AvatarSpace({
             onClick={handleJoin}
             className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
           >
-            入室する
+            確定
           </button>
         </div>
       </div>
@@ -2204,6 +2202,7 @@ export default function AvatarSpace({
                 key={p.id}
                 player={p}
                 isSelf={p.id === selfId.current}
+                sizePx={avatarSizePx}
                 ref={(handle) => {
                   if (handle) {
                     avatarRefs.current.set(p.id, handle);
@@ -2310,24 +2309,10 @@ export default function AvatarSpace({
             </button>
           </div>
 
-          {/* チャット入力(以前は画面下部にあったが、サイドバー最下部へ移動した) */}
           <div className="mt-auto border-t border-slate-700 pt-3">
-            <p className="mb-2 text-[10px] leading-relaxed text-slate-400">
+            <p className="text-[10px] leading-relaxed text-slate-400">
               移動:PCは WASD / 矢印キー、スマホは左下のボタン
             </p>
-            <input
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendChat()}
-              placeholder="メッセージを入力してEnter"
-              className="mb-2 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-slate-400"
-            />
-            <button
-              onClick={sendChat}
-              className="w-full rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600"
-            >
-              送信
-            </button>
           </div>
         </div>
       </div>
@@ -2396,32 +2381,62 @@ export default function AvatarSpace({
               className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
             />
 
-            <div className="mb-4">
-              <p className="mb-2 text-xs font-semibold text-slate-500">
-                ステータス
-              </p>
-              <div className="flex flex-col gap-2">
-                {(
-                  Object.keys(PRESENCE_STATUS_LABELS) as PresenceStatus[]
-                ).map((status) => (
-                  <label
-                    key={status}
-                    className="flex items-center gap-2 text-sm text-slate-700"
-                  >
-                    <input
-                      type="radio"
-                      name="presence-status"
-                      value={status}
-                      checked={settingsStatus === status}
-                      onChange={() => setSettingsStatus(status)}
-                    />
-                    <span
-                      className="inline-block h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: PRESENCE_STATUS_COLORS[status] }}
-                    />
-                    {PRESENCE_STATUS_LABELS[status]}
-                  </label>
-                ))}
+            <div className="mb-4 flex gap-4">
+              <div>
+                <p className="mb-2 text-xs font-semibold text-slate-500">
+                  ステータス
+                </p>
+                <div className="flex flex-col gap-2">
+                  {(
+                    Object.keys(PRESENCE_STATUS_LABELS) as PresenceStatus[]
+                  ).map((status) => (
+                    <label
+                      key={status}
+                      className="flex items-center gap-2 text-sm text-slate-700"
+                    >
+                      <input
+                        type="radio"
+                        name="presence-status"
+                        value={status}
+                        checked={settingsStatus === status}
+                        onChange={() => setSettingsStatus(status)}
+                      />
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-full"
+                        style={{ backgroundColor: PRESENCE_STATUS_COLORS[status] }}
+                      />
+                      {PRESENCE_STATUS_LABELS[status]}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <p className="mb-2 text-xs font-semibold text-slate-500">
+                  吹き出し
+                </p>
+                <label className="mb-2 flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={settingsShowMessage}
+                    onChange={(e) => setSettingsShowMessage(e.target.checked)}
+                  />
+                  表示する
+                </label>
+                <input
+                  value={settingsMessageInput}
+                  onChange={(e) =>
+                    setSettingsMessageInput(
+                      e.target.value.slice(0, MESSAGE_MAX_LENGTH),
+                    )
+                  }
+                  maxLength={MESSAGE_MAX_LENGTH}
+                  placeholder="吹き出しの内容"
+                  className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+                />
+                <p className="mt-1 text-[10px] text-slate-400">
+                  {settingsMessageInput.length}/{MESSAGE_MAX_LENGTH}文字
+                </p>
               </div>
             </div>
 
@@ -2457,12 +2472,15 @@ export default function AvatarSpace({
                   マスター画面へ
                 </Link>
               )}
-              <LogoutButton
+              <button
+                onClick={() => {
+                  setSettingsOpen(false);
+                  handleLeaveRoom();
+                }}
                 className="w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
-                redirectTo={
-                  guestInviteToken ? `/?invite=${guestInviteToken}` : "/"
-                }
-              />
+              >
+                🚪 退出
+              </button>
             </div>
           </div>
         </div>

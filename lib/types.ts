@@ -9,8 +9,8 @@ export type PlayerState = {
   y: number;
   dir: "up" | "down" | "left" | "right";
   moving: boolean;
-  message?: string; // 直近の発言(吹き出し表示用)
-  messageAt?: number; // 発言タイムスタンプ
+  message?: string; // 吹き出しの内容(最大20文字)
+  showMessage?: boolean; // 吹き出しを常時表示するかどうか(設定画面のチェックボックスで切り替え)
   meetingZoneId?: string | null; // 現在いるミーティングエリアのID(いなければnull)
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
@@ -181,7 +181,7 @@ export const AVATAR_RADIUS = 8.5; // アバターの表示サイズ計算に使�
 export const AVATAR_HITBOX_WIDTH = 20; // 当たり判定の幅(px)
 export const AVATAR_HITBOX_HEIGHT = 20; // 当たり判定の高さ(px)
 export const MOVE_SPEED = 220; // px / sec
-export const CHAT_BUBBLE_DURATION_MS = 60000; // 1分間表示。新しいメッセージが来ると上書きされる
+export const MESSAGE_MAX_LENGTH = 20; // 吹き出しの最大文字数
 export const PROXIMITY_RADIUS = 68; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。従来の1.5倍)
 
 export type Rect = { x: number; y: number; width: number; height: number };

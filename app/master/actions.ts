@@ -92,6 +92,22 @@ export async function replaceTemplateImage(
   revalidatePath("/master");
 }
 
+export async function updateAvatarSize(sizePx: number) {
+  const { supabase } = await requireMaster();
+  if (!Number.isFinite(sizePx) || sizePx < 8 || sizePx > 200) {
+    throw new Error("8〜200pxの範囲で入力してください");
+  }
+
+  const { error } = await supabase
+    .from("app_settings")
+    .update({ avatar_size_px: Math.round(sizePx) })
+    .eq("id", "default");
+  if (error) throw new Error("保存に失敗しました");
+
+  revalidatePath("/master");
+  revalidatePath("/rooms");
+}
+
 export async function deleteTemplate(templateId: string) {
   const { supabase } = await requireMaster();
 
