@@ -30,34 +30,37 @@ export default async function RoomsPage({
     );
     const viewAccount = viewAccountRows?.[0];
     if (viewAccount) {
-      const [{ data: profile }, { data: viewAccountFull }, { data: roomRows }] =
-        await Promise.all([
-          supabase
-            .from("profiles")
-            .select("display_name")
-            .eq("user_id", user.id)
-            .maybeSingle(),
-          supabase
-            .from("accounts")
-            .select("plan")
-            .eq("id", viewAccount.id)
-            .maybeSingle(),
-          supabase
-            .from("rooms")
-            .select("id, account_id, template_id, name, preview_image")
-            .eq("account_id", viewAccount.id)
-            .order("created_at", { ascending: true }),
-        ]);
+      // rooms/accountsともに「自分自身が所属するアカウントのみ閲覧可」
+      // というRLSがかかっているため、素のテーブルSELECTでは対象
+      // アカウント(自分の所属先とは別のアカウント)のルームが常に
+      // 0件になってしまう。トークンの一致を検証したうえでRLSを
+      // 迂回するSECURITY DEFINER関数からルーム一覧を取得する。
+      const [{ data: profile }, { data: roomRows }] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("display_name")
+          .eq("user_id", user.id)
+          .maybeSingle(),
+        supabase.rpc("list_rooms_by_invite_token", { token: viewInviteToken }),
+      ]);
 
-      const rooms: Room[] = (roomRows ?? []).map((r) => ({
-        id: r.id,
-        accountId: r.account_id,
-        templateId: r.template_id,
-        name: r.name,
-        previewImage: r.preview_image,
-      }));
+      const rooms: Room[] = (roomRows ?? []).map(
+        (r: {
+          id: string;
+          account_id: string;
+          template_id: string | null;
+          name: string;
+          preview_image: string;
+        }) => ({
+          id: r.id,
+          accountId: r.account_id,
+          templateId: r.template_id,
+          name: r.name,
+          previewImage: r.preview_image,
+        }),
+      );
 
-      const plan = (viewAccountFull?.plan as PlanId) ?? "free";
+      const plan = (viewAccount.plan as PlanId) ?? "free";
 
       return (
         <AvatarSpaceLoader

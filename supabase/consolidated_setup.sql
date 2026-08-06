@@ -304,7 +304,7 @@ create policy "template-images: master delete"
 
 
 -- ------------------------------------------------------------
--- 9. 招待トークンからアカウントを検索する関数(最終形: id/name/
+-- 9. 招待トークンからアカウントを検索する関数(最終形: id/name/plan/
 --    owner_user_id/invite_inviter_nameを返す)。未ログインのTOP
 --    ページでも招待者名を表示するため、anonにも実行権限を付与する。
 -- ------------------------------------------------------------
@@ -314,6 +314,7 @@ create function public.lookup_account_by_invite_token(token text)
 returns table (
   id uuid,
   name text,
+  plan text,
   owner_user_id uuid,
   invite_inviter_name text
 )
@@ -321,13 +322,43 @@ language sql
 security definer
 set search_path = public
 as $$
-  select id, name, owner_user_id, invite_inviter_name
+  select id, name, plan, owner_user_id, invite_inviter_name
   from public.accounts
   where invite_token = token;
 $$;
 
 grant execute on function public.lookup_account_by_invite_token(text) to authenticated;
 grant execute on function public.lookup_account_by_invite_token(text) to anon;
+
+-- 9b. 招待トークンからルーム一覧を取得する関数。既に自分のアカウントを
+--     持つ人が他人の招待URL(/rooms?invite=token)を一時閲覧する
+--     viewOnlyのケースでは、「rooms: select own account」のRLSが
+--     自分自身の所属アカウントのルームしか許可しないため、素の
+--     テーブルSELECTだと対象アカウントのルームが常に0件になってしまう
+--     (「ルームがありません」と表示される不具合の原因)。トークンの
+--     一致を条件にSECURITY DEFINERでRLSを迂回して返す。
+drop function if exists public.list_rooms_by_invite_token(text);
+
+create function public.list_rooms_by_invite_token(token text)
+returns table (
+  id uuid,
+  account_id uuid,
+  template_id uuid,
+  name text,
+  preview_image text
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select r.id, r.account_id, r.template_id, r.name, r.preview_image
+  from public.rooms r
+  join public.accounts a on a.id = r.account_id
+  where a.invite_token = token
+  order by r.created_at asc;
+$$;
+
+grant execute on function public.list_rooms_by_invite_token(text) to authenticated;
 
 
 -- ------------------------------------------------------------
