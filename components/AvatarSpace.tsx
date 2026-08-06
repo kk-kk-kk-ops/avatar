@@ -1903,7 +1903,7 @@ export default function AvatarSpace({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo.png"
-              alt="Grovina"
+              alt="Globy"
               className="h-5 w-5 object-contain"
             />
           </div>

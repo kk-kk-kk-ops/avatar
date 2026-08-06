@@ -54,18 +54,18 @@ export default function AdminDashboard({
       {/* スマホ用ヘッダー: サイドバーは画面外に隠れているので、開くための
           ハンバーガーボタンをここに置く(md以上では常時表示のサイドバー
           側にロゴ・名前があるのでこちらは非表示にする)。 */}
-      <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:hidden">
+      <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-4 py-3 md:hidden">
         <div className="flex min-w-0 items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Grovina" className="h-6 w-6 shrink-0 object-contain" />
-          <span className="truncate text-sm font-bold text-slate-800">
+          <img src="/logo.png" alt="Globy" className="h-6 w-6 shrink-0 object-contain" />
+          <span className="truncate text-sm font-bold text-white">
             {accountName}
           </span>
         </div>
         <button
           onClick={() => setSidebarOpen(true)}
           aria-label="メニューを開く"
-          className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-base"
+          className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-base text-slate-200"
         >
           ☰
         </button>
@@ -79,15 +79,15 @@ export default function AdminDashboard({
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-56 shrink-0 -translate-x-full flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:static md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-56 shrink-0 -translate-x-full flex-col border-r border-slate-800 bg-slate-900 transition-transform duration-200 md:static md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : ""
         }`}
       >
-        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-4">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-4">
           <div className="flex min-w-0 items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Grovina" className="h-6 w-6 shrink-0 object-contain" />
-            <span className="truncate text-sm font-bold text-slate-800">
+            <img src="/logo.png" alt="Globy" className="h-6 w-6 shrink-0 object-contain" />
+            <span className="truncate text-sm font-bold text-white">
               {accountName}
             </span>
           </div>
@@ -107,8 +107,8 @@ export default function AdminDashboard({
               onClick={() => selectTab(t.id)}
               className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
                 tab === t.id
-                  ? "bg-slate-900 text-white"
-                  : "text-slate-600 hover:bg-slate-100"
+                  ? "bg-red-600 text-white"
+                  : "text-slate-300 hover:bg-slate-800"
               }`}
             >
               {t.label}
@@ -116,22 +116,22 @@ export default function AdminDashboard({
           ))}
         </nav>
 
-        <div className="space-y-2 border-t border-slate-200 p-3">
+        <div className="space-y-2 border-t border-slate-800 p-3">
           {showMasterLink && (
             <Link
               href="/master"
-              className="block w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-center text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+              className="block w-full rounded-lg border border-emerald-500/60 px-3 py-2 text-center text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10"
             >
               マスター画面へ
             </Link>
           )}
           <Link
             href="/rooms"
-            className="block w-full rounded-lg bg-slate-900 px-3 py-2 text-center text-xs font-semibold text-white hover:bg-slate-700"
+            className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
           >
             ルームへ
           </Link>
-          <LogoutButton className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50" />
+          <LogoutButton className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800" />
         </div>
       </aside>
 

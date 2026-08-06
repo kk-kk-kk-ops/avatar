@@ -28,44 +28,86 @@ export default function MasterDashboard({
   showRoomsLink: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const selectTab = (t: Tab) => {
+    setTab(t);
+    setSidebarOpen(false);
+  };
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
-        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-4">
+      {/* スマホ用ヘッダー */}
+      <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-4 py-3 md:hidden">
+        <div className="flex min-w-0 items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Grovina" className="h-6 w-6 object-contain" />
-          <span className="text-sm font-bold text-slate-800">マスター画面</span>
+          <img src="/logo.png" alt="Globy" className="h-6 w-6 shrink-0 object-contain" />
+          <span className="truncate text-sm font-bold text-white">マスター画面</span>
+        </div>
+        <button
+          onClick={() => setSidebarOpen(true)}
+          aria-label="メニューを開く"
+          className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-base text-slate-200"
+        >
+          ☰
+        </button>
+      </div>
+
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-56 shrink-0 -translate-x-full flex-col border-r border-slate-800 bg-slate-900 transition-transform duration-200 md:static md:translate-x-0 ${
+          sidebarOpen ? "translate-x-0" : ""
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="Globy" className="h-6 w-6 shrink-0 object-contain" />
+            <span className="truncate text-sm font-bold text-white">マスター画面</span>
+          </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            aria-label="メニューを閉じる"
+            className="shrink-0 text-lg text-slate-400 md:hidden"
+          >
+            ×
+          </button>
         </div>
 
         <nav className="flex-1 space-y-1 p-3">
           <button
-            onClick={() => setTab("dashboard")}
+            onClick={() => selectTab("dashboard")}
             className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
               tab === "dashboard"
-                ? "bg-slate-900 text-white"
-                : "text-slate-600 hover:bg-slate-100"
+                ? "bg-red-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
             }`}
           >
             ダッシュボード
           </button>
           <button
-            onClick={() => setTab("templates")}
+            onClick={() => selectTab("templates")}
             className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
               tab === "templates"
-                ? "bg-emerald-600 text-white"
-                : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                ? "bg-red-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
             }`}
           >
             テンプレート作成
           </button>
         </nav>
 
-        <div className="space-y-2 border-t border-slate-200 p-3">
+        <div className="space-y-2 border-t border-slate-800 p-3">
           {showAdminLink && (
             <Link
               href="/admin"
-              className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
             >
               管理画面へ
             </Link>
@@ -73,16 +115,16 @@ export default function MasterDashboard({
           {showRoomsLink && (
             <Link
               href="/rooms"
-              className="block w-full rounded-lg bg-slate-900 px-3 py-2 text-center text-xs font-semibold text-white hover:bg-slate-700"
+              className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
             >
               ルームへ
             </Link>
           )}
-          <LogoutButton className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50" />
+          <LogoutButton className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800" />
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto bg-slate-50 p-6">
+      <main className="min-w-0 flex-1 overflow-y-auto bg-slate-50 p-6 pt-20 md:pt-6">
         {tab === "dashboard" && (
           <div className="mx-auto max-w-3xl space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -126,11 +168,7 @@ export default function MasterDashboard({
           </div>
         )}
 
-        {tab === "templates" && (
-          <div className="rounded-xl bg-emerald-50/50 p-4">
-            <TemplateManager templates={templates} />
-          </div>
-        )}
+        {tab === "templates" && <TemplateManager templates={templates} />}
       </main>
     </div>
   );

@@ -32,7 +32,7 @@ export async function startFreeTrial() {
   const { data: account, error: accountError } = await supabase
     .from("accounts")
     .insert({
-      name: "Grovina Office",
+      name: "Globy",
       plan: "free",
       trial_ends_at: trialEndsAt,
       owner_user_id: user.id,
@@ -55,7 +55,7 @@ export async function startFreeTrial() {
 
   const { error: roomError } = await supabase.from("rooms").insert({
     account_id: account.id,
-    name: "Grovina Office",
+    name: "Globy",
     preview_image: "/map-background.webp",
   });
 

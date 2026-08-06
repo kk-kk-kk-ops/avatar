@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Grovina Office",
-  description: "Grovina Officeの2Dアバタースペース (Next.js + Supabase)",
+  title: "Globy",
+  description: "Globyの2Dアバタースペース (Next.js + Supabase)",
 };
 
 export const viewport: Viewport = {

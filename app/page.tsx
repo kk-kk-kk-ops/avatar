@@ -95,7 +95,7 @@ export default async function Home({
           className="mx-auto mb-4 h-14 w-14 object-contain"
         />
         <h1 className="mb-2 text-lg font-bold text-slate-800">
-          Grovina Office
+          Globy
         </h1>
         <p className="mb-6 text-xs text-slate-500">
           {inviteToken
