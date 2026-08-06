@@ -200,6 +200,43 @@ export default function AvatarSpace({
   // など「頻繁には変わらない情報」だけを持つようにする。
   // avatarRefs: 各プレイヤーのAvatar DOM操作ハンドルを保持
   const avatarRefs = useRef<Map<string, AvatarHandle>>(new Map());
+  // playerIdごとにref callbackを1つだけ生成してキャッシュする。以前は
+  // JSXのmap内でインライン関数を毎回生成しており、参加者数に比例して
+  // 「状態更新のたびに全員分のrefが付け外しされる」無駄が発生していた
+  // (memo化されたAvatar自体の再描画はスキップされるが、refの関数参照が
+  // 毎回変わるとReactはref付け外しだけは必ず行うため)。
+  const avatarRefCallbacks = useRef<
+    Map<string, (handle: AvatarHandle | null) => void>
+  >(new Map());
+  const getAvatarRefCallback = useCallback((id: string) => {
+    let cb = avatarRefCallbacks.current.get(id);
+    if (!cb) {
+      cb = (handle) => {
+        if (handle) {
+          avatarRefs.current.set(id, handle);
+          // 生成された直後、Reactが把握している最新座標を初期位置として
+          // 反映しておく(次のrAFフレームまで座標(0,0)に見えてしまうのを
+          // 防ぐ)。playersRefから読むことで、キャッシュしたコールバックが
+          // 生成時点の古いpの値を参照し続けてしまう問題を避ける。
+          if (id === selfId.current && selfState.current) {
+            handle.updatePosition(selfState.current.x, selfState.current.y);
+          } else {
+            const pos = peerPositionsRef.current.get(id);
+            const fallback = playersRef.current[id];
+            handle.updatePosition(
+              pos?.currentX ?? fallback?.x ?? 0,
+              pos?.currentY ?? fallback?.y ?? 0,
+            );
+          }
+        } else {
+          avatarRefs.current.delete(id);
+          avatarRefCallbacks.current.delete(id);
+        }
+      };
+      avatarRefCallbacks.current.set(id, cb);
+    }
+    return cb;
+  }, []);
   // 相手の位置の補間(interpolation)用。broadcastで届いた最新位置をtargetとして持ち、
   // 毎フレーム現在位置(current)をtargetへ滑らかに近づけて描画する。
   const peerPositionsRef = useRef<
@@ -1646,6 +1683,19 @@ export default function AvatarSpace({
     };
   }, [joined]);
 
+  // 距離判定に使う値(x, y, meetingZoneId)だけを拾った軽量な文字列。
+  // players全体を依存配列にすると、名前・ステータス・マイク状態など
+  // 距離と無関係な変化(移動中は方向転換のたびにも発生する)でまで
+  // 全員分の距離計算が再実行されてしまっていたため、実際に距離判定へ
+  // 影響する値だけを比較対象にする。
+  const positionSignature = useMemo(
+    () =>
+      Object.values(players)
+        .map((p) => `${p.id}:${p.x}:${p.y}:${p.meetingZoneId ?? ""}`)
+        .join("|"),
+    [players],
+  );
+
   // ---- 音声通話:接続すべき相手を計算 ----
   // 条件は「同じミーティングエリアに二人ともいる」か「一定距離より近い(近接ボイスチャット)」。
   // 距離判定には余裕(ヒステリシス)を持たせ、境界線上での接続/切断のチラつきを
@@ -1674,7 +1724,7 @@ export default function AvatarSpace({
       .map((p) => p.id)
       .sort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [players]);
+  }, [positionSignature]);
   const eligibleKey = eligiblePeerIds.join(",");
 
   // ---- 音声通話:対象の増減に合わせて接続を作成/破棄 ----
@@ -2203,27 +2253,7 @@ export default function AvatarSpace({
                 player={p}
                 isSelf={p.id === selfId.current}
                 sizePx={avatarSizePx}
-                ref={(handle) => {
-                  if (handle) {
-                    avatarRefs.current.set(p.id, handle);
-                    // 生成された直後、Reactが把握している最新座標を初期位置として反映しておく
-                    // (次のrAFフレームまで座標(0,0)に見えてしまうのを防ぐ)
-                    if (p.id === selfId.current && selfState.current) {
-                      handle.updatePosition(
-                        selfState.current.x,
-                        selfState.current.y,
-                      );
-                    } else {
-                      const pos = peerPositionsRef.current.get(p.id);
-                      handle.updatePosition(
-                        pos?.currentX ?? p.x,
-                        pos?.currentY ?? p.y,
-                      );
-                    }
-                  } else {
-                    avatarRefs.current.delete(p.id);
-                  }
-                }}
+                ref={getAvatarRefCallback(p.id)}
               />
             ))}
           </div>

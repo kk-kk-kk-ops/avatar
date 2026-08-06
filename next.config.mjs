@@ -6,7 +6,12 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: "/:path*",
+        // ハッシュ付きファイル名の静的アセット(_next/static)と画像は
+        // デプロイごとにファイル名自体が変わるため、キャッシュ無効化は
+        // 不要かつ有害(毎回フル再ダウンロードでVercel転送量・体感速度が
+        // 悪化する)。ページ本体(HTML/RSC)とAPIだけに絞る。
+        source:
+          "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico)$).*)",
         headers: [
           {
             key: "Cache-Control",
