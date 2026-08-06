@@ -61,8 +61,8 @@ export default function MasterDashboard({
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-56 shrink-0 -translate-x-full flex-col border-r border-slate-800 bg-slate-900 transition-transform duration-200 md:static md:translate-x-0 ${
-          sidebarOpen ? "translate-x-0" : ""
+        className={`fixed inset-y-0 right-0 z-50 flex w-56 shrink-0 flex-col border-l border-slate-800 bg-slate-900 transition-transform duration-200 md:static md:translate-x-0 ${
+          sidebarOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
         <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-4">
