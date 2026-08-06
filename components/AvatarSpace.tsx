@@ -165,18 +165,11 @@ export default function AvatarSpace({
   const [mapSize, setMapSize] = useState({ width: MAP_WIDTH, height: MAP_HEIGHT });
   const mapSizeRef = useRef({ width: MAP_WIDTH, height: MAP_HEIGHT });
 
-  // 音声(マイク)はLiveKit移行Phase2でLiveKit経由に切り替えたため、
-  // 自前PeerConnectionメッシュ用のlocalStreamRefは廃止した。
+  // 音声・映像・画面共有はLiveKit移行(Phase2〜4)でLiveKit経由に切り替えた
+  // ため、自前PeerConnectionメッシュ関連の状態はPhase6で全て廃止した。
   const livekitRoomRef = useRef<LiveKitRoom | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
-  const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const pendingCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(
-    new Map(),
-  );
-  // 相手ごとに「今offerを作成・送信している最中か」を記録する。ほぼ同時に
-  // 双方からofferが届く交渉の衝突(グレア)を検知するために使う。
-  const makingOffer = useRef<Map<string, boolean>>(new Map());
   const lastTrackedZoneId = useRef<string | null>(null);
   // 定期同期(下記)で「前回同期した時の値」を覚えておくための記録。
   // selfState.currentとplayers[自分のID]が同じオブジェクト参照になって
@@ -273,9 +266,8 @@ export default function AvatarSpace({
     return () => clearTimeout(timer);
   }, [callError]);
 
-  // playersの最新値をrefにも反映(ontrackなど、effect外から最新状態を
-  // 参照したい箇所で使う。getOrCreatePeerConnectionをplayers変更のたびに
-  // 作り直さずに済むようにするため)
+  // playersの最新値をrefにも反映(effect外・イベントハンドラ外から
+  // 最新状態を参照したい箇所で使う)
   useEffect(() => {
     playersRef.current = players;
   }, [players]);
@@ -524,226 +516,6 @@ export default function AvatarSpace({
       }
     })();
   }, [joined, roomId, rooms, supabase]);
-
-  // ---- WebRTC:音声接続のヘルパー関数群 ----
-  const flushPendingCandidates = useCallback(
-    async (peerId: string, pc: RTCPeerConnection) => {
-      const list = pendingCandidates.current.get(peerId);
-      if (!list || list.length === 0) return;
-      for (const candidate of list) {
-        try {
-          await pc.addIceCandidate(candidate);
-        } catch {
-          // 無効な候補はスキップ
-        }
-      }
-      pendingCandidates.current.delete(peerId);
-    },
-    [],
-  );
-
-  // offerを作成し、setLocalDescriptionしてから相手へ送信する共通処理。
-  // (以前は7箇所前後で同じ3行がほぼそのまま重複していた)
-  // 送信中はmakingOfferをtrueにしておき、ほぼ同時に相手からもofferが
-  // 届いた場合の衝突(グレア)判定にwebrtc-offerハンドラ側で使う。
-  const sendOffer = useCallback(
-    async (
-      peerId: string,
-      pc: RTCPeerConnection,
-      offerOptions?: RTCOfferOptions,
-    ) => {
-      makingOffer.current.set(peerId, true);
-      try {
-        const offer = await pc.createOffer(offerOptions);
-        await pc.setLocalDescription(offer);
-        channelRef.current?.send({
-          type: "broadcast",
-          event: "webrtc-offer",
-          payload: {
-            from: selfId.current,
-            to: peerId,
-            sdp: offer,
-          },
-        });
-      } finally {
-        makingOffer.current.set(peerId, false);
-      }
-    },
-    [],
-  );
-
-  // 接続がすでにできている相手に対して、自分が今送っているはずのトラック
-  // (マイク・画面共有・カメラ)がまだ正しく乗っていなければ、追加して
-  // 再送信する。接続する順番やタイミングによっては、最初のofferの時点では
-  // まだ反映されないケースがあるため、offer/answerのやり取りが一段落する
-  // たびに毎回確認する。
-  const ensureLocalVideoAttached = useCallback(
-    async (peerId: string) => {
-      const pc = peerConnections.current.get(peerId);
-      if (!pc) return;
-
-      // 別の交渉(offer/answer)がまだ進行中のタイミングで割り込むと、
-      // createOffer/setLocalDescriptionが失敗し、それっきり再試行されなく
-      // なることがあった。交渉が落ち着いている("stable")時だけ実行する。
-      if (pc.signalingState !== "stable") return;
-
-      // 「senderとしてtrackが付いているか」ではなく「実際にoffer/answerの
-      // やり取りでネゴシエーション済み(mid = m-lineが割り当て済み)か」で
-      // 判定する。相手(offer送信側)がその時点で映像を持っていなかった場合、
-      // 最初のofferには映像用のm-line自体が無く、こちらがaddTrackしていても
-      // answerには乗らない(WebRTCの仕様上、answerはofferに無いm-lineを
-      // 追加できない)。以前はsenderの存在だけを見ていたため、この
-      // 「track はあるが未ネゴシエーション」の状態を「対応済み」と誤判定し、
-      // 再送信(renegotiation)が行われないままになっていた。
-      const negotiatedTrackIds = new Set(
-        pc
-          .getTransceivers()
-          .filter((t) => t.mid !== null && t.sender.track)
-          .map((t) => t.sender.track!.id),
-      );
-      // カメラ(Phase3)・画面共有(Phase4)ともにLiveKit移行でこのメッシュから
-      // 外れたため、renegotiation対象になるローカルストリームは無くなった
-      // (この関数自体の削除はPhase6でまとめて行う)。
-      const myStreams: MediaStream[] = [];
-      let needsRenegotiation = false;
-      const addedTracks: MediaStreamTrack[] = [];
-      myStreams.forEach((stream) => {
-        stream.getTracks().forEach((track) => {
-          if (negotiatedTrackIds.has(track.id)) return;
-          // trackを送るsender自体は既にある場合、addTrackし直すと重複
-          // senderになってしまうため、無い場合だけ追加する。
-          const existingSender = pc.getSenders().find((s) => s.track === track);
-          if (!existingSender) {
-            pc.addTrack(track, stream);
-            addedTracks.push(track);
-          }
-          needsRenegotiation = true;
-        });
-      });
-      if (!needsRenegotiation) return;
-
-      try {
-        await sendOffer(peerId, pc);
-      } catch {
-        // 失敗した場合、追加したトラックをsenderから外し、次回のチェックで
-        // 「まだ乗っていない」と判定させて再試行できるようにする
-        addedTracks.forEach((track) => {
-          const sender = pc.getSenders().find((s) => s.track === track);
-          if (sender) {
-            try {
-              pc.removeTrack(sender);
-            } catch {
-              // 無視(次回の判定が多少ズレる程度で致命的ではない)
-            }
-          }
-        });
-      }
-    },
-    [sendOffer],
-  );
-
-  // 一時的な回線の乱れで切れた場合、自動で再接続を試みる
-  // 接続が不安定になった際、自分がofferを送る側(IDが小さい方)だけが
-  // iceRestartオプション付きで再接続を試みる(双方が同時に送ると衝突するため)
-  const restartIce = useCallback(
-    async (peerId: string) => {
-      const pc = peerConnections.current.get(peerId);
-      if (!pc || selfId.current >= peerId) return;
-      try {
-        await sendOffer(peerId, pc, { iceRestart: true });
-      } catch {
-        // 失敗した場合は次回の切断検知時に再度試みる
-      }
-    },
-    [sendOffer],
-  );
-
-  const getOrCreatePeerConnection = useCallback(
-    (peerId: string) => {
-      const existing = peerConnections.current.get(peerId);
-      if (existing) return existing;
-
-      // TURN(Metered)はPhase5で撤去した。このPeerConnection自体、今は
-      // 何も運んでいないためSTUNのみで十分(Phase6で関数ごと削除予定)。
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" },
-        ],
-      });
-
-      // 音声(Phase2)・画面共有(Phase4)・カメラ(Phase3)は全てLiveKit移行で
-      // このメッシュから外れたため、ここでのローカルトラック追加は不要
-      // (このPeerConnection自体、今は何も運んでいない。Phase6で削除予定)。
-
-      pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          channelRef.current?.send({
-            type: "broadcast",
-            event: "webrtc-ice",
-            payload: {
-              from: selfId.current,
-              to: peerId,
-              candidate: e.candidate.toJSON(),
-            },
-          });
-        }
-      };
-
-      // 音声(Phase2)・カメラ(Phase3)・画面共有(Phase4)は全てLiveKit移行で
-      // このメッシュから外れたため、このontrackはもう発火しない
-      // (このPeerConnection自体、今は何も運んでいない。Phase6で削除予定)。
-      pc.ontrack = (e) => {
-        if (e.track.kind !== "video") return;
-        setRemoteScreenStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
-        e.track.onended = () => {
-          setRemoteScreenStreams((prev) => {
-            if (!(peerId in prev)) return prev;
-            const next = { ...prev };
-            delete next[peerId];
-            return next;
-          });
-        };
-      };
-
-      // 一時的な回線の乱れで切れた場合、自動で再接続を試みる
-      pc.oniceconnectionstatechange = () => {
-        if (
-          pc.iceConnectionState === "disconnected" ||
-          pc.iceConnectionState === "failed"
-        ) {
-          restartIce(peerId);
-        }
-      };
-
-      peerConnections.current.set(peerId, pc);
-      return pc;
-    },
-    [restartIce],
-  );
-
-  const closePeerConnection = useCallback((peerId: string) => {
-    const pc = peerConnections.current.get(peerId);
-    if (pc) {
-      pc.close();
-      peerConnections.current.delete(peerId);
-    }
-    pendingCandidates.current.delete(peerId);
-    setRemoteStreams((prev) => {
-      if (!(peerId in prev)) return prev;
-      const next = { ...prev };
-      delete next[peerId];
-      return next;
-    });
-    setRemoteScreenStreams((prev) => {
-      if (!(peerId in prev)) return prev;
-      const next = { ...prev };
-      delete next[peerId];
-      return next;
-    });
-  }, []);
-
 
   // ---- 画面共有 ----
   // LiveKit移行Phase4でLiveKit経由に切り替え。screenStreamRefは自分の
@@ -1021,97 +793,8 @@ export default function AvatarSpace({
           if (newObstacles) setObstacles(newObstacles);
           if (newZones) setMeetingZones(newZones);
         })
-        .on("broadcast", { event: "webrtc-offer" }, async ({ payload }) => {
-          const { from, to, sdp } = payload as {
-            from: string;
-            to: string;
-            sdp: RTCSessionDescriptionInit;
-          };
-          if (to !== selfId.current) return;
-          const pc = getOrCreatePeerConnection(from);
-
-          // 交渉の衝突(グレア)対策:自分もちょうどofferを送ろうとしている
-          // 最中に相手からofferが届くことがある(例:こちらが画面共有を
-          // ONにした直後に、相手側の未ネゴシエーションtrackの再送信が
-          // 重なる等)。IDの大小で固定した「polite(譲る側)」だけが自分の
-          // offerを取り消して相手のofferを受け入れ、politeでない側は
-          // 自分のofferを優先して届いたofferを無視する。これをしないと
-          // 片方のsetRemoteDescriptionが失敗し、次の再試行まで映像/音声が
-          // 更新されないことがあった。
-          const polite = selfId.current >= from;
-          const offerCollision =
-            makingOffer.current.get(from) === true ||
-            pc.signalingState !== "stable";
-          if (offerCollision && !polite) return;
-
-          try {
-            if (offerCollision) {
-              await pc.setLocalDescription({ type: "rollback" });
-            }
-            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-            // awaitで待っている間に、相手が離れて再度近づく等でこの接続が
-            // 破棄・作り直しされていた場合、もうこのpcは無関係なので中断する
-            // (再接続時に古いofferの処理が新しい接続へ混ざるのを防ぐ)。
-            if (peerConnections.current.get(from) !== pc) return;
-            await flushPendingCandidates(from, pc);
-            const answer = await pc.createAnswer();
-            if (peerConnections.current.get(from) !== pc) return;
-            await pc.setLocalDescription(answer);
-            channelRef.current?.send({
-              type: "broadcast",
-              event: "webrtc-answer",
-              payload: {
-                from: selfId.current,
-                to: from,
-                sdp: answer,
-              },
-            });
-            // 自分がすでに画面共有中なら、この接続にもきちんと乗っているか確認する
-            await ensureLocalVideoAttached(from);
-          } catch {
-            // pcが既に閉じられている等で失敗した場合は無視する(再度近づいた際の
-            // 次のoffer/answerのやり取りに任せる)
-          }
-        })
-        .on("broadcast", { event: "webrtc-answer" }, async ({ payload }) => {
-          const { from, to, sdp } = payload as {
-            from: string;
-            to: string;
-            sdp: RTCSessionDescriptionInit;
-          };
-          if (to !== selfId.current) return;
-          const pc = peerConnections.current.get(from);
-          if (!pc) return;
-          try {
-            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-            if (peerConnections.current.get(from) !== pc) return;
-            await flushPendingCandidates(from, pc);
-            // 自分がすでに画面共有中なら、この接続にもきちんと乗っているか確認する
-            await ensureLocalVideoAttached(from);
-          } catch {
-            // pcが既に閉じられている等で失敗した場合は無視する
-          }
-        })
-        .on("broadcast", { event: "webrtc-ice" }, async ({ payload }) => {
-          const { from, to, candidate } = payload as {
-            from: string;
-            to: string;
-            candidate: RTCIceCandidateInit;
-          };
-          if (to !== selfId.current) return;
-          const pc = peerConnections.current.get(from);
-          if (pc && pc.remoteDescription) {
-            try {
-              await pc.addIceCandidate(candidate);
-            } catch {
-              // 追加に失敗した候補は無視(接続確立には他の候補が使われる)
-            }
-          } else {
-            const list = pendingCandidates.current.get(from) ?? [];
-            list.push(candidate);
-            pendingCandidates.current.set(from, list);
-          }
-        })
+        // webrtc-offer/webrtc-answer/webrtc-iceの自前シグナリングは
+        // LiveKit移行(Phase2〜4)により不要になったためPhase6で削除した。
         .subscribe(async (status) => {
           if (status === "SUBSCRIBED" && selfState.current) {
             // 人数上限チェック(プランごとのルーム定員)。presenceの状態は
@@ -1160,14 +843,7 @@ export default function AvatarSpace({
       channelRef.current?.unsubscribe();
       channelRef.current = null;
     };
-  }, [
-    joined,
-    roomId,
-    maxPeoplePerRoom,
-    getOrCreatePeerConnection,
-    flushPendingCandidates,
-    ensureLocalVideoAttached,
-  ]);
+  }, [joined, roomId, maxPeoplePerRoom]);
 
   // ---- 在室状況の自己修復 ----
   // 何らかの理由でpresenceのsync/leaveイベントを取りこぼした場合に備え、
@@ -1218,32 +894,13 @@ export default function AvatarSpace({
 
         return changed ? next : prev;
       });
-
-      // 壊れた・古くなったWebRTC接続を検知して閉じる。
-      // 「片方の画面では繋がったままになっているのに、もう片方はすでに
-      // 接続を作り直している」というズレが起きると、再接続してもプレビューが
-      // 出ないことがあるため、定期的に接続状態を確認し、正常でないものは
-      // 一度閉じて次の機会に作り直せるようにする。
-      peerConnections.current.forEach((pc, peerId) => {
-        const isEligibleNow = presentIds.has(peerId);
-        const unhealthy =
-          pc.connectionState === "failed" ||
-          pc.connectionState === "closed" ||
-          (pc.connectionState === "disconnected" && !isEligibleNow);
-        if (unhealthy) {
-          closePeerConnection(peerId);
-          return;
-        }
-        // 接続自体は生きていても、画面共有・ビデオ通話の映像トラックが
-        // 何らかの理由でうまく乗っていないことがある。手動でON/OFFし
-        // 直さなくても直るよう、定期的に確認して足りなければ補う。
-        ensureLocalVideoAttached(peerId);
-      });
+      // 自前WebRTC接続の健全性チェックは、音声・映像・画面共有が全て
+      // LiveKit移行(Phase2〜4)したことでPhase6で不要になった
+      // (再接続はLiveKitクライアントSDKが自動的に行う)。
     }, 2500);
 
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [joined, closePeerConnection, ensureLocalVideoAttached]);
+  }, [joined]);
 
   // ---- ブラウザを閉じる/タブを閉じる際、明示的に退室を通知する ----
   // 何もしないと、Supabase側が「切断された」と気づくまで数十秒かかることがあり、
@@ -1617,12 +1274,12 @@ export default function AvatarSpace({
     [players],
   );
 
-  // ---- 音声通話:接続すべき相手を計算 ----
+  // ---- 音声・映像・画面共有:LiveKit購読対象を計算 ----
   // 条件は「同じミーティングエリアに二人ともいる」か「一定距離より近い(近接ボイスチャット)」。
-  // 距離判定には余裕(ヒステリシス)を持たせ、境界線上での接続/切断のチラつきを
-  // 防いでいる。特に「接続済みの相手」は、少し動いただけで音声通話や画面共有が
-  // 切れてしまわないよう、切断までの距離を大きく広げている(実際にその場を
-  // 離れるまでは繋がったままにする)。
+  // 距離判定には余裕(ヒステリシス)を持たせ、境界線上での購読ON/OFFの
+  // チラつきを防いでいる。特に「前回すでに対象だった相手」は、少し動いた
+  // だけで音声通話や画面共有が切れてしまわないよう、対象から外れる距離を
+  // 大きく広げている(実際にその場を離れるまでは繋がったままにする)。
   const eligiblePeerIds = useMemo(() => {
     const self = players[selfId.current];
     if (!self) return [] as string[];
@@ -1636,8 +1293,8 @@ export default function AvatarSpace({
         )
           return true;
         const dist = Math.hypot(p.x - self.x, p.y - self.y);
-        const alreadyConnected = peerConnections.current.has(p.id);
-        const threshold = alreadyConnected
+        const wasEligible = eligiblePeerIdsRef.current.includes(p.id);
+        const threshold = wasEligible
           ? PROXIMITY_RADIUS + 20
           : PROXIMITY_RADIUS;
         return dist <= threshold;
@@ -1682,19 +1339,13 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey, joined]);
 
-  // 自前メッシュ用の「対象の増減に合わせて接続を作成/破棄」処理は、音声・
-  // カメラ・画面共有が全てLiveKit移行(Phase2〜4)したことで不要になった
-  // (関数定義自体の削除はPhase6でまとめて行う)。
-
-  // 退室時に画面共有メッシュの接続をすべて閉じる(音声・カメラはLiveKit側の
-  // room.disconnect()が担当するが、念のためremoteStreams/remoteCallStreams
-  // もここで確実にリセットしておく)。
+  // 退室時、位置補間用の記録とAvatar DOM参照をクリアする。音声・映像・
+  // 画面共有はLiveKit側のroom.disconnect()が担当するが、念のため
+  // remoteStreams/remoteCallStreams/remoteScreenStreamsもここで
+  // 確実にリセットしておく。
   useEffect(() => {
     if (!joined) return;
     return () => {
-      peerConnections.current.forEach((pc) => pc.close());
-      peerConnections.current.clear();
-      pendingCandidates.current.clear();
       peerPositionsRef.current.clear();
       avatarRefs.current.clear();
       setRemoteStreams({});
