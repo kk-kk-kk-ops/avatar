@@ -60,6 +60,10 @@ type Props = {
   maxPeoplePerRoom: number;
   isAccountAdmin: boolean;
   isMaster: boolean;
+  // 他人の招待URL経由で参加しているゲストの場合のみ渡される招待
+  // トークン。ログアウト後、管理者用ログイン画面ではなく元の招待URLの
+  // ゲスト用ログイン画面に戻すために使う。
+  guestInviteToken?: string | null;
 };
 
 export default function AvatarSpace({
@@ -68,6 +72,7 @@ export default function AvatarSpace({
   maxPeoplePerRoom,
   isAccountAdmin,
   isMaster,
+  guestInviteToken,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -2375,7 +2380,12 @@ export default function AvatarSpace({
                   マスター画面へ
                 </Link>
               )}
-              <LogoutButton className="w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100" />
+              <LogoutButton
+                className="w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
+                redirectTo={
+                  guestInviteToken ? `/?invite=${guestInviteToken}` : "/"
+                }
+              />
             </div>
           </div>
         </div>

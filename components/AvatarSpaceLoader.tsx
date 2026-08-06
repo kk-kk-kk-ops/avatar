@@ -14,6 +14,7 @@ type Props = {
   maxPeoplePerRoom: number;
   isAccountAdmin: boolean;
   isMaster: boolean;
+  guestInviteToken?: string | null;
 };
 
 export default function AvatarSpaceLoader({
@@ -22,6 +23,7 @@ export default function AvatarSpaceLoader({
   maxPeoplePerRoom,
   isAccountAdmin,
   isMaster,
+  guestInviteToken,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -38,6 +40,7 @@ export default function AvatarSpaceLoader({
         maxPeoplePerRoom={maxPeoplePerRoom}
         isAccountAdmin={isAccountAdmin}
         isMaster={isMaster}
+        guestInviteToken={guestInviteToken}
       />
     </div>
   );

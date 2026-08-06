@@ -26,7 +26,7 @@ export default async function RoomsPage() {
         .maybeSingle(),
       supabase
         .from("accounts")
-        .select("plan")
+        .select("plan, invite_token")
         .eq("id", state.accountId)
         .single(),
       supabase
@@ -53,6 +53,11 @@ export default async function RoomsPage() {
   // マスター画面には行けないようにする)。
   const isAccountAdmin = state.type === "admin";
 
+  // ゲストの場合、ログアウト後は管理者用ログイン画面ではなく、この
+  // アカウントの招待URL(ゲスト用ログイン画面)に戻れるようにする。
+  const guestInviteToken =
+    state.type === "guest" ? account?.invite_token ?? null : null;
+
   return (
     <AvatarSpaceLoader
       initialName={profile?.display_name ?? undefined}
@@ -60,6 +65,7 @@ export default async function RoomsPage() {
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
       isAccountAdmin={isAccountAdmin}
       isMaster={isAccountAdmin && state.isMaster}
+      guestInviteToken={guestInviteToken}
     />
   );
 }
