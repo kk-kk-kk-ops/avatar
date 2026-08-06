@@ -221,7 +221,7 @@ export default function TemplateEditor({
   const removeMeetingZone = (id: string) =>
     setMeetingZones((prev) => prev.filter((z) => z.id !== id));
 
-  const handleSave = async () => {
+  const handleSaveAndClose = async () => {
     setError(null);
     setSaving(true);
     try {
@@ -232,6 +232,7 @@ export default function TemplateEditor({
         mapWidth,
         mapHeight,
       );
+      onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存に失敗しました");
     } finally {

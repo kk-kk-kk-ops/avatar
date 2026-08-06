@@ -65,22 +65,7 @@ export default function InvitePanel({
 
   return (
     <div>
-      <p className="mb-2 text-xs font-semibold text-slate-500">招待URL</p>
-      <div className="mb-3 flex gap-2">
-        <input
-          readOnly
-          value={inviteUrl}
-          className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700 outline-none"
-        />
-        <button
-          onClick={handleCopy}
-          className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-        >
-          {copied ? "コピーしました" : "コピー"}
-        </button>
-      </div>
-
-      <p className="mb-1 mt-4 text-xs font-semibold text-slate-500">
+      <p className="mb-1 text-xs font-semibold text-slate-500">
         招待者名(招待URLからのログイン画面に「〇〇〇さんからの招待」と表示されます)
       </p>
       <div className="mb-3 flex gap-2">
@@ -99,6 +84,21 @@ export default function InvitePanel({
         </button>
       </div>
 
+      <p className="mb-2 mt-4 text-xs font-semibold text-slate-500">招待URL</p>
+      <div className="mb-3 flex gap-2">
+        <input
+          readOnly
+          value={inviteUrl}
+          className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700 outline-none"
+        />
+        <button
+          onClick={handleCopy}
+          className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
+        >
+          {copied ? "コピーしました" : "コピー"}
+        </button>
+      </div>
+
       {error && (
         <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
           {error}
@@ -108,10 +108,11 @@ export default function InvitePanel({
       <button
         onClick={handleRegenerate}
         disabled={pending}
-        className="rounded-lg bg-red-50 px-4 py-2 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-60"
+        className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
       >
-        URLを再発行(古いURLは無効になります)
+        URLを再発行
       </button>
+      <p className="mt-1 text-xs text-red-600">※古いURLは無効になります</p>
     </div>
   );
 }

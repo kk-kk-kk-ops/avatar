@@ -108,7 +108,7 @@ export default function MasterDashboard({
                 : "text-slate-300 hover:bg-slate-800"
             }`}
           >
-            テンプレート作成
+            テンプレート作成・編集
           </button>
         </nav>
 

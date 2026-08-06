@@ -137,7 +137,7 @@ export const PLANS: Record<
   },
   light: {
     label: "ライト",
-    subLabel: "（ルーム数：1　人数上限：10名）",
+    subLabel: "（ルーム数：1　1ルーム当たり人数上限：10名）",
     priceLabel: "980円/月",
     priceYen: 980,
     maxRooms: 1,
@@ -145,7 +145,7 @@ export const PLANS: Record<
   },
   standard: {
     label: "スタンダード",
-    subLabel: "（ルーム数：2　人数上限：20名）",
+    subLabel: "（ルーム数：2　1ルーム当たり人数上限：20名）",
     priceLabel: "3,980円/月",
     priceYen: 3980,
     maxRooms: 2,
@@ -153,7 +153,7 @@ export const PLANS: Record<
   },
   pro: {
     label: "プロ",
-    subLabel: "（ルーム数：3　人数上限：30名）",
+    subLabel: "（ルーム数：3　1ルーム当たり人数上限：30名）",
     priceLabel: "10,800円/月",
     priceYen: 10800,
     maxRooms: 3,
@@ -165,7 +165,7 @@ export const PLANS: Record<
   // accounts.planへ直接設定する(migrate_existing_owner.sql等)。
   master: {
     label: "マスター",
-    subLabel: "（ルーム数：10　人数上限：30名）",
+    subLabel: "（ルーム数：10　1ルーム当たり人数上限：30名）",
     priceLabel: "-",
     priceYen: 0,
     maxRooms: 10,
