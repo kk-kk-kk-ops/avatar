@@ -80,6 +80,47 @@ export default function TemplateManager({
         </p>
       )}
 
+      {creating ? (
+        <div className="mb-6 space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="テンプレート名"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          />
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            disabled={pending}
+            className="w-full text-xs disabled:opacity-60"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleCreate}
+              disabled={pending}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+            >
+              {pendingAction?.type === "create" ? "作成中..." : "作成"}
+            </button>
+            <button
+              onClick={() => setCreating(false)}
+              disabled={pending}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => setCreating(true)}
+          className="mb-6 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+        >
+          ＋ 新規テンプレート作成
+        </button>
+      )}
+
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
         {templates.map((t) => (
           <div
@@ -118,47 +159,6 @@ export default function TemplateManager({
           </div>
         ))}
       </div>
-
-      {creating ? (
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="テンプレート名"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-          />
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            disabled={pending}
-            className="w-full text-xs disabled:opacity-60"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleCreate}
-              disabled={pending}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-            >
-              {pendingAction?.type === "create" ? "作成中..." : "作成"}
-            </button>
-            <button
-              onClick={() => setCreating(false)}
-              disabled={pending}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-            >
-              キャンセル
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setCreating(true)}
-          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-        >
-          ＋ 新規テンプレート作成
-        </button>
-      )}
 
       {deleteTarget && (
         <ConfirmModal
