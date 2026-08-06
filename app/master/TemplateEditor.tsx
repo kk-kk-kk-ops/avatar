@@ -276,151 +276,162 @@ export default function TemplateEditor({
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        {editingName ? (
-          <div className="flex items-center gap-1">
-            <input
-              autoFocus
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleRename()}
-              className="rounded border border-slate-300 px-2 py-1 text-sm outline-none focus:border-slate-500"
-            />
-            <button
-              onClick={handleRename}
-              disabled={renaming}
-              className="rounded bg-slate-900 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
-            >
-              保存
-            </button>
-            <button
-              onClick={() => {
-                setEditingName(false);
-                setNameInput(name);
-              }}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600"
-            >
-              キャンセル
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-bold text-slate-800">{name}</p>
-            <button
-              onClick={() => setEditingName(true)}
-              className="text-xs text-slate-500 hover:text-slate-800"
-            >
-              名前変更
-            </button>
-          </div>
-        )}
-        <button
-          onClick={onClose}
-          className="text-xs text-slate-500 hover:text-slate-800"
-        >
-          閉じる
-        </button>
-      </div>
-
-      {error && (
-        <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
-          {error}
-        </p>
-      )}
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button
-          onClick={addObstacle}
-          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-        >
-          ＋障害物
-        </button>
-        <button
-          onClick={addMeetingZone}
-          className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-        >
-          ＋ミーティングエリア
-        </button>
-        <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-          {uploading ? "アップロード中..." : "背景画像を変更"}
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleImageChange}
-            disabled={uploading}
-          />
-        </label>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="ml-auto rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-        >
-          {saving ? "保存中..." : "レイアウトを保存"}
-        </button>
-      </div>
-
-      <div ref={measureRef} className="w-full" style={{ maxWidth: MAX_DISPLAY_WIDTH }}>
-        <div className="mb-2 flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">マップサイズ</span>
-          <input
-            type="number"
-            step={100}
-            value={mapWidthInput}
-            onChange={(e) => setMapWidthInput(e.target.value)}
-            onBlur={() => setMapWidthInput(String(mapWidth))}
-            className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
-          />
-          <span className="text-xs text-slate-400">×</span>
-          <input
-            type="number"
-            step={100}
-            value={mapHeightInput}
-            onChange={(e) => setMapHeightInput(e.target.value)}
-            onBlur={() => setMapHeightInput(String(mapHeight))}
-            className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
-          />
-          <span className="text-xs text-slate-400">px</span>
+    <div className="flex items-start gap-4">
+      {/* 編集項目サイドバー: 名前変更〜各種編集操作を上から順に並べ、
+          一番下に「保存し終了」ボタンを置く(mt-autoで、右側の
+          プレビュー列と同じ高さまで押し下げる)。 */}
+      <div className="flex w-64 shrink-0 flex-col gap-4 self-stretch rounded-xl border border-slate-200 bg-white p-4">
+        <div>
+          {editingName ? (
+            <div className="flex flex-wrap items-center gap-1">
+              <input
+                autoFocus
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleRename()}
+                className="w-full rounded border border-slate-300 px-2 py-1 text-sm outline-none focus:border-slate-500"
+              />
+              <button
+                onClick={handleRename}
+                disabled={renaming}
+                className="rounded bg-slate-900 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
+              >
+                保存
+              </button>
+              <button
+                onClick={() => {
+                  setEditingName(false);
+                  setNameInput(name);
+                }}
+                className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600"
+              >
+                キャンセル
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-sm font-bold text-slate-800">{name}</p>
+              <button
+                onClick={() => setEditingName(true)}
+                className="shrink-0 text-xs text-slate-500 hover:text-slate-800"
+              >
+                名前変更
+              </button>
+            </div>
+          )}
+          <button
+            onClick={onClose}
+            className="mt-1 text-xs text-slate-500 hover:text-slate-800"
+          >
+            閉じる
+          </button>
         </div>
 
-        <div className="mb-2 flex items-center gap-2">
-          <span className="text-xs font-semibold text-slate-500">
+        {error && (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+            {error}
+          </p>
+        )}
+
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={addObstacle}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            ＋障害物
+          </button>
+          <button
+            onClick={addMeetingZone}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            ＋ミーティングエリア
+          </button>
+          <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
+            {uploading ? "アップロード中..." : "背景画像を変更"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageChange}
+              disabled={uploading}
+            />
+          </label>
+        </div>
+
+        <div>
+          <p className="mb-1 text-xs font-semibold text-slate-500">マップサイズ</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              step={100}
+              value={mapWidthInput}
+              onChange={(e) => setMapWidthInput(e.target.value)}
+              onBlur={() => setMapWidthInput(String(mapWidth))}
+              className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
+            />
+            <span className="text-xs text-slate-400">×</span>
+            <input
+              type="number"
+              step={100}
+              value={mapHeightInput}
+              onChange={(e) => setMapHeightInput(e.target.value)}
+              onBlur={() => setMapHeightInput(String(mapHeight))}
+              className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
+            />
+            <span className="text-xs text-slate-400">px</span>
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-1 text-xs font-semibold text-slate-500">
             拡大 {Math.round(zoom * 100)}%
-          </span>
-          <button
-            onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 100) / 100))}
-            disabled={zoom <= 1}
-            className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-          >
-            －
-          </button>
-          <input
-            type="range"
-            min={1}
-            max={3}
-            step={0.5}
-            value={zoom}
-            onChange={(e) => setZoom(Number(e.target.value))}
-            className="w-28"
-          />
-          <button
-            onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.5) * 100) / 100))}
-            disabled={zoom >= 3}
-            className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-          >
-            ＋
-          </button>
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 100) / 100))}
+              disabled={zoom <= 1}
+              className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+            >
+              －
+            </button>
+            <input
+              type="range"
+              min={1}
+              max={3}
+              step={0.5}
+              value={zoom}
+              onChange={(e) => setZoom(Number(e.target.value))}
+              className="w-full"
+            />
+            <button
+              onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.5) * 100) / 100))}
+              disabled={zoom >= 3}
+              className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+            >
+              ＋
+            </button>
+          </div>
           {zoom !== 1 && (
             <button
               onClick={() => setZoom(1)}
-              className="text-xs text-slate-500 underline hover:text-slate-800"
+              className="mt-1 text-xs text-slate-500 underline hover:text-slate-800"
             >
               リセット
             </button>
           )}
         </div>
 
+        <button
+          onClick={handleSaveAndClose}
+          disabled={saving}
+          className="mt-auto rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+        >
+          {saving ? "保存中..." : "レイアウトを保存し終了"}
+        </button>
+      </div>
+
+      {/* プレビュー: 残り幅いっぱい(画面右端)まで広げる */}
+      <div ref={measureRef} className="min-w-0 flex-1">
         <div
           className="relative touch-none overflow-auto rounded-lg border border-slate-300 bg-slate-700"
           style={{ width: viewportWidth, height: viewportHeight }}
