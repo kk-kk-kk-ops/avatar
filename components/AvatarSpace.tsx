@@ -303,11 +303,11 @@ export default function AvatarSpace({
     })();
   }, [joined]);
 
-  // ---- LiveKit接続(音声:Phase2、カメラ:Phase3)----
+  // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
   // 維持するため autoSubscribe: false で接続し、実際の購読は下の
   // 「eligiblePeerIdsに応じて購読を切り替える」effectとTrackPublished
-  // イベントで個別に制御する(画面共有はPhase4まで対象外=自前メッシュのまま)。
+  // イベントで個別に制御する。
   useEffect(() => {
     if (!joined) return;
     let cancelled = false;
@@ -316,8 +316,8 @@ export default function AvatarSpace({
 
     const isManagedKind = (publication: RemoteTrackPublication) =>
       publication.kind === Track.Kind.Audio ||
-      (publication.kind === Track.Kind.Video &&
-        publication.source === Track.Source.Camera);
+      publication.source === Track.Source.Camera ||
+      publication.source === Track.Source.ScreenShare;
 
     const applySubscription = (
       publication: RemoteTrackPublication,
@@ -329,23 +329,23 @@ export default function AvatarSpace({
       );
     };
 
+    const setterFor = (kind: Track.Kind, source: Track.Source) => {
+      if (kind === Track.Kind.Audio) return setRemoteStreams;
+      if (source === Track.Source.ScreenShare) return setRemoteScreenStreams;
+      return setRemoteCallStreams;
+    };
+
     room
       .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub, participant) => {
-        if (track.kind === Track.Kind.Audio) {
-          const stream = new MediaStream([track.mediaStreamTrack]);
-          setRemoteStreams((prev) => ({ ...prev, [participant.identity]: stream }));
-        } else if (pub.source === Track.Source.Camera) {
-          const stream = new MediaStream([track.mediaStreamTrack]);
-          setRemoteCallStreams((prev) => ({
-            ...prev,
-            [participant.identity]: stream,
-          }));
-        }
+        if (!isManagedKind(pub)) return;
+        const stream = new MediaStream([track.mediaStreamTrack]);
+        setterFor(track.kind, pub.source)((prev) => ({
+          ...prev,
+          [participant.identity]: stream,
+        }));
       })
-      .on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
-        const setter =
-          track.kind === Track.Kind.Audio ? setRemoteStreams : setRemoteCallStreams;
-        setter((prev) => {
+      .on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
+        setterFor(track.kind, pub.source)((prev) => {
           if (!(participant.identity in prev)) return prev;
           const next = { ...prev };
           delete next[participant.identity];
@@ -354,18 +354,16 @@ export default function AvatarSpace({
       })
       .on(RoomEvent.TrackPublished, applySubscription)
       .on(RoomEvent.ParticipantDisconnected, (participant) => {
-        setRemoteStreams((prev) => {
-          if (!(participant.identity in prev)) return prev;
-          const next = { ...prev };
-          delete next[participant.identity];
-          return next;
-        });
-        setRemoteCallStreams((prev) => {
-          if (!(participant.identity in prev)) return prev;
-          const next = { ...prev };
-          delete next[participant.identity];
-          return next;
-        });
+        [setRemoteStreams, setRemoteCallStreams, setRemoteScreenStreams].forEach(
+          (setter) => {
+            setter((prev) => {
+              if (!(participant.identity in prev)) return prev;
+              const next = { ...prev };
+              delete next[participant.identity];
+              return next;
+            });
+          },
+        );
       });
 
     (async () => {
@@ -622,11 +620,10 @@ export default function AvatarSpace({
           .filter((t) => t.mid !== null && t.sender.track)
           .map((t) => t.sender.track!.id),
       );
-      // カメラ(ビデオ通話)はLiveKit移行Phase3でこのメッシュから外れたため、
-      // ここでのrenegotiation対象は画面共有のみ。
-      const myStreams = [screenStreamRef.current].filter(
-        (s): s is MediaStream => !!s,
-      );
+      // カメラ(Phase3)・画面共有(Phase4)ともにLiveKit移行でこのメッシュから
+      // 外れたため、renegotiation対象になるローカルストリームは無くなった
+      // (この関数自体の削除はPhase6でまとめて行う)。
+      const myStreams: MediaStream[] = [];
       let needsRenegotiation = false;
       const addedTracks: MediaStreamTrack[] = [];
       myStreams.forEach((stream) => {
@@ -694,18 +691,9 @@ export default function AvatarSpace({
         ],
       });
 
-      // 音声(マイク)はLiveKit移行Phase2でこのメッシュから外れ、LiveKit経由に
-      // なったため、ここでの音声トラックの追加・recvonly transceiverは不要。
-
-      // すでに画面共有中の場合は、新しく繋がる相手にもその映像を含める
-      if (screenStreamRef.current) {
-        screenStreamRef.current.getTracks().forEach((track) => {
-          pc.addTrack(track, screenStreamRef.current as MediaStream);
-        });
-      }
-
-      // ビデオ通話(カメラ)はLiveKit移行Phase3でこのメッシュから外れたため、
-      // ここでの追加は不要。
+      // 音声(Phase2)・画面共有(Phase4)・カメラ(Phase3)は全てLiveKit移行で
+      // このメッシュから外れたため、ここでのローカルトラック追加は不要
+      // (このPeerConnection自体、今は何も運んでいない。Phase6で削除予定)。
 
       pc.onicecandidate = (e) => {
         if (e.candidate) {
@@ -721,8 +709,9 @@ export default function AvatarSpace({
         }
       };
 
-      // 音声(Phase2)・カメラ(Phase3)はこのメッシュから外れたため、この
-      // PeerConnectionに届くのは常に画面共有の映像のみになった。
+      // 音声(Phase2)・カメラ(Phase3)・画面共有(Phase4)は全てLiveKit移行で
+      // このメッシュから外れたため、このontrackはもう発火しない
+      // (このPeerConnection自体、今は何も運んでいない。Phase6で削除予定)。
       pc.ontrack = (e) => {
         if (e.track.kind !== "video") return;
         setRemoteScreenStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
@@ -752,14 +741,6 @@ export default function AvatarSpace({
     [restartIce],
   );
 
-  const startCall = useCallback(
-    async (peerId: string) => {
-      const pc = getOrCreatePeerConnection(peerId);
-      await sendOffer(peerId, pc);
-    },
-    [getOrCreatePeerConnection, sendOffer],
-  );
-
   const closePeerConnection = useCallback((peerId: string) => {
     const pc = peerConnections.current.get(peerId);
     if (pc) {
@@ -783,43 +764,24 @@ export default function AvatarSpace({
 
 
   // ---- 画面共有 ----
-  // 開始:すでに接続中の相手へ映像トラックを追加して再送信を開始する
-  const attachScreenToExistingConnections = useCallback(async () => {
-    if (!screenStreamRef.current) return;
-    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
-      const senders = pc.getSenders();
-      screenStreamRef.current.getTracks().forEach((track) => {
-        const alreadyAttached = senders.some((s) => s.track === track);
-        if (!alreadyAttached)
-          pc.addTrack(track, screenStreamRef.current as MediaStream);
-      });
-      await sendOffer(peerId, pc);
-    }
-  }, [sendOffer]);
-
+  // LiveKit移行Phase4でLiveKit経由に切り替え。screenStreamRefは自分の
+  // プレビュー表示専用(LiveKitトラックをラップしたMediaStream)。
   const stopScreenShare = useCallback(async () => {
-    const stream = screenStreamRef.current;
-    if (!stream) return;
-    const trackIds = new Set(stream.getTracks().map((t) => t.id));
-    stream.getTracks().forEach((track) => track.stop());
     screenStreamRef.current = null;
     setScreenSharing(false);
-
     if (selfState.current) {
       selfState.current.sharingScreen = false;
       channelRef.current?.track(selfState.current);
     }
-
-    // 各接続から「画面共有の」映像トラックだけを外す(ビデオ通話中の映像は残す)
-    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
-      const targetSenders = pc
-        .getSenders()
-        .filter((s) => s.track && trackIds.has(s.track.id));
-      targetSenders.forEach((s) => pc.removeTrack(s));
-      if (targetSenders.length === 0) continue;
-      await sendOffer(peerId, pc);
+    const room = livekitRoomRef.current;
+    if (room) {
+      try {
+        await room.localParticipant.setScreenShareEnabled(false);
+      } catch {
+        // 既に切れている場合などは無視
+      }
     }
-  }, [sendOffer]);
+  }, []);
 
   const startScreenShare = useCallback(async () => {
     setShareError(null);
@@ -837,12 +799,19 @@ export default function AvatarSpace({
       return;
     }
 
+    const room = livekitRoomRef.current;
+    if (!room) {
+      setShareError(
+        "音声サーバーに接続していません。少し待ってから再度お試しください。",
+      );
+      return;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-      });
-      screenStreamRef.current = stream;
+      const publication = await room.localParticipant.setScreenShareEnabled(true);
+      const track = publication?.track;
+      if (!track) throw new Error("画面共有トラックを取得できませんでした");
+      screenStreamRef.current = new MediaStream([track.mediaStreamTrack]);
       setScreenSharing(true);
 
       if (selfState.current) {
@@ -851,15 +820,13 @@ export default function AvatarSpace({
       }
 
       // ブラウザ標準の「共有を停止」ボタンが押された場合にも終了処理を行う
-      stream.getVideoTracks()[0].addEventListener("ended", () => {
+      track.mediaStreamTrack.addEventListener("ended", () => {
         stopScreenShare();
       });
-
-      await attachScreenToExistingConnections();
     } catch {
       // 選択画面でキャンセルした場合などはここに来る。エラー扱いにはしない。
     }
-  }, [attachScreenToExistingConnections, stopScreenShare]);
+  }, [stopScreenShare]);
 
   const toggleScreenShare = useCallback(() => {
     if (screenSharing) {
@@ -1507,33 +1474,13 @@ export default function AvatarSpace({
             .get(peerId)
             ?.updatePosition(pos.currentX, pos.currentY);
 
-          // 近接ボイスチャットの接続開始・終了は、Reactのstate更新(最大0.2秒おき+
-          // エフェクトの実行タイミング)を待たず、毎フレームその場でチェックする。
-          // 開始を早めることで実際に近づいた時点までに接続を完了させやすくし、
-          // 終了も同じ頻度でチェックすることで「離れてもしばらく繋がったまま」
-          // に見える遅延をなくす(以前は開始だけここで即座に行い、終了はReactの
-          // eligiblePeerIdsエフェクト任せだったため、体感で数秒のズレが出ていた)。
-          const dist = Math.hypot(pos.targetX - self.x, pos.targetY - self.y);
-          const peerZone = playersRef.current[peerId]?.meetingZoneId;
-          const sameZone = !!(
-            self.meetingZoneId &&
-            peerZone &&
-            self.meetingZoneId === peerZone
-          );
-          const connected = peerConnections.current.has(peerId);
-          if (!connected) {
-            if (sameZone || dist <= PROXIMITY_RADIUS) {
-              if (selfId.current < peerId) {
-                startCall(peerId);
-              } else {
-                getOrCreatePeerConnection(peerId);
-              }
-            }
-          } else if (!sameZone && dist > PROXIMITY_RADIUS + 20) {
-            // eligiblePeerIdsと同じヒステリシス幅(+20)を使い、境界線上での
-            // 接続/切断のチラつきを防ぎつつ、ここでも即座に切断する。
-            closePeerConnection(peerId);
-          }
+          // 音声・カメラ・画面共有をすべてLiveKit移行した(Phase2〜4)ことで、
+          // 「近づいた瞬間にPeerConnectionを作る/離れたら切る」という
+          // 自前メッシュ用の即時接続処理はもう不要になった(LiveKitは
+          // Room参加時に確立済みの接続に対してsetSubscribedを呼ぶだけで
+          // 済み、ICE/DTLSのやり直しが発生しないため、この毎フレーム
+          // チェックほどの即時性を保ったまま軽量に行える。実際の購読
+          // 切り替えは下のeligibleKey依存effectで行っている)。
         });
 
         // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
@@ -1567,7 +1514,7 @@ export default function AvatarSpace({
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [joined, startCall, getOrCreatePeerConnection, closePeerConnection]);
+  }, [joined]);
 
   // ---- 位置情報をロジック用に低頻度でReactのstateへ同期する ----
   // 見た目の描画はDOM操作で毎フレーム行っているが、近接判定(eligiblePeerIds)
@@ -1663,15 +1610,13 @@ export default function AvatarSpace({
     }
   }, [micEnabled]);
 
-  // 退室時に画面共有のストリームを解放する(自前メッシュで送っているのは
-  // 画面共有のみ)。マイク・カメラはLiveKit側のroom.disconnect()が
-  // トラックの停止まで含めて担うため、ここではcameraStreamRefをnullに
-  // 戻すだけでよい(直接track.stop()を呼ぶとLiveKit側のpublication状態と
-  // 食い違うため呼ばない)。
+  // 退室時、プレビュー表示用のref参照をリセットする。実体(マイク・カメラ・
+  // 画面共有のトラック停止)はLiveKit側のroom.disconnect()が担うため、
+  // ここで直接track.stop()は呼ばない(LiveKit側のpublication状態と
+  // 食い違うため)。
   useEffect(() => {
     if (!joined) return;
     return () => {
-      screenStreamRef.current?.getTracks().forEach((track) => track.stop());
       screenStreamRef.current = null;
       cameraStreamRef.current = null;
     };
@@ -1725,11 +1670,10 @@ export default function AvatarSpace({
     eligiblePeerIdsRef.current = eligiblePeerIds;
   }, [eligiblePeerIds]);
 
-  // ---- LiveKit(音声・カメラ):近接方式に合わせて購読を切り替える ----
+  // ---- LiveKit(音声・カメラ・画面共有):近接方式に合わせて購読を切り替える ----
   // 接続そのものはLiveKitのRoom(SFU)へ1本だけなので、ここでは相手ごとの
   // トラック購読(setSubscribed)をオン/オフするだけで済む
   // (以前のPeerConnectionメッシュのような接続の作成/破棄は不要)。
-  // 画面共有はPhase4まで対象外(自前メッシュのまま)。
   useEffect(() => {
     if (!joined) return;
     const room = livekitRoomRef.current;
@@ -1743,7 +1687,11 @@ export default function AvatarSpace({
         }
       });
       participant.videoTrackPublications.forEach((pub) => {
-        if (pub.source !== Track.Source.Camera) return;
+        if (
+          pub.source !== Track.Source.Camera &&
+          pub.source !== Track.Source.ScreenShare
+        )
+          return;
         if (pub.isSubscribed !== shouldSubscribe) {
           pub.setSubscribed(shouldSubscribe);
         }
@@ -1752,28 +1700,9 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey, joined]);
 
-  // ---- 音声通話:対象の増減に合わせて接続を作成/破棄 ----
-  useEffect(() => {
-    if (!joined) return;
-    const eligibleSet = new Set(eligiblePeerIds);
-
-    eligiblePeerIds.forEach((peerId) => {
-      if (peerConnections.current.has(peerId)) return;
-      // IDの文字列比較で片方だけがofferを送るようにし、二重接続を防ぐ
-      if (selfId.current < peerId) {
-        startCall(peerId);
-      } else {
-        getOrCreatePeerConnection(peerId);
-      }
-    });
-
-    Array.from(peerConnections.current.keys()).forEach((peerId) => {
-      if (!eligibleSet.has(peerId)) {
-        closePeerConnection(peerId);
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligibleKey, joined]);
+  // 自前メッシュ用の「対象の増減に合わせて接続を作成/破棄」処理は、音声・
+  // カメラ・画面共有が全てLiveKit移行(Phase2〜4)したことで不要になった
+  // (関数定義自体の削除はPhase6でまとめて行う)。
 
   // 退室時に画面共有メッシュの接続をすべて閉じる(音声・カメラはLiveKit側の
   // room.disconnect()が担当するが、念のためremoteStreams/remoteCallStreams
