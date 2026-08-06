@@ -29,6 +29,7 @@ export default function AdminDashboard({
   inviterName,
   templates,
   showMasterLink,
+  userEmail,
 }: {
   rooms: Room[];
   plan: PlanId;
@@ -38,6 +39,7 @@ export default function AdminDashboard({
   inviterName: string;
   templates: TemplateOption[];
   showMasterLink: boolean;
+  userEmail: string;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -81,13 +83,16 @@ export default function AdminDashboard({
           sidebarOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="Globy" className="h-4 w-4 object-contain" />
+        <div className="flex items-start justify-between gap-2 border-b border-slate-800 px-4 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/logo.png" alt="Globy" className="h-4 w-4 object-contain" />
+              </div>
+              <span className="truncate text-sm font-bold text-white">Globy</span>
             </div>
-            <span className="truncate text-sm font-bold text-white">Globy</span>
+            <p className="mt-1 truncate pl-8 text-xs text-slate-400">{userEmail}</p>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}

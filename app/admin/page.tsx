@@ -60,6 +60,7 @@ export default async function AdminPage() {
       inviterName={account?.invite_inviter_name ?? ""}
       templates={templates}
       showMasterLink={state.isMaster}
+      userEmail={user.email ?? ""}
     />
   );
 }
