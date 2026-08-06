@@ -57,7 +57,8 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
-  if (!apiKey || !apiSecret) {
+  const url = process.env.LIVEKIT_URL;
+  if (!apiKey || !apiSecret || !url) {
     return NextResponse.json(
       { error: "LiveKitの設定が不足しています" },
       { status: 500 },
@@ -76,5 +77,8 @@ export async function POST(request: Request) {
   });
 
   const token = await at.toJwt();
-  return NextResponse.json({ token });
+  // LIVEKIT_URLは接続先エンドポイントであり秘密情報ではないため、
+  // クライアントがroom.connect()に使えるようここで一緒に返す
+  // (NEXT_PUBLIC_環境変数を別途増やさずに済む)。
+  return NextResponse.json({ token, url });
 }

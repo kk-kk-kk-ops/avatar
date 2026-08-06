@@ -16,6 +16,7 @@ type Props = {
   isMaster: boolean;
   guestInviteToken?: string | null;
   avatarSizePx?: number;
+  viewOnlyInviteToken?: string;
 };
 
 export default function AvatarSpaceLoader({
@@ -26,6 +27,7 @@ export default function AvatarSpaceLoader({
   isMaster,
   guestInviteToken,
   avatarSizePx,
+  viewOnlyInviteToken,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -44,6 +46,7 @@ export default function AvatarSpaceLoader({
         isMaster={isMaster}
         guestInviteToken={guestInviteToken}
         avatarSizePx={avatarSizePx}
+        viewOnlyInviteToken={viewOnlyInviteToken}
       />
     </div>
   );

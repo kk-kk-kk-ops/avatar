@@ -79,6 +79,11 @@ export default async function RoomsPage({
           // ゲスト用ログインではなく管理者用ログイン(TOPページ)に戻す。
           guestInviteToken={null}
           avatarSizePx={appSettings?.avatar_size_px ?? undefined}
+          // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
+          // であることをLiveKitのToken発行APIに伝えるためのトークン。
+          // profiles.account_idを書き換えていないため、通常のRLS経由では
+          // ルームアクセスを証明できず、これが無いと音声/映像に参加できない。
+          viewOnlyInviteToken={viewInviteToken}
         />
       );
     }

@@ -3,6 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { RealtimeChannel } from "@supabase/supabase-js";
+import {
+  Room as LiveKitRoom,
+  RoomEvent,
+  Track,
+  type RemoteParticipant,
+  type RemoteTrack,
+  type RemoteTrackPublication,
+} from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
 import {
   PlayerState,
@@ -68,6 +76,10 @@ type Props = {
   // アバターの表示サイズ(px、正方形)。マスター画面で設定できる
   // app_settings.avatar_size_pxの値。未指定時はAvatar側のデフォルトを使う。
   avatarSizePx?: number;
+  // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の場合
+  // だけ渡される招待トークン。LiveKitのToken発行APIへ、通常のRLSでは
+  // 証明できないルームアクセス権を伝えるために使う。
+  viewOnlyInviteToken?: string;
 };
 
 export default function AvatarSpace({
@@ -78,6 +90,7 @@ export default function AvatarSpace({
   isMaster,
   guestInviteToken,
   avatarSizePx,
+  viewOnlyInviteToken,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -110,6 +123,9 @@ export default function AvatarSpace({
   const [settingsShowMessage, setSettingsShowMessage] = useState(false);
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const playersRef = useRef<Record<string, PlayerState>>({});
+  // LiveKitのイベントハンドラ(登録時に一度だけクロージャが作られる)から
+  // 常に最新のeligiblePeerIdsを読めるようにするための参照。
+  const eligiblePeerIdsRef = useRef<string[]>([]);
   const remoteScreenStreamsRef = useRef<Record<string, MediaStream>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
@@ -149,7 +165,9 @@ export default function AvatarSpace({
   const [mapSize, setMapSize] = useState({ width: MAP_WIDTH, height: MAP_HEIGHT });
   const mapSizeRef = useRef({ width: MAP_WIDTH, height: MAP_HEIGHT });
 
-  const localStreamRef = useRef<MediaStream | null>(null);
+  // 音声(マイク)はLiveKit移行Phase2でLiveKit経由に切り替えたため、
+  // 自前PeerConnectionメッシュ用のlocalStreamRefは廃止した。
+  const livekitRoomRef = useRef<LiveKitRoom | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   // 相手から届く映像トラックが「画面共有」か「ビデオ通話」かを見分けるための対応表。
@@ -289,6 +307,82 @@ export default function AvatarSpace({
       }
     })();
   }, [joined]);
+
+  // ---- LiveKit接続(音声。Phase2)----
+  // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
+  // 維持するため autoSubscribe: false で接続し、実際の購読は下の
+  // 「eligiblePeerIdsに応じて購読を切り替える」effectとTrackPublished
+  // イベントで個別に制御する。
+  useEffect(() => {
+    if (!joined) return;
+    let cancelled = false;
+    const room = new LiveKitRoom({ adaptiveStream: true, dynacast: true });
+    livekitRoomRef.current = room;
+
+    const applySubscription = (
+      publication: RemoteTrackPublication,
+      participant: RemoteParticipant,
+    ) => {
+      if (publication.kind !== Track.Kind.Audio) return;
+      publication.setSubscribed(
+        eligiblePeerIdsRef.current.includes(participant.identity),
+      );
+    };
+
+    room
+      .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, participant) => {
+        if (track.kind !== Track.Kind.Audio) return;
+        const stream = new MediaStream([track.mediaStreamTrack]);
+        setRemoteStreams((prev) => ({ ...prev, [participant.identity]: stream }));
+      })
+      .on(RoomEvent.TrackUnsubscribed, (_track, _pub, participant) => {
+        setRemoteStreams((prev) => {
+          if (!(participant.identity in prev)) return prev;
+          const next = { ...prev };
+          delete next[participant.identity];
+          return next;
+        });
+      })
+      .on(RoomEvent.TrackPublished, applySubscription)
+      .on(RoomEvent.ParticipantDisconnected, (participant) => {
+        setRemoteStreams((prev) => {
+          if (!(participant.identity in prev)) return prev;
+          const next = { ...prev };
+          delete next[participant.identity];
+          return next;
+        });
+      });
+
+    (async () => {
+      try {
+        const res = await fetch("/api/livekit-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            roomId,
+            identity: selfId.current,
+            inviteToken: viewOnlyInviteToken,
+          }),
+        });
+        if (!res.ok) throw new Error("token取得失敗");
+        const { token, url } = await res.json();
+        if (cancelled) return;
+        await room.connect(url, token, { autoSubscribe: false });
+      } catch {
+        if (!cancelled) {
+          setMicError(
+            "音声サーバーへの接続に失敗しました。しばらくしてから再度お試しください。",
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      room.disconnect();
+      if (livekitRoomRef.current === room) livekitRoomRef.current = null;
+    };
+  }, [joined, roomId, viewOnlyInviteToken]);
 
   // ---- ルーム選択:選んだルームを確定してアバター選択画面へ進む ----
   const handleSelectRoom = useCallback(() => {
@@ -532,7 +626,6 @@ export default function AvatarSpace({
           .map((t) => t.sender.track!.id),
       );
       const myStreams = [
-        localStreamRef.current,
         screenStreamRef.current,
         cameraStreamRef.current,
       ].filter((s): s is MediaStream => !!s);
@@ -603,14 +696,8 @@ export default function AvatarSpace({
         ],
       });
 
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((track) => {
-          pc.addTrack(track, localStreamRef.current as MediaStream);
-        });
-      } else {
-        // まだマイクを許可していない場合でも、相手の声だけは聞けるようにしておく
-        pc.addTransceiver("audio", { direction: "recvonly" });
-      }
+      // 音声(マイク)はLiveKit移行Phase2でこのメッシュから外れ、LiveKit経由に
+      // なったため、ここでの音声トラックの追加・recvonly transceiverは不要。
 
       // すでに画面共有中の場合は、新しく繋がる相手にもその映像を含める
       if (screenStreamRef.current) {
@@ -640,6 +727,8 @@ export default function AvatarSpace({
         }
       };
 
+      // 音声はLiveKit移行Phase2でこのメッシュから外れたため、この
+      // PeerConnectionに届くのは常に映像(画面共有/ビデオ通話)のみになった。
       pc.ontrack = (e) => {
         if (e.track.kind === "video") {
           const purposes = peerVideoPurposes.current.get(peerId) || {};
@@ -674,8 +763,6 @@ export default function AvatarSpace({
               return next;
             });
           };
-        } else {
-          setRemoteStreams((prev) => ({ ...prev, [peerId]: e.streams[0] }));
         }
       };
 
@@ -731,19 +818,6 @@ export default function AvatarSpace({
     peerVideoPurposes.current.delete(peerId);
   }, []);
 
-  // マイクを後から許可した場合に、既に接続済みの相手へ音声トラックを追加して再送信を開始する
-  const attachMicToExistingConnections = useCallback(async () => {
-    if (!localStreamRef.current) return;
-    for (const [peerId, pc] of Array.from(peerConnections.current.entries())) {
-      const senders = pc.getSenders();
-      localStreamRef.current.getTracks().forEach((track) => {
-        const alreadyAttached = senders.some((s) => s.track === track);
-        if (!alreadyAttached)
-          pc.addTrack(track, localStreamRef.current as MediaStream);
-      });
-      await sendOffer(peerId, pc);
-    }
-  }, [sendOffer]);
 
   // ---- 画面共有 ----
   // 開始:すでに接続中の相手へ映像トラックを追加して再送信を開始する
@@ -1634,48 +1708,38 @@ export default function AvatarSpace({
     return () => ro.disconnect();
   }, [joined]);
 
-  // ---- マイクのON/OFF切り替え ----
-  // 初回クリック時にブラウザへマイク使用の許可をリクエストする。
-  // 実際の音声送受信(WebRTC接続)はミーティングエリアの出入りに応じて
-  // 別のeffectが自動的に行う。ここではマイクの取得とミュート切り替えのみ。
+  // ---- マイクのON/OFF切り替え(LiveKit移行Phase2) ----
+  // マイクの取得・送信はlivekitRoomRef(LiveKit)側が担う。ここでは
+  // setMicrophoneEnabledの呼び出しとUI状態の同期のみ行う。
   const toggleMic = useCallback(async () => {
     setMicError(null);
+    const room = livekitRoomRef.current;
+    if (!room) {
+      setMicError(
+        "音声サーバーに接続していません。少し待ってから再度お試しください。",
+      );
+      return;
+    }
     try {
-      if (!localStreamRef.current) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
-        localStreamRef.current = stream;
-        setMicEnabled(true);
-        if (selfState.current) {
-          selfState.current.micOn = true;
-          channelRef.current?.track(selfState.current);
-        }
-        await attachMicToExistingConnections();
-        return;
-      }
       const next = !micEnabled;
-      localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = next;
-      });
+      await room.localParticipant.setMicrophoneEnabled(next);
       setMicEnabled(next);
       if (selfState.current) {
         selfState.current.micOn = next;
         channelRef.current?.track(selfState.current);
       }
-    } catch (err) {
+    } catch {
       setMicError(
         "マイクを使用できませんでした。ブラウザのアドレスバー付近のマイク許可設定を確認してください。",
       );
     }
-  }, [micEnabled, attachMicToExistingConnections]);
+  }, [micEnabled]);
 
-  // 退室時にマイクを解放(録音状態のまま残らないようにする)
+  // 退室時に画面共有・ビデオ通話のストリームを解放する
+  // (マイクはLiveKit移行Phase2以降、livekitRoomRef側のdisconnect()が担う)
   useEffect(() => {
     if (!joined) return;
     return () => {
-      localStreamRef.current?.getTracks().forEach((track) => track.stop());
-      localStreamRef.current = null;
       screenStreamRef.current?.getTracks().forEach((track) => track.stop());
       screenStreamRef.current = null;
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -1726,6 +1790,30 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionSignature]);
   const eligibleKey = eligiblePeerIds.join(",");
+
+  useEffect(() => {
+    eligiblePeerIdsRef.current = eligiblePeerIds;
+  }, [eligiblePeerIds]);
+
+  // ---- LiveKit(音声):近接方式に合わせて購読を切り替える ----
+  // 接続そのものはLiveKitのRoom(SFU)へ1本だけなので、ここでは相手ごとの
+  // トラック購読(setSubscribed)をオン/オフするだけで済む
+  // (以前のPeerConnectionメッシュのような接続の作成/破棄は不要)。
+  useEffect(() => {
+    if (!joined) return;
+    const room = livekitRoomRef.current;
+    if (!room) return;
+    const eligibleSet = new Set(eligiblePeerIds);
+    room.remoteParticipants.forEach((participant) => {
+      const shouldSubscribe = eligibleSet.has(participant.identity);
+      participant.audioTrackPublications.forEach((pub) => {
+        if (pub.isSubscribed !== shouldSubscribe) {
+          pub.setSubscribed(shouldSubscribe);
+        }
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleKey, joined]);
 
   // ---- 音声通話:対象の増減に合わせて接続を作成/破棄 ----
   useEffect(() => {
