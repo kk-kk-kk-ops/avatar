@@ -100,10 +100,22 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
     };
   }, [rooms]);
 
+  // 負荷スコア: ビデオ通話は1人あたり負荷1、画面共有(発信・視聴双方)は
+  // 帯域・エンコード負荷が大きいためそれぞれ1人あたり負荷10として重み付け。
+  const loadScore = stats.video * 1 + stats.screen * 10 + stats.watching * 10;
+
   return (
     <div className="rounded-xl border border-slate-200 p-6">
-      <p className="text-xs font-semibold text-slate-500">オンライン人数</p>
-      <p className="mt-1 text-3xl font-bold text-slate-800">{stats.total}人</p>
+      <div className="flex items-start gap-8">
+        <div>
+          <p className="text-xs font-semibold text-slate-500">オンライン人数</p>
+          <p className="mt-1 text-3xl font-bold text-slate-800">{stats.total}人</p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-slate-500">負荷スコア</p>
+          <p className="mt-1 text-3xl font-bold text-slate-800">{loadScore}</p>
+        </div>
+      </div>
       <div className="mt-4 grid grid-cols-5 gap-3 border-t border-slate-100 pt-4 text-center">
         <div>
           <p className="text-lg font-bold text-slate-800">{stats.mic}人</p>
