@@ -1368,7 +1368,14 @@ export default function AvatarSpace({
     if (!joined) return;
     const interval = setInterval(() => {
       if (!isWatchingScreenRef.current) return;
-      supabase.rpc("increment_screen_watch_seconds", { seconds: 30 });
+      supabase.rpc("increment_screen_watch_seconds", { seconds: 30 }).then(
+        ({ error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error("画面共有視聴累積時間の記録に失敗しました", error);
+          }
+        },
+      );
     }, 30000);
     return () => clearInterval(interval);
   }, [joined, supabase]);

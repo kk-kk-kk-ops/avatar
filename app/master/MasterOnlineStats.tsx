@@ -36,11 +36,15 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
     const supabase = createClient();
     const monthKey = new Date().toISOString().slice(0, 7);
     const fetchWatchSeconds = async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("screen_watch_stats")
         .select("watch_seconds")
         .eq("month", monthKey)
         .maybeSingle();
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("画面共有視聴累積時間の取得に失敗しました", error);
+      }
       setWatchSeconds(data?.watch_seconds ?? 0);
     };
     fetchWatchSeconds();
