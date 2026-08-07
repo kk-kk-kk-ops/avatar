@@ -30,13 +30,13 @@ export default function AvatarSettingsPanel({
       return;
     }
     startTransition(async () => {
-      try {
-        await updateAvatarSize(sizePx);
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "保存に失敗しました");
+      const result = await updateAvatarSize(sizePx);
+      if (!result.ok) {
+        setError(result.error);
+        return;
       }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     });
   };
 

@@ -39,7 +39,11 @@ export default function TemplateManager({
     startTransition(async () => {
       try {
         const backgroundImageUrl = await uploadTemplateImageClient(file);
-        await createTemplate(name.trim(), backgroundImageUrl);
+        const result = await createTemplate(name.trim(), backgroundImageUrl);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
         setName("");
         setFile(null);
         setCreating(false);
@@ -55,14 +59,13 @@ export default function TemplateManager({
     setError(null);
     setPendingAction({ type: "delete", id });
     startTransition(async () => {
-      try {
-        await deleteTemplate(id);
+      const result = await deleteTemplate(id);
+      if (!result.ok) {
+        setError(result.error);
+      } else {
         setDeleteTarget(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "削除に失敗しました");
-      } finally {
-        setPendingAction(null);
       }
+      setPendingAction(null);
     });
   };
 

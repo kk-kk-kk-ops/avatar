@@ -259,16 +259,18 @@ export default function TemplateEditor({
     setError(null);
     setSaving(true);
     try {
-      await updateTemplateLayout(
+      const result = await updateTemplateLayout(
         template.id,
         obstacles,
         meetingZones,
         mapWidth,
         mapHeight,
       );
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
       onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "保存に失敗しました");
     } finally {
       setSaving(false);
     }
@@ -283,11 +285,13 @@ export default function TemplateEditor({
     }
     setRenaming(true);
     try {
-      await renameTemplate(template.id, trimmed);
+      const result = await renameTemplate(template.id, trimmed);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
       setName(trimmed);
       setEditingName(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "テンプレート名の変更に失敗しました");
     } finally {
       setRenaming(false);
     }
@@ -300,7 +304,11 @@ export default function TemplateEditor({
     setUploading(true);
     try {
       const url = await uploadTemplateImageClient(file);
-      await replaceTemplateImage(template.id, url);
+      const result = await replaceTemplateImage(template.id, url);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
       setBackgroundImageUrl(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "画像の変更に失敗しました");
