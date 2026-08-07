@@ -621,7 +621,19 @@ export default function AvatarSpace({
       return;
     }
     try {
-      const publication = await room.localParticipant.setCameraEnabled(true);
+      // ビデオ通話のプレビューは横幅128px程度の小窓でしか表示しないため、
+      // 発信側のキャプチャ・エンコード自体を低解像度・低ビットレートに
+      // 抑え、通信量とCPU負荷を削減する(画面共有は文字が読めることが
+      // 重要なため対象外。こちらはsetScreenShareEnabled側で従来通り)。
+      // 低解像度1層のみで十分なためsimulcastも無効化する。
+      const publication = await room.localParticipant.setCameraEnabled(
+        true,
+        { resolution: { width: 160, height: 120, frameRate: 15 } },
+        {
+          videoEncoding: { maxBitrate: 150_000, maxFramerate: 15 },
+          simulcast: false,
+        },
+      );
       const track = publication?.track;
       if (!track) throw new Error("カメラトラックを取得できませんでした");
       cameraStreamRef.current = new MediaStream([track.mediaStreamTrack]);
