@@ -14,11 +14,39 @@ type Stats = {
 
 const EMPTY: Stats = { total: 0, mic: 0, video: 0, screen: 0, watching: 0 };
 
+// 秒数を「X時間Y分」形式に整形する(1時間未満は「Y分」のみ)。
+function formatWatchDuration(totalSeconds: number): string {
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
+}
+
 // マスター向けのオンライン人数表示。ルームごとの内訳は不要とのことなので
 // 合計のみ表示し、代わりに通信量把握のためマイク・ビデオ通話・画面共有を
 // それぞれ何人が使っているかを表示する。
 export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
   const [stats, setStats] = useState<Stats>(EMPTY);
+  const [watchSeconds, setWatchSeconds] = useState(0);
+
+  // 画面共有の視聴累積時間(今月分)。screen_watch_statsはmonth('YYYY-MM')
+  // ごとに1行しか持たないため、翌月になれば該当行が無くなり自動的に
+  // 0分から始まる(=毎月1日リセット)。
+  useEffect(() => {
+    const supabase = createClient();
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const fetchWatchSeconds = async () => {
+      const { data } = await supabase
+        .from("screen_watch_stats")
+        .select("watch_seconds")
+        .eq("month", monthKey)
+        .maybeSingle();
+      setWatchSeconds(data?.watch_seconds ?? 0);
+    };
+    fetchWatchSeconds();
+    const interval = setInterval(fetchWatchSeconds, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (rooms.length === 0) {
@@ -72,7 +100,7 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
     <div className="rounded-xl border border-slate-200 p-6">
       <p className="text-xs font-semibold text-slate-500">オンライン人数</p>
       <p className="mt-1 text-3xl font-bold text-slate-800">{stats.total}人</p>
-      <div className="mt-4 grid grid-cols-4 gap-3 border-t border-slate-100 pt-4 text-center">
+      <div className="mt-4 grid grid-cols-5 gap-3 border-t border-slate-100 pt-4 text-center">
         <div>
           <p className="text-lg font-bold text-slate-800">{stats.mic}人</p>
           <p className="text-[11px] text-slate-500">音声通話中</p>
@@ -88,6 +116,12 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
         <div>
           <p className="text-lg font-bold text-slate-800">{stats.watching}人</p>
           <p className="text-[11px] text-slate-500">画面共有視聴中</p>
+        </div>
+        <div>
+          <p className="text-lg font-bold text-slate-800">
+            {formatWatchDuration(watchSeconds)}
+          </p>
+          <p className="text-[11px] text-slate-500">画面共有視聴累積時間(今月)</p>
         </div>
       </div>
     </div>

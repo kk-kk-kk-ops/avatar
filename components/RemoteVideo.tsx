@@ -23,6 +23,8 @@ export default function RemoteVideo({ stream, className, onClick }: Props) {
       autoPlay
       playsInline
       muted
+      disablePictureInPicture
+      disableRemotePlayback
       onClick={onClick}
       className={className}
     />

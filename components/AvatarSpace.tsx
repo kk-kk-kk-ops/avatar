@@ -1342,6 +1342,7 @@ export default function AvatarSpace({
   // ---- 誰かの画面共有を視聴中かどうかをpresenceに反映する ----
   // マスター画面の「画面共有視聴中」人数集計のために使う。実際に映像を
   // 受信できているか(remoteScreenStreamsに実体があるか)まで見て判定する。
+  const isWatchingScreenRef = useRef(false);
   useEffect(() => {
     if (!joined) return;
     const eligibleSet = new Set(eligiblePeerIds);
@@ -1352,11 +1353,25 @@ export default function AvatarSpace({
         eligibleSet.has(p.id) &&
         !!remoteScreenStreams[p.id],
     );
+    isWatchingScreenRef.current = isWatching;
     if (selfState.current && selfState.current.watchingScreen !== isWatching) {
       selfState.current.watchingScreen = isWatching;
       channelRef.current?.track(selfState.current);
     }
   }, [players, eligiblePeerIds, remoteScreenStreams, joined]);
+
+  // ---- 画面共有の視聴累積時間をDBへ記録する(マスター画面の集計用) ----
+  // 30秒おきに、その時点で視聴中であれば30秒分を加算する(視聴者ごとに
+  // クライアントがそれぞれ加算するため、5人が同時に見ていれば5人分×時間が
+  // 積み上がる)。短時間の視聴の端数(30秒未満)は切り捨てられる。
+  useEffect(() => {
+    if (!joined) return;
+    const interval = setInterval(() => {
+      if (!isWatchingScreenRef.current) return;
+      supabase.rpc("increment_screen_watch_seconds", { seconds: 30 });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [joined, supabase]);
 
   // 退室時、位置補間用の記録とAvatar DOM参照をクリアする。音声・映像・
   // 画面共有はLiveKit側のroom.disconnect()が担当するが、念のため

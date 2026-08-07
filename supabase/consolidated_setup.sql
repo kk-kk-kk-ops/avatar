@@ -391,6 +391,62 @@ create policy "app_settings: update master"
 
 
 -- ------------------------------------------------------------
+-- 9d. screen_watch_stats: 画面共有の「視聴累積時間」をマスター画面に
+--     表示するための集計テーブル。月ごとに1行(id='YYYY-MM')持ち、
+--     現在の月の行だけを参照することで、翌月になれば自動的に0から
+--     始まる(=毎月1日リセット)。視聴者ごとにクライアントが30秒おきに
+--     increment_screen_watch_seconds()を呼び、視聴人数分だけ加算される
+--     (1人が30分視聴×5人なら合計2時間30分になる)。
+-- ------------------------------------------------------------
+create table if not exists public.screen_watch_stats (
+  month text primary key,
+  watch_seconds bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.screen_watch_stats enable row level security;
+
+drop policy if exists "screen_watch_stats: select authenticated" on public.screen_watch_stats;
+create policy "screen_watch_stats: select authenticated"
+  on public.screen_watch_stats for select
+  using (auth.uid() is not null);
+
+-- 直接のINSERT/UPDATEポリシーは用意しない(下のSECURITY DEFINER関数
+-- 経由でのみ更新できるようにし、クライアントから任意の値を書き込ませない)。
+
+drop function if exists public.increment_screen_watch_seconds(integer);
+
+create function public.increment_screen_watch_seconds(seconds integer)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_seconds integer;
+begin
+  if auth.uid() is null then
+    return;
+  end if;
+  -- 1回の加算は60秒までに制限し、クライアントからの誤送信・不正な
+  -- 大量加算を防ぐ(想定は30秒おきの心拍送信)。
+  v_seconds := greatest(0, least(seconds, 60));
+  if v_seconds = 0 then
+    return;
+  end if;
+
+  insert into public.screen_watch_stats (month, watch_seconds)
+  values (to_char(now(), 'YYYY-MM'), v_seconds)
+  on conflict (month) do update
+    set watch_seconds = screen_watch_stats.watch_seconds + v_seconds,
+        updated_at = now();
+end;
+$$;
+
+grant execute on function public.increment_screen_watch_seconds(integer) to authenticated;
+
+
+-- ------------------------------------------------------------
 -- 10. マスター権限アカウントの契約プランを'master'に揃える
 --     (プロプランではなく専用プラン。ルーム数10・人数上限30名、
 --     課金対象外。/plan の選択肢には出さない)
