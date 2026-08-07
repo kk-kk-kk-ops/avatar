@@ -15,6 +15,7 @@ export type PlayerState = {
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
   inCall?: boolean; // ビデオ通話中かどうか(相手にも表示する)
+  watchingScreen?: boolean; // 誰かの画面共有を視聴中かどうか(マスター画面の集計用)
   avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)
   status?: PresenceStatus; // 在席ステータス(未設定時はavailable扱い)
 };

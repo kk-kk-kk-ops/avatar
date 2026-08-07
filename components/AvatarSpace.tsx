@@ -1339,6 +1339,25 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey, joined]);
 
+  // ---- 誰かの画面共有を視聴中かどうかをpresenceに反映する ----
+  // マスター画面の「画面共有視聴中」人数集計のために使う。実際に映像を
+  // 受信できているか(remoteScreenStreamsに実体があるか)まで見て判定する。
+  useEffect(() => {
+    if (!joined) return;
+    const eligibleSet = new Set(eligiblePeerIds);
+    const isWatching = Object.values(players).some(
+      (p) =>
+        p.id !== selfId.current &&
+        p.sharingScreen &&
+        eligibleSet.has(p.id) &&
+        !!remoteScreenStreams[p.id],
+    );
+    if (selfState.current && selfState.current.watchingScreen !== isWatching) {
+      selfState.current.watchingScreen = isWatching;
+      channelRef.current?.track(selfState.current);
+    }
+  }, [players, eligiblePeerIds, remoteScreenStreams, joined]);
+
   // 退室時、位置補間用の記録とAvatar DOM参照をクリアする。音声・映像・
   // 画面共有はLiveKit側のroom.disconnect()が担当するが、念のため
   // remoteStreams/remoteCallStreams/remoteScreenStreamsもここで
@@ -1731,13 +1750,10 @@ export default function AvatarSpace({
             </button>
           ))}
 
+          {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
+              全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
           {visibleVideoCalls.map((p) => (
-            <button
-              key={`call-${p.id}`}
-              onClick={() => setExpandedMedia({ peerId: p.id, kind: "camera" })}
-              className="relative"
-              aria-label={`${p.name}とのビデオ通話を全画面表示`}
-            >
+            <div key={`call-${p.id}`} className="relative">
               <RemoteVideo
                 stream={remoteCallStreams[p.id]}
                 className="h-20 w-32 rounded-md border border-slate-500 bg-black object-cover"
@@ -1745,7 +1761,7 @@ export default function AvatarSpace({
               <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
                 {p.name}
               </span>
-            </button>
+            </div>
           ))}
         </div>
       )}
