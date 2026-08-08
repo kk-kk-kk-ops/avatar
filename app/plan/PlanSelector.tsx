@@ -6,7 +6,7 @@ import { PLANS, type PlanId } from "@/lib/types";
 import { startFreeTrial } from "./actions";
 import LogoutButton from "@/components/auth/LogoutButton";
 
-const PLAN_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
+const PLAN_ORDER: PlanId[] = ["free", "light", "standard", "pro", "business"];
 
 export default function PlanSelector() {
   const [selected, setSelected] = useState<PlanId>("free");
@@ -19,7 +19,11 @@ export default function PlanSelector() {
     if (selected === "free") {
       startTransition(async () => {
         try {
-          await startFreeTrial();
+          const result = await startFreeTrial();
+          if (!result.ok) {
+            setError(result.error);
+            return;
+          }
           router.push("/admin");
         } catch {
           setError("開始に失敗しました。時間をおいて再度お試しください。");
