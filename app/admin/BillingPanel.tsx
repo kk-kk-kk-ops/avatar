@@ -13,6 +13,12 @@ const DEBUG_SWITCHABLE_PLAN_ORDER: PlanId[] = [
   "business",
 ];
 
+// 「1人あたり1日◯分」/「無制限」の表示テキストをPLANSの値から生成する
+// (プラン名・価格・機能項目の重複記述を避け、PLANSを唯一の情報源にする)。
+function formatDailyLimit(minutes: number | null): string {
+  return minutes === null ? "無制限" : `1人あたり1日${minutes}分`;
+}
+
 export default function BillingPanel({
   plan,
   trialEndsAt,
@@ -25,24 +31,25 @@ export default function BillingPanel({
   const [showStripeNotice, setShowStripeNotice] = useState(false);
   const planInfo = PLANS[plan];
 
-  const [debugSelectedPlan, setDebugSelectedPlan] = useState<PlanId>(
-    DEBUG_SWITCHABLE_PLAN_ORDER.includes(plan) ? plan : "free",
+  const [debugPendingPlan, setDebugPendingPlan] = useState<PlanId | null>(
+    null,
   );
-  const [debugPending, startDebugTransition] = useTransition();
+  const [, startDebugTransition] = useTransition();
   const [debugError, setDebugError] = useState<string | null>(null);
-  const [debugSaved, setDebugSaved] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const handleDebugSave = () => {
+  const handleDebugSwitch = (targetPlan: PlanId) => {
     setDebugError(null);
-    setDebugSaved(false);
+    setDebugPendingPlan(targetPlan);
     startDebugTransition(async () => {
-      const result = await debugSetPlan(debugSelectedPlan);
+      const result = await debugSetPlan(targetPlan);
+      setDebugPendingPlan(null);
       if (!result.ok) {
         setDebugError(result.error);
         return;
       }
-      setDebugSaved(true);
-      setTimeout(() => setDebugSaved(false), 2000);
+      setToastMessage(`プランを「${PLANS[targetPlan].label}」に切り替えました`);
+      setTimeout(() => setToastMessage(null), 3000);
     });
   };
 
@@ -59,16 +66,14 @@ export default function BillingPanel({
             までです。
           </p>
         )}
-        {plan !== "master" && (
-          <div className="mt-3 flex gap-2">
-            <Link
-              href="/plan"
-              className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-            >
-              プラン変更
-            </Link>
-          </div>
-        )}
+        <div className="mt-3 flex gap-2">
+          <Link
+            href="/plan"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            プラン変更
+          </Link>
+        </div>
       </div>
 
       <div>
@@ -92,39 +97,61 @@ export default function BillingPanel({
             🛠️ デバッグ用プラン切り替え(このアカウントのみ表示)
           </p>
           <p className="mb-3 text-[11px] text-amber-700">
-            選択して保存すると、このアカウントの契約プランがその場で
-            切り替わります(人数上限・画面共有/ビデオ通話の日次制限に
-            即反映されます)。動作確認用の機能です。
+            ボタンを押すと即座にこのアカウントの契約プランが切り替わります
+            (人数上限・画面共有/ビデオ通話の日次制限に即反映され、この
+            アカウントのルームに入室中の全員が強制的に退出します)。
+            動作確認用の機能です。
           </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={debugSelectedPlan}
-              onChange={(e) =>
-                setDebugSelectedPlan(e.target.value as PlanId)
-              }
-              disabled={debugPending}
-              className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
-            >
-              {DEBUG_SWITCHABLE_PLAN_ORDER.map((id) => (
-                <option key={id} value={id}>
-                  {PLANS[id].label}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={handleDebugSave}
-              disabled={debugPending}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-60"
-            >
-              {debugPending
-                ? "切り替え中..."
-                : debugSaved
-                  ? "切り替えました"
-                  : "このプランに切り替える"}
-            </button>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {DEBUG_SWITCHABLE_PLAN_ORDER.map((id) => {
+              const info = PLANS[id];
+              const isCurrent = plan === id;
+              return (
+                <div
+                  key={id}
+                  className={`flex flex-col rounded-xl border-2 bg-white p-4 ${
+                    isCurrent ? "border-emerald-500" : "border-slate-200"
+                  }`}
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-bold text-slate-800">
+                      {info.label}
+                    </p>
+                    {isCurrent && (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        現在のプラン
+                      </span>
+                    )}
+                  </div>
+                  <p className="mb-3 text-lg font-bold text-slate-900">
+                    {info.priceLabel}
+                  </p>
+                  <ul className="mb-4 flex-1 space-y-1 text-[11px] text-slate-600">
+                    <li>同時入室: {info.maxPeoplePerRoom}人</li>
+                    <li>画面共有: {formatDailyLimit(info.screenShareDailyMinutes)}</li>
+                    <li>ビデオ通話: {formatDailyLimit(info.videoCallDailyMinutes)}</li>
+                    <li>音声通話: 無制限</li>
+                    <li>チャット: 無制限</li>
+                  </ul>
+                  <button
+                    onClick={() => handleDebugSwitch(id)}
+                    disabled={debugPendingPlan !== null || isCurrent}
+                    className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
+                  >
+                    {debugPendingPlan === id
+                      ? "切り替え中..."
+                      : isCurrent
+                        ? "適用中"
+                        : "このプランに切り替える"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
+
           {debugError && (
-            <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+            <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
               {debugError}
             </p>
           )}
@@ -135,6 +162,13 @@ export default function BillingPanel({
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
           決済機能は現在準備中です。もうしばらくお待ちください。
         </p>
+      )}
+
+      {/* トースト通知(プラン切り替え成功時) */}
+      {toastMessage && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-lg">
+          ✅ {toastMessage}
+        </div>
       )}
     </div>
   );
