@@ -3,7 +3,22 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { PLANS } from "@/lib/types";
+import { PLANS, type PlanId } from "@/lib/types";
+
+// Server Actionのエラーはproduction buildだと.messageが汎用文言に
+// 差し替えられてしまう(Next.jsの仕様)ため、debugSetPlanだけは
+// throwではなく戻り値で成否とエラーメッセージを伝える
+// (app/master/actions.tsと同じ方針。他の関数は既存のまま据え置く)。
+type ActionResult = { ok: true } | { ok: false; error: string };
+
+// デバッグ用プラン切り替えで選べる5プラン(masterは対象外)。
+const DEBUG_SWITCHABLE_PLANS: PlanId[] = [
+  "free",
+  "light",
+  "standard",
+  "pro",
+  "business",
+];
 
 async function requireAdminAccount() {
   const supabase = createClient();
@@ -110,4 +125,48 @@ export async function updateInviteInviterName(name: string) {
   if (error) throw new Error("招待者名の更新に失敗しました");
 
   revalidatePath("/admin");
+}
+
+// デバッグ用: 環境変数DEBUG_PLAN_SWITCH_EMAILに一致するアカウントだけが、
+// 自分のプランを5プランの中から自由に切り替えられる(動作確認用)。
+// クライアント側の表示制御(app/admin/page.tsxのisDebugPlanSwitcherAllowed)
+// とは別に、ここでも必ずメールアドレスを再検証する
+// (Server Actionは表示上のUIに関わらず直接呼び出せるため)。
+//
+// 注意: supabase/consolidated_setup.sqlのセクション10は、is_master=trueの
+// ユーザーが所有するアカウントのplanを毎回'master'へ強制的に戻す。
+// そのため、このデバッグ切り替えで選んだプランは、consolidated_setup.sql
+// を再実行すると'master'に巻き戻る(意図的な既存の挙動であり、この関数の
+// バグではない)。
+export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "ログインが必要です" };
+
+  const allowedEmail = process.env.DEBUG_PLAN_SWITCH_EMAIL;
+  if (!allowedEmail || user.email !== allowedEmail) {
+    return { ok: false, error: "この機能を利用する権限がありません" };
+  }
+
+  if (!DEBUG_SWITCHABLE_PLANS.includes(planId)) {
+    return { ok: false, error: "不正なプランです" };
+  }
+
+  const { data: account } = await supabase
+    .from("accounts")
+    .select("id")
+    .eq("owner_user_id", user.id)
+    .maybeSingle();
+  if (!account) return { ok: false, error: "アカウントが見つかりません" };
+
+  const { error } = await supabase
+    .from("accounts")
+    .update({ plan: planId })
+    .eq("id", account.id);
+  if (error) return { ok: false, error: "プランの更新に失敗しました" };
+
+  revalidatePath("/admin");
+  return { ok: true };
 }
