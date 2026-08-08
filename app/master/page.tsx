@@ -45,7 +45,6 @@ export default async function MasterPage() {
     standard: 0,
     pro: 0,
     business: 0,
-    master: 0,
   };
   let subscriptionTotalYen = 0;
   (accountRows ?? []).forEach((a) => {

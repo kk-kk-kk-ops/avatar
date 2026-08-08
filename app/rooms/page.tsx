@@ -42,7 +42,9 @@ export default async function RoomsPage({
             .select("display_name")
             .eq("user_id", user.id)
             .maybeSingle(),
-          supabase.rpc("list_rooms_by_invite_token", { token: viewInviteToken }),
+          supabase
+            .rpc("list_rooms_by_invite_token", { token: viewInviteToken })
+            .limit(1),
           supabase
             .from("app_settings")
             .select("avatar_size_px")
@@ -112,7 +114,11 @@ export default async function RoomsPage({
         .from("rooms")
         .select("id, account_id, template_id, name, preview_image")
         .eq("account_id", state.accountId)
-        .order("created_at", { ascending: true }),
+        .order("created_at", { ascending: true })
+        // 全プラン共通でルーム数の上限は1つのため、常に1件のみ表示する
+        // (過去のプラン仕様で複数ルームを持つアカウントが残っていても、
+        // ここで1件に絞る)。
+        .limit(1),
       supabase
         .from("app_settings")
         .select("avatar_size_px")
