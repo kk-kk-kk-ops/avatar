@@ -1,0 +1,11 @@
+{
+  "name": "globy-load-score-monitor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node check-load-score.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
