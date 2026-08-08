@@ -30,11 +30,17 @@ create table if not exists public.accounts (
 
 alter table public.accounts enable row level security;
 
--- plan列のCHECK制約('master'を含む最終形にする。既存テーブルにも反映
--- されるようdrop→addで作り直す)
+-- plan列のCHECK制約。マスタープランは廃止したため、既存にplan='master'の
+-- 行が残っていれば先に'free'へ移行してから(そうしないと制約違反になる)、
+-- 'master'を含まない制約を作り直す。マスター権限アカウントは今後、
+-- 通常の5プランのいずれかを持ち、DEBUG_PLAN_SWITCH_EMAILの仕組みで
+-- 自由に切り替える(マスター画面へのアクセス権はis_masterフラグで別途
+-- 管理しており、これとは無関係)。
+update public.accounts set plan = 'free' where plan = 'master';
+
 alter table public.accounts drop constraint if exists accounts_plan_check;
 alter table public.accounts add constraint accounts_plan_check
-  check (plan in ('free', 'light', 'standard', 'pro', 'business', 'master'));
+  check (plan in ('free', 'light', 'standard', 'pro', 'business'));
 
 alter table public.accounts
   add column if not exists invite_inviter_name text;
@@ -817,16 +823,14 @@ grant execute on function public.get_online_session_count() to authenticated;
 
 
 -- ------------------------------------------------------------
--- 10. マスター権限アカウントの契約プランを'master'に揃える
---     (プロプランではなく専用プラン。ルーム数10・人数上限30名、
---     課金対象外。/plan の選択肢には出さない)
+-- 10. (廃止) 以前はここでマスター権限アカウントの契約プランを強制的に
+--     'master'へ揃えていたが、マスタープランは廃止した。既存行の移行と
+--     CHECK制約からの'master'除外は、上の「1. accounts」内で一度きり
+--     実施済み。マスター権限アカウントも今後は通常の5プランのいずれかを
+--     持ち、DEBUG_PLAN_SWITCH_EMAILの仕組みで自由に切り替える
+--     (マスター画面へのアクセス権はis_masterフラグで別途管理しており、
+--     プランとは無関係のため、この節の削除による影響はない)。
 -- ------------------------------------------------------------
-update public.accounts
-set plan = 'master'
-where owner_user_id in (
-  select user_id from public.profiles where is_master = true
-)
-and plan <> 'master';
 
 
 -- ------------------------------------------------------------
@@ -863,7 +867,7 @@ begin
 
     if v_account_id is null then
       insert into public.accounts (name, plan, owner_user_id)
-      values ('Grovina Office', 'master', v_user_id)
+      values ('Grovina Office', 'free', v_user_id)
       returning id into v_account_id;
     end if;
 
@@ -915,7 +919,7 @@ begin
 
     if v_account_id is null then
       insert into public.accounts (name, plan, owner_user_id)
-      values ('Grovina Studio', 'master', v_user_id)
+      values ('Grovina Studio', 'free', v_user_id)
       returning id into v_account_id;
     end if;
 

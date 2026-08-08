@@ -250,6 +250,14 @@ export default function AvatarSpace({
   const [chatInput, setChatInput] = useState("");
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [chatSending, setChatSending] = useState(false);
+  // 管理者がプランを切り替えた際、このルームの全員を強制退出させるための
+  // 通知("force-leave" broadcast)を受け取ったときに表示するメッセージ。
+  // maxPeoplePerRoom等はサーバーから渡されたpropsのままなので、単純な
+  // state resetでは新プランの制限に切り替わらない。そのため
+  // window.location.reload()で全propsを取得し直す。
+  const [forceLeaveMessage, setForceLeaveMessage] = useState<string | null>(
+    null,
+  );
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     "/map-background.webp",
   );
@@ -1168,6 +1176,12 @@ export default function AvatarSpace({
           if (!chatOpenRef.current) {
             setUnreadChatCount((n) => n + 1);
           }
+        })
+        .on("broadcast", { event: "force-leave" }, () => {
+          setForceLeaveMessage(
+            "管理者がプランを変更したため、まもなく退出します...",
+          );
+          setTimeout(() => window.location.reload(), 1500);
         })
         // webrtc-offer/webrtc-answer/webrtc-iceの自前シグナリングは
         // LiveKit移行(Phase2〜4)により不要になったためPhase6で削除した。
@@ -2660,6 +2674,18 @@ export default function AvatarSpace({
             >
               送信
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* プラン変更による強制退出の通知(最前面に表示し、少ししてから
+          window.location.reload()で新プランの制限を反映し直す) */}
+      {forceLeaveMessage && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <p className="text-sm font-semibold text-slate-800">
+              {forceLeaveMessage}
+            </p>
           </div>
         </div>
       )}

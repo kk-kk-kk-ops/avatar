@@ -70,6 +70,31 @@ export async function addRoom(templateId: string) {
   revalidatePath("/admin");
 }
 
+// 既存のルームに紐づくルームデザイン(テンプレート)を変更する。
+// ルーム名は変更しない(既に名前を変えている場合を尊重するため)。
+export async function updateRoomTemplate(roomId: string, templateId: string) {
+  const { supabase, account } = await requireAdminAccount();
+
+  const { data: template } = await supabase
+    .from("templates")
+    .select("id, background_image_url")
+    .eq("id", templateId)
+    .maybeSingle();
+  if (!template) throw new Error("ルームデザインが見つかりません");
+
+  const { error } = await supabase
+    .from("rooms")
+    .update({
+      template_id: template.id,
+      preview_image: template.background_image_url,
+    })
+    .eq("id", roomId)
+    .eq("account_id", account.id);
+  if (error) throw new Error("ルームデザインの変更に失敗しました");
+
+  revalidatePath("/admin");
+}
+
 export async function renameRoom(roomId: string, name: string) {
   const { supabase, account } = await requireAdminAccount();
   const trimmed = name.trim();
@@ -127,17 +152,38 @@ export async function updateInviteInviterName(name: string) {
   revalidatePath("/admin");
 }
 
+// プラン変更が反映された瞬間、そのアカウントのルームに入室中の全員を
+// 強制退出させる。既存のチャット等と同じavatar-room-{roomId}チャンネルへ
+// broadcastするだけで、AvatarSpace.tsx側の対応するリスナーが反応する
+// (Node.jsスクリプトでの実機検証により、サーバー側からsubscribe()せず
+// channel.httpSend()するだけで購読中の全クライアントに届くことを確認済み)。
+async function broadcastForceLeaveForAccount(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string,
+) {
+  const { data: rooms } = await supabase
+    .from("rooms")
+    .select("id")
+    .eq("account_id", accountId);
+
+  await Promise.all(
+    (rooms ?? []).map((room) =>
+      supabase
+        .channel(`avatar-room-${room.id}`)
+        .httpSend("force-leave", { reason: "plan-changed" })
+        .catch(() => {
+          // 通知に失敗しても致命的ではない(次回の同期処理や再読み込みで
+          // いずれ新しいプランの制限が反映されるため)ので握りつぶす。
+        }),
+    ),
+  );
+}
+
 // デバッグ用: 環境変数DEBUG_PLAN_SWITCH_EMAILに一致するアカウントだけが、
 // 自分のプランを5プランの中から自由に切り替えられる(動作確認用)。
 // クライアント側の表示制御(app/admin/page.tsxのisDebugPlanSwitcherAllowed)
 // とは別に、ここでも必ずメールアドレスを再検証する
 // (Server Actionは表示上のUIに関わらず直接呼び出せるため)。
-//
-// 注意: supabase/consolidated_setup.sqlのセクション10は、is_master=trueの
-// ユーザーが所有するアカウントのplanを毎回'master'へ強制的に戻す。
-// そのため、このデバッグ切り替えで選んだプランは、consolidated_setup.sql
-// を再実行すると'master'に巻き戻る(意図的な既存の挙動であり、この関数の
-// バグではない)。
 export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
   const supabase = createClient();
   const {
@@ -166,6 +212,8 @@ export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
     .update({ plan: planId })
     .eq("id", account.id);
   if (error) return { ok: false, error: "プランの更新に失敗しました" };
+
+  await broadcastForceLeaveForAccount(supabase, account.id);
 
   revalidatePath("/admin");
   return { ok: true };

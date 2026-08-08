@@ -173,9 +173,7 @@ export default function MasterDashboard({
                 プランごとの登録者数(管理者のみ)
               </p>
               <ul className="space-y-1 text-sm text-slate-700">
-                {(Object.keys(PLANS) as PlanId[])
-                  .filter((plan) => plan !== "master")
-                  .map((plan) => (
+                {(Object.keys(PLANS) as PlanId[]).map((plan) => (
                     <li key={plan} className="flex justify-between">
                       <span>
                         {PLANS[plan].label} {PLANS[plan].subLabel}
