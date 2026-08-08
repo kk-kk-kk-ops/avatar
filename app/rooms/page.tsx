@@ -73,6 +73,8 @@ export default async function RoomsPage({
           initialName={profile?.display_name ?? undefined}
           rooms={rooms}
           maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
+          screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
+          videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
           isAccountAdmin={false}
           isMaster={false}
           // 自分自身は管理者用アカウントを持っているので、ログアウト後は
@@ -145,6 +147,8 @@ export default async function RoomsPage({
       initialName={profile?.display_name ?? undefined}
       rooms={rooms}
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
+      screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
+      videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
       isAccountAdmin={isAccountAdmin}
       isMaster={isAccountAdmin && state.isMaster}
       guestInviteToken={guestInviteToken}

@@ -34,7 +34,7 @@ alter table public.accounts enable row level security;
 -- されるようdrop→addで作り直す)
 alter table public.accounts drop constraint if exists accounts_plan_check;
 alter table public.accounts add constraint accounts_plan_check
-  check (plan in ('free', 'light', 'standard', 'pro', 'master'));
+  check (plan in ('free', 'light', 'standard', 'pro', 'business', 'master'));
 
 alter table public.accounts
   add column if not exists invite_inviter_name text;
@@ -444,6 +444,376 @@ end;
 $$;
 
 grant execute on function public.increment_screen_watch_seconds(integer) to authenticated;
+
+
+-- ------------------------------------------------------------
+-- 9e. daily_usage: 「1日あたり利用時間」上限管理の汎用テーブル
+--     (旧screen_share_usageを一般化。当初は画面共有専用だったが、
+--     ビデオ通話にも全く同じ形の日次上限が必要になったため、種別列
+--     kind('screen_share' | 'video_call')を持つ1つのテーブル・1組の
+--     RPCに統合した。ロジック(JST4:00リセット・30秒ハートビート・
+--     60秒/回の加算上限)を2重管理しないための判断)。
+--     ログインユーザー・日・種別ごとに1行持ち、day_keyはJST 4:00を
+--     境界とした日付("その時刻から4時間引いた日付")のため、日付が
+--     変われば新しい行から自動的に0からカウントが始まる
+--     (=毎日4:00リセット、明示的なリセットバッチ不要。screen_watch_stats
+--     の月次リセットと同じ考え方)。利用中のクライアントが30秒おきに
+--     increment_daily_usage_seconds()を呼んで加算する。プランごとの
+--     上限分数(nullは無制限)はDBでは持たず、lib/types.tsのPLANSを
+--     唯一の情報源としてクライアント側で「今日の使用量(このテーブル)
+--     vs 上限」を比較する(他の上限値・maxPeoplePerRoom等と同じ方針。
+--     無制限プランではこのテーブルへの読み書き自体を行わない)。
+-- ------------------------------------------------------------
+
+-- 旧テーブル名からの一度きりの移行(既存データを引き継ぐ)。まだ
+-- daily_usageが存在せず、旧screen_share_usageが存在する場合だけリネームする。
+do $$
+begin
+  if exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'screen_share_usage'
+  ) and not exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'daily_usage'
+  ) then
+    alter table public.screen_share_usage rename to daily_usage;
+  end if;
+end $$;
+
+create table if not exists public.daily_usage (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  day_key date not null,
+  kind text not null default 'screen_share',
+  used_seconds integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+-- 上のcreate table if not existsは、リネームによって既にdaily_usageが
+-- 存在するケースでは何もしない(既存テーブルの列は追加されない)ため、
+-- kind列が無ければここで明示的に追加する。
+alter table public.daily_usage add column if not exists kind text;
+
+-- 旧screen_share_usageからリネームした行にはkindが無いため、画面共有として
+-- 補完する(このテーブルは元々画面共有専用だったため)。
+update public.daily_usage set kind = 'screen_share' where kind is null;
+
+alter table public.daily_usage alter column kind set not null;
+
+alter table public.daily_usage drop constraint if exists daily_usage_kind_check;
+alter table public.daily_usage add constraint daily_usage_kind_check
+  check (kind in ('screen_share', 'video_call'));
+
+-- 主キーをリネーム前(user_id, day_key)から(user_id, day_key, kind)へ
+-- 付け替える(リネームされたテーブルの旧PK名・新規作成時のPK名の両方を
+-- 考慮してdropする)。
+alter table public.daily_usage drop constraint if exists screen_share_usage_pkey;
+alter table public.daily_usage drop constraint if exists daily_usage_pkey;
+alter table public.daily_usage add constraint daily_usage_pkey
+  primary key (user_id, day_key, kind);
+
+alter table public.daily_usage enable row level security;
+
+drop policy if exists "screen_share_usage: select own" on public.daily_usage;
+drop policy if exists "daily_usage: select own" on public.daily_usage;
+create policy "daily_usage: select own"
+  on public.daily_usage for select
+  using (auth.uid() = user_id);
+
+-- 直接のINSERT/UPDATEポリシーは用意しない(下のSECURITY DEFINER関数
+-- 経由でのみ更新できるようにし、クライアントから任意の値を書き込ませない)。
+
+drop function if exists public.increment_screen_share_seconds(integer);
+drop function if exists public.get_screen_share_used_seconds();
+drop function if exists public.increment_daily_usage_seconds(text, integer);
+
+-- パラメータ名はdaily_usage.kind列と同名だと、PL/pgSQL側で列参照と
+-- パラメータ参照のどちらか曖昧になる(plpgsql.variable_conflict設定次第で
+-- エラーになりうる)ため、p_接頭辞を付けて確実に区別する。
+create function public.increment_daily_usage_seconds(p_kind text, seconds integer)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_seconds integer;
+  v_day_key date;
+  v_total integer;
+begin
+  if auth.uid() is null then
+    return 0;
+  end if;
+  if p_kind not in ('screen_share', 'video_call') then
+    raise exception '不正な種別です';
+  end if;
+  -- 1回の加算は60秒までに制限し、クライアントからの誤送信・不正な
+  -- 大量加算を防ぐ(想定は30秒おきの心拍送信)。
+  v_seconds := greatest(0, least(seconds, 60));
+  v_day_key := (timezone('Asia/Tokyo', now()) - interval '4 hours')::date;
+
+  if v_seconds = 0 then
+    select used_seconds into v_total
+    from public.daily_usage
+    where user_id = auth.uid() and day_key = v_day_key and kind = p_kind;
+    return coalesce(v_total, 0);
+  end if;
+
+  insert into public.daily_usage (user_id, day_key, kind, used_seconds)
+  values (auth.uid(), v_day_key, p_kind, v_seconds)
+  on conflict (user_id, day_key, kind) do update
+    set used_seconds = daily_usage.used_seconds + v_seconds,
+        updated_at = now()
+  returning used_seconds into v_total;
+
+  return v_total;
+end;
+$$;
+
+grant execute on function public.increment_daily_usage_seconds(text, integer) to authenticated;
+
+-- 画面共有・ビデオ通話を開始する前に、今日すでに使った秒数を取得するための
+-- 関数(ハートビートを待たず、開始ボタン表示時点で残り時間を出すために使う)。
+drop function if exists public.get_daily_usage_used_seconds(text);
+
+create function public.get_daily_usage_used_seconds(p_kind text)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_day_key date;
+  v_total integer;
+begin
+  if auth.uid() is null then
+    return 0;
+  end if;
+  v_day_key := (timezone('Asia/Tokyo', now()) - interval '4 hours')::date;
+  select used_seconds into v_total
+  from public.daily_usage
+  where user_id = auth.uid() and day_key = v_day_key and kind = p_kind;
+  return coalesce(v_total, 0);
+end;
+$$;
+
+grant execute on function public.get_daily_usage_used_seconds(text) to authenticated;
+
+
+-- ------------------------------------------------------------
+-- 9f. chat_messages: ルーム内チャット(全プラン共通の標準機能)。
+--     配信自体は既存のSupabase Realtime broadcast(avatar-room-{roomId}
+--     チャンネル)にそのまま"chat"イベントを流すことで即時反映し、この
+--     テーブルは「リロード後・再入室後も履歴が見える」ための永続化専用に
+--     使う(postgres_changesの購読は使わない。入室時に直近の履歴を
+--     まとめてSELECTするだけで済むため)。
+-- ------------------------------------------------------------
+create table if not exists public.chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  sender_user_id uuid not null references auth.users(id) on delete cascade,
+  sender_name text not null,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists chat_messages_room_id_created_at_idx
+  on public.chat_messages (room_id, created_at);
+
+alter table public.chat_messages enable row level security;
+
+drop policy if exists "chat_messages: select own account rooms" on public.chat_messages;
+create policy "chat_messages: select own account rooms"
+  on public.chat_messages for select
+  using (
+    room_id in (
+      select r.id from public.rooms r
+      join public.profiles p on p.account_id = r.account_id
+      where p.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "chat_messages: insert own account rooms" on public.chat_messages;
+create policy "chat_messages: insert own account rooms"
+  on public.chat_messages for insert
+  with check (
+    sender_user_id = auth.uid()
+    and char_length(message) <= 500
+    and room_id in (
+      select r.id from public.rooms r
+      join public.profiles p on p.account_id = r.account_id
+      where p.user_id = auth.uid()
+    )
+  );
+
+-- 9f-2. viewOnly(既に自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
+--       のチャット対応。上記のRLSは「自分のprofiles.account_id = ルームの
+--       account_id」だけを許可するため、viewOnlyのケース(profiles.account_id
+--       を書き換えない設計。招待URLバグ修正の経緯を参照)では読み書きどちらも
+--       弾かれてしまう。list_rooms_by_invite_token と同じ考え方で、招待
+--       トークンの一致をSECURITY DEFINERで検証したうえでRLSを迂回する
+--       関数を別途用意し、viewOnly時はクライアントからこちらを呼ぶ
+--       (app/api/livekit-token/route.tsの認可判定と同じ「通常ルート/
+--       viewOnlyルート」の使い分け)。
+drop function if exists public.list_chat_messages_by_invite_token(text, uuid);
+
+create function public.list_chat_messages_by_invite_token(
+  token text,
+  target_room_id uuid
+)
+returns table (
+  id uuid,
+  sender_name text,
+  message text,
+  created_at timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select m.id, m.sender_name, m.message, m.created_at
+  from public.chat_messages m
+  join public.rooms r on r.id = m.room_id
+  join public.accounts a on a.id = r.account_id
+  where a.invite_token = token
+    and r.id = target_room_id
+  order by m.created_at asc
+  limit 50;
+$$;
+
+grant execute on function public.list_chat_messages_by_invite_token(text, uuid) to authenticated;
+
+drop function if exists public.send_chat_message_by_invite_token(text, uuid, text, text);
+
+create function public.send_chat_message_by_invite_token(
+  token text,
+  target_room_id uuid,
+  sender_name text,
+  message text
+)
+returns table (id uuid, created_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  if char_length(message) = 0 or char_length(message) > 500 then
+    raise exception 'メッセージの長さが不正です';
+  end if;
+
+  select r.id into v_room_id
+  from public.rooms r
+  join public.accounts a on a.id = r.account_id
+  where a.invite_token = token
+    and r.id = target_room_id;
+
+  if v_room_id is null then
+    raise exception 'このルームへのアクセス権がありません';
+  end if;
+
+  return query
+    insert into public.chat_messages (room_id, sender_user_id, sender_name, message)
+    values (v_room_id, auth.uid(), sender_name, message)
+    returning chat_messages.id, chat_messages.created_at;
+end;
+$$;
+
+grant execute on function public.send_chat_message_by_invite_token(text, uuid, text, text) to authenticated;
+
+-- 9f-3. チャット履歴の削除ポリシー。
+--   ・投稿から1ヶ月経過したメッセージは自動削除する(pg_cronで毎日実行)
+--   ・ルーム自体が削除された場合は、chat_messages.room_idの
+--     "on delete cascade"により1ヶ月を待たず即座に削除される
+--     (上のcreate table定義で対応済み。追加対応不要)
+--   画像添付機能は現時点で未実装(chat_messagesはmessage列のみ)のため、
+--   画像の削除ルールはテキストと同じ仕組みが必要になった時点で
+--   (Supabase Storageのオブジェクト削除を絡めて)別途実装する。
+--
+-- pg_cronの有効化・スケジュール登録は失敗してもこのブロック内で
+-- 握りつぶし、後続のセクション(10以降の管理者付与処理など)が
+-- 巻き込まれてロールバックされないようにする(Supabase SQL Editorは
+-- 既定でスクリプト全体を1トランザクションとして実行するため、途中の
+-- 1文の失敗でそれ以前・以降の変更も含め全てロールバックされてしまう)。
+-- pg_cronの権限が無いプロジェクトでは、RAISE NOTICEの案内に従って
+-- Database → Extensions で「pg_cron」を有効化してから再実行すること。
+drop function if exists public.delete_expired_chat_messages();
+
+create function public.delete_expired_chat_messages()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from public.chat_messages
+  where created_at < now() - interval '1 month';
+$$;
+
+do $$
+begin
+  execute 'create extension if not exists pg_cron';
+exception when others then
+  raise notice 'pg_cron拡張の有効化に失敗しました(%)。Database → Extensions で手動有効化した後にこのSQLを再実行してください。チャット履歴の自動削除は登録されていません。', sqlerrm;
+end $$;
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    if exists (select 1 from cron.job where jobname = 'delete-expired-chat-messages') then
+      perform cron.unschedule('delete-expired-chat-messages');
+    end if;
+    perform cron.schedule(
+      'delete-expired-chat-messages',
+      '0 4 * * *',
+      'select public.delete_expired_chat_messages();'
+    );
+  end if;
+exception when others then
+  raise notice 'delete-expired-chat-messagesジョブの登録に失敗しました(%)。', sqlerrm;
+end $$;
+
+
+-- ------------------------------------------------------------
+-- 9g. online_sessions: β版の「全顧客合計オンライン人数1000人で新規契約
+--     停止」判定用。ユーザーごとに1行だけ持ち、バーチャル空間に入室中の
+--     クライアントが30秒おきにlast_seen_atを更新する(心拍)。「オンライン」
+--     の判定は行を消さず、90秒(心拍3回分)以内に更新があったかで見る
+--     (退室直後の数十秒は多少カウントに残るが、βの上限判定としては
+--     許容範囲とする)。
+-- ------------------------------------------------------------
+create table if not exists public.online_sessions (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  last_seen_at timestamptz not null default now()
+);
+
+alter table public.online_sessions enable row level security;
+
+drop policy if exists "online_sessions: upsert own" on public.online_sessions;
+create policy "online_sessions: upsert own"
+  on public.online_sessions for all
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- 全体のオンライン人数を数えるだけの関数。online_sessionsへのSELECT権限を
+-- 全ユーザーに開放すると他人のuser_id一覧が見えてしまうため、件数だけを
+-- 返すSECURITY DEFINER関数経由にする。
+drop function if exists public.get_online_session_count();
+
+create function public.get_online_session_count()
+returns integer
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select count(*)::integer from public.online_sessions
+  where last_seen_at > now() - interval '90 seconds';
+$$;
+
+grant execute on function public.get_online_session_count() to authenticated;
 
 
 -- ------------------------------------------------------------

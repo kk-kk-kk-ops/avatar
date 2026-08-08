@@ -44,6 +44,7 @@ export default async function MasterPage() {
     light: 0,
     standard: 0,
     pro: 0,
+    business: 0,
     master: 0,
   };
   let subscriptionTotalYen = 0;

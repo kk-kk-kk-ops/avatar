@@ -63,10 +63,53 @@ function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
 
+// 画面共有の残り時間(秒)を「◯分」表示に整形する(1分未満は切り上げ)。
+function formatRemainingMinutes(remainingSeconds: number): string {
+  return `${Math.ceil(remainingSeconds / 60)}分`;
+}
+
+// 画面共有開始時点の最初の1フレームを、選択前プレビュー用の軽量な
+// JPEG dataURLとして切り出す。取得に失敗した場合はnullを返す
+// (プレビューが出ないだけで、選択視聴自体は引き続き可能)。
+async function captureFirstFrame(
+  mediaStreamTrack: MediaStreamTrack,
+): Promise<string | null> {
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = new MediaStream([mediaStreamTrack]);
+    await video.play();
+    if (video.readyState < 2) {
+      await new Promise<void>((resolve) => {
+        video.onloadeddata = () => resolve();
+      });
+    }
+    const targetWidth = 160;
+    const scale = targetWidth / (video.videoWidth || targetWidth);
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = Math.round((video.videoHeight || 90) * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return null;
+  }
+}
+
 type Props = {
   initialName?: string;
   rooms: Room[];
   maxPeoplePerRoom: number;
+  // プランごとの画面共有1日あたり利用可能時間(分)。nullは無制限。
+  // 毎日4:00にリセットされる累積(daily_usageテーブル)と比較して
+  // 残り時間を算出する。
+  screenShareDailyMinutes: number | null;
+  // プランごとのビデオ通話1日あたり利用可能時間(分)。nullは無制限。
+  // 画面共有と全く同じ仕組み(daily_usageテーブル、kind='video_call')。
+  videoCallDailyMinutes: number | null;
   isAccountAdmin: boolean;
   isMaster: boolean;
   // 他人の招待URL経由で参加しているゲストの場合のみ渡される招待
@@ -86,6 +129,8 @@ export default function AvatarSpace({
   initialName,
   rooms,
   maxPeoplePerRoom,
+  screenShareDailyMinutes,
+  videoCallDailyMinutes,
   isAccountAdmin,
   isMaster,
   guestInviteToken,
@@ -136,11 +181,50 @@ export default function AvatarSpace({
   >({});
   const [screenSharing, setScreenSharing] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  // 画面共有の「今日の残り利用可能時間(秒)」。nullは「未取得(初回ロード中)」
+  // または「プランが無制限」のどちらか(どちらの場合も制限しない、という
+  // 挙動は同じなので区別する必要がない)。プランの1日あたり上限
+  // (screenShareDailyMinutes)からDB上の本日使用済み秒数(daily_usage、
+  // kind='screen_share')を引いて算出する。
+  const [screenShareRemainingSeconds, setScreenShareRemainingSeconds] =
+    useState<number | null>(null);
+  const screenShareRemainingRef = useRef<number | null>(null);
+  useEffect(() => {
+    screenShareRemainingRef.current = screenShareRemainingSeconds;
+  }, [screenShareRemainingSeconds]);
   const [remoteScreenStreams, setRemoteScreenStreams] = useState<
     Record<string, MediaStream>
   >({});
+  // 画面共有は「同時に何人でも共有できるが、視聴者は1人だけ選んで見る」
+  // モデルのため、通常のAudio/CameraのようにeligiblePeerIdsだけを見て
+  // 自動購読はしない。選んだ相手のpublicationだけをsetSubscribed(true)する。
+  const [selectedScreenSharerId, setSelectedScreenSharerId] = useState<
+    string | null
+  >(null);
+  const selectedScreenSharerIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedScreenSharerIdRef.current = selectedScreenSharerId;
+  }, [selectedScreenSharerId]);
+  // 参加者ごとの画面共有publication(未選択の相手も含め、購読切り替えの
+  // ためにsetSubscribed()を呼べるよう保持しておく)。
+  const screenSharePublicationsRef = useRef<
+    Record<string, RemoteTrackPublication>
+  >({});
+  // 共有開始時点の最初の1フレームを静止画にしたプレビュー(dataURL)。
+  // 選択して視聴を始めるまではこちらを表示し、選択後はライブ映像に切り替える。
+  const [screenPreviewImages, setScreenPreviewImages] = useState<
+    Record<string, string>
+  >({});
   const [inCall, setInCall] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
+  // ビデオ通話の「今日の残り利用可能時間(秒)」。画面共有と全く同じ考え方
+  // (null = 未取得中 or プランが無制限)。daily_usageテーブルのkind='video_call'を使う。
+  const [videoCallRemainingSeconds, setVideoCallRemainingSeconds] =
+    useState<number | null>(null);
+  const videoCallRemainingRef = useRef<number | null>(null);
+  useEffect(() => {
+    videoCallRemainingRef.current = videoCallRemainingSeconds;
+  }, [videoCallRemainingSeconds]);
   const [remoteCallStreams, setRemoteCallStreams] = useState<
     Record<string, MediaStream>
   >({});
@@ -148,6 +232,24 @@ export default function AvatarSpace({
     peerId: string;
     kind: "screen" | "camera";
   } | null>(null);
+
+  // ---- チャット(全プラン共通の標準機能) ----
+  type ChatMessage = {
+    id: string;
+    senderName: string;
+    isSelf: boolean;
+    message: string;
+    createdAt: string;
+  };
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatOpenRef = useRef(false);
+  useEffect(() => {
+    chatOpenRef.current = chatOpen;
+  }, [chatOpen]);
+  const [chatInput, setChatInput] = useState("");
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [chatSending, setChatSending] = useState(false);
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     "/map-background.webp",
   );
@@ -192,6 +294,10 @@ export default function AvatarSpace({
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  // チャット送信時のRLSチェック(sender_user_id = auth.uid())に必要な、
+  // 認証済みSupabaseユーザーのID(selfId.currentはブラウザごとのゲストIDで
+  // 別物のため、これとは別に保持する)。
+  const authUserIdRef = useRef<string | null>(null);
   const keysDown = useRef<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -276,6 +382,152 @@ export default function AvatarSpace({
     remoteScreenStreamsRef.current = remoteScreenStreams;
   }, [remoteScreenStreams]);
 
+  // ---- チャット:入室時に認証ユーザーIDを取得し、直近の履歴を読み込む ----
+  useEffect(() => {
+    if (!joined) return;
+    let cancelled = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (cancelled) return;
+      authUserIdRef.current = user?.id ?? null;
+
+      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
+      // 場合、通常のRLS(profiles.account_id経由)では対象ルームの
+      // チャットが見えないため、招待トークンを検証するSECURITY DEFINER
+      // 関数経由で取得する(list_rooms_by_invite_tokenと同じ考え方)。
+      const { data, error } = viewOnlyInviteToken
+        ? await supabase.rpc("list_chat_messages_by_invite_token", {
+            token: viewOnlyInviteToken,
+            target_room_id: roomId,
+          })
+        : await supabase
+            .from("chat_messages")
+            .select("id, sender_name, message, created_at")
+            .eq("room_id", roomId)
+            .order("created_at", { ascending: false })
+            .limit(50);
+      if (cancelled) return;
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("チャット履歴の取得に失敗しました", error);
+        return;
+      }
+      const rows = (data ?? []) as Array<{
+        id: string;
+        sender_name: string;
+        message: string;
+        created_at: string;
+      }>;
+      setChatMessages(
+        (viewOnlyInviteToken ? rows : rows.slice().reverse()).map((row) => ({
+          id: row.id,
+          senderName: row.sender_name,
+          isSelf: false,
+          message: row.message,
+          createdAt: row.created_at,
+        })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, roomId, supabase, viewOnlyInviteToken]);
+
+  // ---- β版の同時接続数カウント用ハートビート ----
+  // 全顧客合計のオンライン人数(online_sessions)を30秒おきに更新する。
+  // 上限判定自体はアカウント作成時(app/plan/actions.ts)側で行うため、
+  // ここでは自分が「オンライン」であることを記録するだけでよい。
+  useEffect(() => {
+    if (!joined) return;
+    let cancelled = false;
+    const heartbeat = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (cancelled || !user) return;
+      const { error } = await supabase
+        .from("online_sessions")
+        .upsert({ user_id: user.id, last_seen_at: new Date().toISOString() });
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("オンライン人数の記録に失敗しました", error);
+      }
+    };
+    heartbeat();
+    const interval = setInterval(heartbeat, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [joined, supabase]);
+
+  const sendChatMessage = useCallback(async () => {
+    const trimmed = chatInput.trim();
+    if (!trimmed || !selfState.current || chatSending) return;
+    const senderName = selfState.current.name;
+    const senderId = selfId.current;
+    setChatInput("");
+    setChatSending(true);
+    try {
+      // viewOnlyの場合は通常のRLSでINSERTが拒否されるため、招待トークンを
+      // 検証するSECURITY DEFINER関数(send_chat_message_by_invite_token)
+      // 経由で送信する。
+      const { data, error } = viewOnlyInviteToken
+        ? await (async () => {
+            const res = await supabase.rpc(
+              "send_chat_message_by_invite_token",
+              {
+                token: viewOnlyInviteToken,
+                target_room_id: roomId,
+                sender_name: senderName,
+                message: trimmed,
+              },
+            );
+            return { data: res.data?.[0] ?? null, error: res.error };
+          })()
+        : await supabase
+            .from("chat_messages")
+            .insert({
+              room_id: roomId,
+              sender_user_id: authUserIdRef.current,
+              sender_name: senderName,
+              message: trimmed,
+            })
+            .select("id, created_at")
+            .single();
+      if (error || !data) {
+        // eslint-disable-next-line no-console
+        console.error("チャットメッセージの送信に失敗しました", error);
+        return;
+      }
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: data.id,
+          senderName,
+          isSelf: true,
+          message: trimmed,
+          createdAt: data.created_at,
+        },
+      ]);
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "chat",
+        payload: {
+          id: data.id,
+          senderId,
+          senderName,
+          message: trimmed,
+          createdAt: data.created_at,
+        },
+      });
+    } finally {
+      setChatSending(false);
+    }
+  }, [chatInput, chatSending, roomId, supabase, viewOnlyInviteToken]);
+
   // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
   // 維持するため autoSubscribe: false で接続し、実際の購読は下の
@@ -292,14 +544,35 @@ export default function AvatarSpace({
       publication.source === Track.Source.Camera ||
       publication.source === Track.Source.ScreenShare;
 
+    // Audio(近接音声通話)・Camera(ビデオ通話)はこれまで通りeligiblePeerIds
+    // (近接判定)に応じて自動購読する。ScreenShareだけは対象外とし、
+    // 「選択視聴」effect(selectedScreenSharerId)側で個別に制御する。
     const applySubscription = (
       publication: RemoteTrackPublication,
       participant: RemoteParticipant,
     ) => {
-      if (!isManagedKind(publication)) return;
+      if (
+        publication.kind !== Track.Kind.Audio &&
+        publication.source !== Track.Source.Camera
+      ) {
+        return;
+      }
       publication.setSubscribed(
         eligiblePeerIdsRef.current.includes(participant.identity),
       );
+    };
+
+    const clearScreenShare = (identity: string) => {
+      delete screenSharePublicationsRef.current[identity];
+      setScreenPreviewImages((prev) => {
+        if (!(identity in prev)) return prev;
+        const next = { ...prev };
+        delete next[identity];
+        return next;
+      });
+      if (selectedScreenSharerIdRef.current === identity) {
+        setSelectedScreenSharerId(null);
+      }
     };
 
     const setterFor = (kind: Track.Kind, source: Track.Source) => {
@@ -325,7 +598,23 @@ export default function AvatarSpace({
           return next;
         });
       })
-      .on(RoomEvent.TrackPublished, applySubscription)
+      .on(RoomEvent.TrackPublished, (publication, participant) => {
+        if (publication.source === Track.Source.ScreenShare) {
+          screenSharePublicationsRef.current[participant.identity] =
+            publication;
+          // 既にこの相手を選択中(共有の終了→再開など)であれば即座に再購読する
+          if (selectedScreenSharerIdRef.current === participant.identity) {
+            publication.setSubscribed(true);
+          }
+          return;
+        }
+        applySubscription(publication, participant);
+      })
+      .on(RoomEvent.TrackUnpublished, (publication, participant) => {
+        if (publication.source === Track.Source.ScreenShare) {
+          clearScreenShare(participant.identity);
+        }
+      })
       .on(RoomEvent.ParticipantDisconnected, (participant) => {
         [setRemoteStreams, setRemoteCallStreams, setRemoteScreenStreams].forEach(
           (setter) => {
@@ -337,6 +626,7 @@ export default function AvatarSpace({
             });
           },
         );
+        clearScreenShare(participant.identity);
       });
 
     (async () => {
@@ -367,8 +657,22 @@ export default function AvatarSpace({
       cancelled = true;
       room.disconnect();
       if (livekitRoomRef.current === room) livekitRoomRef.current = null;
+      screenSharePublicationsRef.current = {};
+      setSelectedScreenSharerId(null);
+      setScreenPreviewImages({});
     };
   }, [joined, roomId, viewOnlyInviteToken]);
+
+  // ---- 画面共有の選択視聴:選んだ相手のpublicationだけを購読する ----
+  // 同時に複数を視聴することはできないため、選択が変わるたびに「選ばれて
+  // いる相手だけsubscribed=true、それ以外は全員false」を毎回付け直す。
+  useEffect(() => {
+    Object.entries(screenSharePublicationsRef.current).forEach(
+      ([identity, publication]) => {
+        publication.setSubscribed(identity === selectedScreenSharerId);
+      },
+    );
+  }, [selectedScreenSharerId]);
 
   // ---- ルーム選択:選んだルームを確定してアバター選択画面へ進む ----
   const handleSelectRoom = useCallback(() => {
@@ -540,6 +844,16 @@ export default function AvatarSpace({
   const startScreenShare = useCallback(async () => {
     setShareError(null);
 
+    if (
+      screenShareRemainingRef.current !== null &&
+      screenShareRemainingRef.current <= 0
+    ) {
+      setShareError(
+        "本日の画面共有可能時間の上限に達しています(4:00にリセットされます)。",
+      );
+      return;
+    }
+
     // スマホ(特にiPhoneのSafari)は画面共有API自体に対応していないため、
     // 呼び出す前に判定して分かりやすいメッセージを出す
     if (
@@ -577,6 +891,19 @@ export default function AvatarSpace({
       track.mediaStreamTrack.addEventListener("ended", () => {
         stopScreenShare();
       });
+
+      // 選択前プレビュー用に、共有開始時点の最初の1フレームだけを
+      // 静止画として他の参加者へ配信する(ライブ映像は選択されるまで
+      // 誰にも購読させないため、これが無いと共有中かどうかしか分からない)。
+      captureFirstFrame(track.mediaStreamTrack).then((dataUrl) => {
+        if (dataUrl && selfState.current) {
+          channelRef.current?.send({
+            type: "broadcast",
+            event: "screen-preview",
+            payload: { id: selfState.current.id, dataUrl },
+          });
+        }
+      });
     } catch {
       // 選択画面でキャンセルした場合などはここに来る。エラー扱いにはしない。
     }
@@ -613,6 +940,15 @@ export default function AvatarSpace({
 
   const startVideoCall = useCallback(async () => {
     setCallError(null);
+    if (
+      videoCallRemainingRef.current !== null &&
+      videoCallRemainingRef.current <= 0
+    ) {
+      setCallError(
+        "本日のビデオ通話可能時間の上限に達しています(4:00にリセットされます)。",
+      );
+      return;
+    }
     const room = livekitRoomRef.current;
     if (!room) {
       setCallError(
@@ -804,6 +1140,34 @@ export default function AvatarSpace({
             };
           if (newObstacles) setObstacles(newObstacles);
           if (newZones) setMeetingZones(newZones);
+        })
+        .on("broadcast", { event: "screen-preview" }, ({ payload }) => {
+          const { id, dataUrl } = payload as { id: string; dataUrl: string };
+          if (id === selfId.current) return;
+          setScreenPreviewImages((prev) => ({ ...prev, [id]: dataUrl }));
+        })
+        .on("broadcast", { event: "chat" }, ({ payload }) => {
+          const msg = payload as {
+            id: string;
+            senderId: string;
+            senderName: string;
+            message: string;
+            createdAt: string;
+          };
+          if (msg.senderId === selfId.current) return;
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: msg.id,
+              senderName: msg.senderName,
+              isSelf: false,
+              message: msg.message,
+              createdAt: msg.createdAt,
+            },
+          ]);
+          if (!chatOpenRef.current) {
+            setUnreadChatCount((n) => n + 1);
+          }
         })
         // webrtc-offer/webrtc-answer/webrtc-iceの自前シグナリングは
         // LiveKit移行(Phase2〜4)により不要になったためPhase6で削除した。
@@ -1338,11 +1702,9 @@ export default function AvatarSpace({
         }
       });
       participant.videoTrackPublications.forEach((pub) => {
-        if (
-          pub.source !== Track.Source.Camera &&
-          pub.source !== Track.Source.ScreenShare
-        )
-          return;
+        // ScreenShareは近接判定ではなく「選択視聴」effectが個別に制御する
+        // ため、ここでは対象外とする。
+        if (pub.source !== Track.Source.Camera) return;
         if (pub.isSubscribed !== shouldSubscribe) {
           pub.setSubscribed(shouldSubscribe);
         }
@@ -1350,6 +1712,17 @@ export default function AvatarSpace({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey, joined]);
+
+  // 選択中の相手が画面共有をやめた・近接範囲外に出た場合は選択を解除する
+  useEffect(() => {
+    if (!selectedScreenSharerId) return;
+    const stillSharingNearby =
+      eligiblePeerIds.includes(selectedScreenSharerId) &&
+      players[selectedScreenSharerId]?.sharingScreen;
+    if (!stillSharingNearby) {
+      setSelectedScreenSharerId(null);
+    }
+  }, [selectedScreenSharerId, eligiblePeerIds, players]);
 
   // ---- 誰かの画面共有を視聴中かどうかをpresenceに反映する ----
   // マスター画面の「画面共有視聴中」人数集計のために使う。実際に映像を
@@ -1391,6 +1764,152 @@ export default function AvatarSpace({
     }, 30000);
     return () => clearInterval(interval);
   }, [joined, supabase]);
+
+  // ---- 画面共有の「1日あたり利用時間」上限管理 ----
+  // プランが無制限(null)の場合は、そもそも上限管理自体が不要なので
+  // DBへの読み書きを一切行わない(remainingSecondsはnullのまま=無制限扱い)。
+  // 有限の場合、入室時に本日ここまでの使用済み秒数を取得し、プラン上限
+  // との差分を残り時間として保持する(4:00リセット・日付キーの算出は
+  // DB側で行う)。
+  const screenShareDailyLimitSeconds =
+    screenShareDailyMinutes === null ? null : screenShareDailyMinutes * 60;
+  useEffect(() => {
+    if (!joined || screenShareDailyLimitSeconds === null) return;
+    let cancelled = false;
+    supabase
+      .rpc("get_daily_usage_used_seconds", { p_kind: "screen_share" })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("画面共有利用時間の取得に失敗しました", error);
+          return;
+        }
+        setScreenShareRemainingSeconds(
+          Math.max(0, screenShareDailyLimitSeconds - (data ?? 0)),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, supabase, screenShareDailyLimitSeconds]);
+
+  // 共有中は30秒おきに実利用時間をDBへ加算し、返ってきた本日合計から
+  // 残り時間を再計算する(サーバー側の値を正として同期する)。残り時間が
+  // 尽きたら共有を強制終了する。
+  useEffect(() => {
+    if (!joined || screenShareDailyLimitSeconds === null) return;
+    const interval = setInterval(() => {
+      if (!screenSharing) return;
+      supabase
+        .rpc("increment_daily_usage_seconds", {
+          p_kind: "screen_share",
+          seconds: 30,
+        })
+        .then(({ data, error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error("画面共有利用時間の記録に失敗しました", error);
+            return;
+          }
+          const remaining = Math.max(
+            0,
+            screenShareDailyLimitSeconds - (data ?? 0),
+          );
+          setScreenShareRemainingSeconds(remaining);
+          if (remaining <= 0) {
+            setShareError(
+              "本日の画面共有可能時間の上限に達したため、共有を終了しました。",
+            );
+            stopScreenShare();
+          }
+        });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [
+    joined,
+    screenSharing,
+    supabase,
+    screenShareDailyLimitSeconds,
+    stopScreenShare,
+  ]);
+
+  // 共有中は表示用に1秒おきでローカルカウントダウンする(サーバー同期は
+  // 上の30秒ハートビートに任せ、ここは見た目の滑らかさのためだけの近似値)。
+  useEffect(() => {
+    if (!screenSharing || screenShareDailyLimitSeconds === null) return;
+    const interval = setInterval(() => {
+      setScreenShareRemainingSeconds((prev) =>
+        prev === null ? prev : Math.max(0, prev - 1),
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [screenSharing, screenShareDailyLimitSeconds]);
+
+  // ---- ビデオ通話の「1日あたり利用時間」上限管理(画面共有と同じ仕組み) ----
+  const videoCallDailyLimitSeconds =
+    videoCallDailyMinutes === null ? null : videoCallDailyMinutes * 60;
+  useEffect(() => {
+    if (!joined || videoCallDailyLimitSeconds === null) return;
+    let cancelled = false;
+    supabase
+      .rpc("get_daily_usage_used_seconds", { p_kind: "video_call" })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("ビデオ通話利用時間の取得に失敗しました", error);
+          return;
+        }
+        setVideoCallRemainingSeconds(
+          Math.max(0, videoCallDailyLimitSeconds - (data ?? 0)),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, supabase, videoCallDailyLimitSeconds]);
+
+  useEffect(() => {
+    if (!joined || videoCallDailyLimitSeconds === null) return;
+    const interval = setInterval(() => {
+      if (!inCall) return;
+      supabase
+        .rpc("increment_daily_usage_seconds", {
+          p_kind: "video_call",
+          seconds: 30,
+        })
+        .then(({ data, error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error("ビデオ通話利用時間の記録に失敗しました", error);
+            return;
+          }
+          const remaining = Math.max(
+            0,
+            videoCallDailyLimitSeconds - (data ?? 0),
+          );
+          setVideoCallRemainingSeconds(remaining);
+          if (remaining <= 0) {
+            setCallError(
+              "本日のビデオ通話可能時間の上限に達したため、通話を終了しました。",
+            );
+            stopVideoCall();
+          }
+        });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [joined, inCall, supabase, videoCallDailyLimitSeconds, stopVideoCall]);
+
+  useEffect(() => {
+    if (!inCall || videoCallDailyLimitSeconds === null) return;
+    const interval = setInterval(() => {
+      setVideoCallRemainingSeconds((prev) =>
+        prev === null ? prev : Math.max(0, prev - 1),
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [inCall, videoCallDailyLimitSeconds]);
 
   // 退室時、位置補間用の記録とAvatar DOM参照をクリアする。音声・映像・
   // 画面共有はLiveKit側のroom.disconnect()が担当するが、念のため
@@ -1605,14 +2124,15 @@ export default function AvatarSpace({
 
   const playerList = Object.values(players);
 
-  // 近く(音声通話が繋がっている相手)にいて、かつ画面共有中の人の一覧
+  // 近く(音声通話が繋がっている相手)にいて、かつ画面共有中の人の一覧。
+  // 選択視聴モデルのため、ライブ映像(remoteScreenStreams)を持っているのは
+  // このうち選択中の1人だけで、それ以外は静止画プレビューのみ持ちうる。
   const eligibleSetForScreen = new Set(eligiblePeerIds);
   const visibleScreenShares = playerList.filter(
     (p) =>
       p.id !== selfId.current &&
       p.sharingScreen &&
-      eligibleSetForScreen.has(p.id) &&
-      remoteScreenStreams[p.id],
+      eligibleSetForScreen.has(p.id),
   );
 
   // 近くにいて、かつビデオ通話中の人の一覧
@@ -1646,7 +2166,7 @@ export default function AvatarSpace({
     : 0;
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-slate-800">
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-slate-800">
       {/* ヘッダー */}
       <div className="flex min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
         <div className="flex shrink-0 items-center gap-2">
@@ -1682,14 +2202,60 @@ export default function AvatarSpace({
             <div className="shrink-0">
               <MicButton enabled={micEnabled} onClick={toggleMic} />
             </div>
-            <div className="shrink-0">
+            <div className="flex shrink-0 flex-col items-center">
               <ScreenShareButton
                 enabled={screenSharing}
                 onClick={toggleScreenShare}
               />
+              {screenShareRemainingSeconds !== null && (
+                <span
+                  className={`mt-0.5 hidden text-[9px] leading-none sm:inline ${
+                    screenShareRemainingSeconds <= 0
+                      ? "text-red-400"
+                      : "text-slate-400"
+                  }`}
+                  title="画面共有の本日の残り利用可能時間(4:00にリセット)"
+                >
+                  残{formatRemainingMinutes(screenShareRemainingSeconds)}
+                </span>
+              )}
             </div>
-            <div className="shrink-0">
+            <div className="flex shrink-0 flex-col items-center">
               <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
+              {videoCallRemainingSeconds !== null && (
+                <span
+                  className={`mt-0.5 hidden text-[9px] leading-none sm:inline ${
+                    videoCallRemainingSeconds <= 0
+                      ? "text-red-400"
+                      : "text-slate-400"
+                  }`}
+                  title="ビデオ通話の本日の残り利用可能時間(4:00にリセット)"
+                >
+                  残{formatRemainingMinutes(videoCallRemainingSeconds)}
+                </span>
+              )}
+            </div>
+            <div className="relative shrink-0">
+              <button
+                onClick={() => {
+                  setChatOpen((v) => !v);
+                  setUnreadChatCount(0);
+                }}
+                title="チャット"
+                aria-label="チャットを開く"
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                  chatOpen
+                    ? "bg-emerald-600 text-white"
+                    : "bg-slate-700 text-slate-300"
+                } hover:opacity-80`}
+              >
+                💬
+              </button>
+              {unreadChatCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
+                  {unreadChatCount > 9 ? "9+" : unreadChatCount}
+                </span>
+              )}
             </div>
             {/* 設定アイコンはサイドバーの「自分」欄に移動した */}
             {/* スマホのみ表示するハンバーガーボタン */}
@@ -1767,22 +2333,50 @@ export default function AvatarSpace({
             </div>
           )}
 
-          {visibleScreenShares.map((p) => (
-            <button
-              key={`screen-${p.id}`}
-              onClick={() => setExpandedMedia({ peerId: p.id, kind: "screen" })}
-              className="relative"
-              aria-label={`${p.name}の画面を全画面表示`}
-            >
-              <RemoteVideo
-                stream={remoteScreenStreams[p.id]}
-                className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
-              />
-              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                {p.name}の画面
-              </span>
-            </button>
-          ))}
+          {/* 画面共有は同時に何人でも共有できるが、視聴は1人だけ選ぶ方式。
+              選択中の相手だけライブ映像、それ以外は共有開始時点の静止画
+              プレビュー(無ければ「共有中」の簡易表示)を出す。 */}
+          {visibleScreenShares.map((p) => {
+            const isSelected = selectedScreenSharerId === p.id;
+            const liveStream = isSelected ? remoteScreenStreams[p.id] : null;
+            return (
+              <button
+                key={`screen-${p.id}`}
+                onClick={() =>
+                  isSelected
+                    ? setExpandedMedia({ peerId: p.id, kind: "screen" })
+                    : setSelectedScreenSharerId(p.id)
+                }
+                className="relative"
+                aria-label={
+                  isSelected
+                    ? `${p.name}の画面を全画面表示`
+                    : `${p.name}の画面共有を視聴する`
+                }
+              >
+                {liveStream ? (
+                  <RemoteVideo
+                    stream={liveStream}
+                    className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
+                  />
+                ) : screenPreviewImages[p.id] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={screenPreviewImages[p.id]}
+                    alt={`${p.name}の画面共有プレビュー`}
+                    className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
+                  />
+                ) : (
+                  <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
+                    共有中
+                  </div>
+                )}
+                <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                  {p.name}の画面{!isSelected && "(視聴する)"}
+                </span>
+              </button>
+            );
+          })}
 
           {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
               全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
@@ -2008,6 +2602,67 @@ export default function AvatarSpace({
             </div>
           );
         })()}
+
+      {/* チャットパネル(右側固定・トグル表示) */}
+      {chatOpen && (
+        <div className="fixed inset-y-0 right-0 z-40 flex w-72 max-w-[85vw] flex-col border-l border-slate-700 bg-slate-900 text-white">
+          <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
+            <h2 className="text-xs font-semibold text-slate-300">チャット</h2>
+            <button
+              onClick={() => setChatOpen(false)}
+              className="text-slate-400 hover:text-white"
+              aria-label="チャットを閉じる"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1 space-y-2 overflow-y-auto px-3 py-2">
+            {chatMessages.length === 0 && (
+              <p className="mt-4 text-center text-[11px] text-slate-500">
+                まだメッセージはありません
+              </p>
+            )}
+            {chatMessages.map((m) => (
+              <div
+                key={m.id}
+                className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                  m.isSelf
+                    ? "ml-auto bg-emerald-600 text-white"
+                    : "bg-slate-700 text-slate-100"
+                }`}
+              >
+                {!m.isSelf && (
+                  <p className="mb-0.5 text-[10px] font-semibold text-slate-300">
+                    {m.senderName}
+                  </p>
+                )}
+                <p className="whitespace-pre-wrap break-words">{m.message}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-1.5 border-t border-slate-700 p-2">
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                  sendChatMessage();
+                }
+              }}
+              maxLength={500}
+              placeholder="メッセージを入力"
+              className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
+            />
+            <button
+              onClick={sendChatMessage}
+              disabled={!chatInput.trim() || chatSending}
+              className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              送信
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* アバター・名前の変更モーダル */}
       {settingsOpen && (

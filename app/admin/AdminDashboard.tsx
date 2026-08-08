@@ -30,6 +30,7 @@ export default function AdminDashboard({
   templates,
   showMasterLink,
   userEmail,
+  isDebugPlanSwitcherAllowed,
 }: {
   rooms: Room[];
   plan: PlanId;
@@ -40,6 +41,7 @@ export default function AdminDashboard({
   templates: TemplateOption[];
   showMasterLink: boolean;
   userEmail: string;
+  isDebugPlanSwitcherAllowed: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -148,7 +150,11 @@ export default function AdminDashboard({
             <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
           )}
           {tab === "billing" && (
-            <BillingPanel plan={plan} trialEndsAt={trialEndsAt} />
+            <BillingPanel
+              plan={plan}
+              trialEndsAt={trialEndsAt}
+              isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
+            />
           )}
         </div>
       </main>
