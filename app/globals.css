@@ -47,17 +47,19 @@ textarea,
 }
 
 /* DMメッセージ本文だけは、コピー機能(右クリック/長押しメニュー)のために
-   テキスト選択を許可する。iOS Safariはこのcalloutを完全には抑止できない
-   ことがあるため、ネイティブのコピー機能がフォールバックとして併存する
-   ことを許容する(components/AvatarSpace.tsxのDMコピー機能を参照)。
+   テキスト選択を許可する。
    user-selectは継承されるプロパティだが、上の`* { user-select: none }`が
    全要素(このクラスの子孫であるメッセージ本文<p>自身にも)直接
    マッチしてしまい、継承より子孫要素への直接指定が優先されるため、
    .dm-selectableだけに指定しても子孫のテキストは選択できないままだった。
-   `.dm-selectable *`も明示的に対象にすることで子孫にも確実に適用する。 */
+   `.dm-selectable *`も明示的に対象にすることで子孫にも確実に適用する。
+   -webkit-touch-callout: noneでiOS標準の長押しメニューを抑止する
+   (独自メニュー・独自の選択コピーUIに一本化するため。ただしOSバージョンに
+   よっては完全に抑止できない場合がある点はcomponents/AvatarSpace.tsxの
+   DMコピー機能側のコメントを参照)。 */
 .dm-selectable,
 .dm-selectable * {
-  -webkit-touch-callout: default;
+  -webkit-touch-callout: none;
   -webkit-user-select: text;
   -moz-user-select: text;
   -ms-user-select: text;
