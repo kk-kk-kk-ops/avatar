@@ -646,6 +646,13 @@ begin
   end if;
 end $$;
 
+-- メッセージの編集・削除(自分の送信分のみ)対応。編集はedited_atを、
+-- 削除はdeleted_atを立てる論理削除にする(messageは空文字にし、行自体は
+-- 残す)。既存の「投稿から1ヶ月で自動削除」のcronはそのまま生きているため、
+-- 削除済み行もそのサイクルでいずれ物理削除される。
+alter table public.chat_messages add column if not exists edited_at timestamptz;
+alter table public.chat_messages add column if not exists deleted_at timestamptz;
+
 create index if not exists chat_messages_room_id_created_at_idx
   on public.chat_messages (room_id, created_at);
 create index if not exists chat_messages_thread_idx
@@ -690,6 +697,15 @@ create policy "chat_messages: insert own dm"
     -- 広がらない。
   );
 
+-- 自分が送信したメッセージの編集・削除用。sender_user_id = auth.uid()の
+-- 行だけを対象にする(recipient側は更新できない)。編集・削除どちらも
+-- 同じ行に対するUPDATEのため、1つのポリシーで両方をカバーする。
+drop policy if exists "chat_messages: update own dm" on public.chat_messages;
+create policy "chat_messages: update own dm"
+  on public.chat_messages for update
+  using (sender_user_id = auth.uid())
+  with check (sender_user_id = auth.uid());
+
 -- 9f-2. viewOnly(既に自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
 --       のチャット対応。上記のRLSは「自分のprofiles.account_id = ルームの
 --       account_id」だけを許可するため、viewOnlyのケース(profiles.account_id
@@ -716,13 +732,16 @@ returns table (
   sender_user_id uuid,
   sender_name text,
   message text,
-  created_at timestamptz
+  created_at timestamptz,
+  edited_at timestamptz,
+  deleted_at timestamptz
 )
 language sql
 security definer
 set search_path = public
 as $$
-  select m.id, m.sender_user_id, m.sender_name, m.message, m.created_at
+  select m.id, m.sender_user_id, m.sender_name, m.message, m.created_at,
+    m.edited_at, m.deleted_at
   from public.chat_messages m
   join public.rooms r on r.id = m.room_id
   join public.accounts a on a.id = r.account_id
@@ -787,6 +806,96 @@ end;
 $$;
 
 grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text) to authenticated;
+
+-- viewOnly向けのメッセージ編集。通常ルートは上のRLS
+-- ("chat_messages: update own dm")で直接UPDATEできるが、viewOnlyは
+-- そのRLSでも(profiles.account_idが対象アカウントと一致しないため)
+-- 弾かれるので、招待トークンを検証するSECURITY DEFINER関数を用意する。
+-- パラメータ名は列名と区別するためp_接頭辞を付ける
+-- (increment_daily_usage_secondsと同じ理由)。
+drop function if exists public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz);
+
+create function public.edit_chat_message_by_invite_token(
+  token text,
+  p_message_id uuid,
+  p_new_message text,
+  p_edited_at timestamptz
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  if char_length(p_new_message) = 0 or char_length(p_new_message) > 500 then
+    raise exception 'メッセージの長さが不正です';
+  end if;
+
+  select r.id into v_room_id
+  from public.chat_messages m
+  join public.rooms r on r.id = m.room_id
+  join public.accounts a on a.id = r.account_id
+  where a.invite_token = token
+    and m.id = p_message_id
+    and m.sender_user_id = auth.uid()
+    and m.deleted_at is null;
+
+  if v_room_id is null then
+    raise exception 'このメッセージは編集できません';
+  end if;
+
+  update public.chat_messages
+  set message = p_new_message, edited_at = p_edited_at
+  where id = p_message_id;
+end;
+$$;
+
+grant execute on function public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz) to authenticated;
+
+-- viewOnly向けのメッセージ削除(論理削除)。上のedit関数と同じ考え方。
+drop function if exists public.delete_chat_message_by_invite_token(text, uuid, timestamptz);
+
+create function public.delete_chat_message_by_invite_token(
+  token text,
+  p_message_id uuid,
+  p_deleted_at timestamptz
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  select r.id into v_room_id
+  from public.chat_messages m
+  join public.rooms r on r.id = m.room_id
+  join public.accounts a on a.id = r.account_id
+  where a.invite_token = token
+    and m.id = p_message_id
+    and m.sender_user_id = auth.uid();
+
+  if v_room_id is null then
+    raise exception 'このメッセージは削除できません';
+  end if;
+
+  update public.chat_messages
+  set message = '', deleted_at = p_deleted_at
+  where id = p_message_id;
+end;
+$$;
+
+grant execute on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) to authenticated;
 
 -- 9f-3. チャット履歴の削除ポリシー。
 --   ・投稿から1ヶ月経過したメッセージは自動削除する(pg_cronで毎日実行)
