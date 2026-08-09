@@ -100,9 +100,12 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
     };
   }, [rooms]);
 
-  // 負荷スコア: ビデオ通話は1人あたり負荷1、画面共有(発信・視聴双方)は
-  // 帯域・エンコード負荷が大きいためそれぞれ1人あたり負荷10として重み付け。
-  const loadScore = stats.video * 1 + stats.screen * 10 + stats.watching * 10;
+  // 負荷スコア: ビデオ通話は1人あたり負荷1。画面共有の実測帯域
+  // (送信最大約3.1Mbps、受信最大約625kbps〜2.5Mbps。
+  // deploy/livekit/LOAD_TEST_PLAN.md参照)をビデオ通話(150kbps)比で
+  // 重み付けし、共有中×20・視聴中×17とする
+  // (deploy/livekit/monitor/check-load-score.mjsと同じ重み)。
+  const loadScore = stats.video * 1 + stats.screen * 20 + stats.watching * 17;
 
   return (
     <div className="rounded-xl border border-slate-200 p-6">
