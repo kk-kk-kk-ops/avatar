@@ -3026,10 +3026,21 @@ export default function AvatarSpace({
             showParticipants ? "flex" : "hidden"
           } fixed inset-y-0 left-0 z-40 w-64 flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-first sm:flex sm:w-[274px] sm:shrink-0`}
         >
-          {/* 上半分:自分+参加者一覧(スクロール可能) */}
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-slate-400">自分</h2>
+          {/* 上半分:自分+参加者一覧。サイドバー全体の残り高さ(下半分の
+              DMが50%を占める分の残り)をこのブロックで使い切り、参加者が
+              増えても自分欄は固定したまま参加者一覧だけがスクロールする
+              ようにする。 */}
+          <div className="flex min-h-0 flex-1 flex-col p-3">
+            {/* ヘッダー:アイコン(左上)+閉じるボタン(右上、スマホのみ) */}
+            <div className="mb-2 flex shrink-0 items-center justify-between">
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/logo.png"
+                  alt="Globy"
+                  className="h-5 w-5 object-contain"
+                />
+              </div>
               <button
                 onClick={() => setShowParticipants(false)}
                 className="text-slate-400 hover:text-white sm:hidden"
@@ -3038,8 +3049,12 @@ export default function AvatarSpace({
                 ✕
               </button>
             </div>
+
+            <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
+              自分
+            </h2>
             {selfPlayer && (
-              <div className="mb-3 flex items-center justify-between gap-2 text-sm">
+              <div className="mb-3 flex shrink-0 items-center justify-between gap-2 text-sm">
                 <div className="flex min-w-0 items-center gap-2">
                   <span
                     className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
@@ -3049,9 +3064,6 @@ export default function AvatarSpace({
                     }}
                   />
                   <span className="truncate">{selfPlayer.name}</span>
-                  <span className="shrink-0 text-[10px] text-slate-400">
-                    (あなた)
-                  </span>
                 </div>
                 <button
                   onClick={openSettings}
@@ -3064,10 +3076,10 @@ export default function AvatarSpace({
               </div>
             )}
 
-            <h2 className="mb-2 text-xs font-semibold text-slate-400">
-              参加者(クリックでチャット)
+            <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
+              参加者
             </h2>
-            <ul className="space-y-1">
+            <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
               {playerList
                 .filter((p) => p.id !== selfId.current)
                 .map((p) => (
@@ -3104,8 +3116,8 @@ export default function AvatarSpace({
             </ul>
           </div>
 
-          {/* 下半分:選択中の相手とのDM */}
-          <div className="flex h-64 shrink-0 flex-col border-t border-slate-700">
+          {/* 下半分:選択中の相手とのDM。サイドバー全体の50%の高さを占める */}
+          <div className="flex h-1/2 shrink-0 flex-col border-t border-slate-700">
             {(() => {
               const peer = selectedPeerUserId
                 ? playerList.find((p) => p.userId === selectedPeerUserId)
@@ -3366,11 +3378,15 @@ export default function AvatarSpace({
         </div>
       )}
 
-      {/* スマホ用移動ボタン(sm以上の画面では非表示) */}
-      <TouchControls
-        onPress={handleTouchPress}
-        onRelease={handleTouchRelease}
-      />
+      {/* スマホ用移動ボタン(sm以上の画面では非表示)。参加者一覧
+          ドロワー(ハンバーガーメニュー)を開いている間はトーク画面と
+          重なって送信ボタンが押せなくなるため非表示にする。 */}
+      {!showParticipants && (
+        <TouchControls
+          onPress={handleTouchPress}
+          onRelease={handleTouchRelease}
+        />
+      )}
 
       {/* 相手の音声を再生する非表示要素(自動接続された分だけ生成) */}
       {Object.entries(remoteStreams).map(([peerId, stream]) => (
