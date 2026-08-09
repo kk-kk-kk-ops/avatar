@@ -513,15 +513,18 @@ export default function AvatarSpace({
       }>;
       const messages: DmMessage[] = (
         viewOnlyInviteToken ? rows : rows.slice().reverse()
-      ).map((row) => ({
-        id: row.id,
-        senderUserId: row.sender_user_id,
-        isSelf: row.sender_user_id === myUserId,
-        message: row.message,
-        createdAt: row.created_at,
-        editedAt: row.edited_at,
-        deletedAt: row.deleted_at,
-      }));
+      )
+        // 削除済みメッセージは一覧に表示しない(吹き出し自体を残さない)。
+        .filter((row) => !row.deleted_at)
+        .map((row) => ({
+          id: row.id,
+          senderUserId: row.sender_user_id,
+          isSelf: row.sender_user_id === myUserId,
+          message: row.message,
+          createdAt: row.created_at,
+          editedAt: row.edited_at,
+          deletedAt: row.deleted_at,
+        }));
       dmForceScrollRef.current = true;
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
       // スレッドを開いたので未読を消す
@@ -649,6 +652,7 @@ export default function AvatarSpace({
         event: "dm",
         payload: {
           id: data.id,
+          originId: selfId.current,
           senderUserId: myUserId,
           recipientUserId: peerUserId,
           senderName,
@@ -714,6 +718,7 @@ export default function AvatarSpace({
         event: "dm-edit",
         payload: {
           id: messageId,
+          originId: selfId.current,
           senderUserId: myUserId,
           recipientUserId: peerUserId,
           message: trimmed,
@@ -761,8 +766,8 @@ export default function AvatarSpace({
       }
       setDmThreads((prev) => ({
         ...prev,
-        [peerUserId]: (prev[peerUserId] ?? []).map((msg) =>
-          msg.id === m.id ? { ...msg, message: "", deletedAt } : msg,
+        [peerUserId]: (prev[peerUserId] ?? []).filter(
+          (msg) => msg.id !== m.id,
         ),
       }));
       channelRef.current?.send({
@@ -770,6 +775,7 @@ export default function AvatarSpace({
         event: "dm-delete",
         payload: {
           id: m.id,
+          originId: selfId.current,
           senderUserId: myUserId,
           recipientUserId: peerUserId,
           deletedAt,
@@ -1558,6 +1564,7 @@ export default function AvatarSpace({
         .on("broadcast", { event: "dm" }, ({ payload }) => {
           const msg = payload as {
             id: string;
+            originId: string;
             senderUserId: string;
             recipientUserId: string;
             senderName: string;
@@ -1565,11 +1572,18 @@ export default function AvatarSpace({
             createdAt: string;
           };
           const myUserId = authUserIdRef.current;
-          // 自分が送った分は既にローカルへ追加済み。自分宛てでなければ
-          // (別の相手同士のDMは同じルームチャンネルに乗って届くが自分には
-          // 関係ないので)無視する。
+          // 送信元タブが「自分」かどうかは、認証ユーザーID(senderUserId)
+          // ではなくブラウザセッション単位のorigin(selfId)で判定する。
+          // 同一アカウントを複数タブ/端末で開いている場合、認証ユーザーIDは
+          // 同じでもタブごとに別セッションのため、ユーザーID比較だと
+          // 「自分の別タブからの更新」まで誤って自分自身の送信分として
+          // 無視してしまっていた(実際にはローカル未反映のため表示が
+          // 更新されなくなる不具合の原因)。このタブから送った分は既に
+          // ローカルへ反映済みなのでoriginIdが一致すれば無視し、自分宛て
+          // でなければ(別の相手同士のDMは同じルームチャンネルに乗って
+          // 届くが自分には関係ないので)無視する。
           if (
-            msg.senderUserId === myUserId ||
+            msg.originId === selfId.current ||
             msg.recipientUserId !== myUserId
           ) {
             return;
@@ -1606,15 +1620,18 @@ export default function AvatarSpace({
         .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
           const msg = payload as {
             id: string;
+            originId: string;
             senderUserId: string;
             recipientUserId: string;
             message: string;
             editedAt: string;
           };
           const myUserId = authUserIdRef.current;
-          // 自分の編集分は既にローカルへ反映済み。自分宛てでなければ無視する。
+          // このタブから送った編集は既にローカルへ反映済み(originId一致)。
+          // 自分宛てでなければ無視する(上のdmイベントと同じ理由でユーザーID
+          // ではなくoriginIdで自分自身の送信分かどうかを判定する)。
           if (
-            msg.senderUserId === myUserId ||
+            msg.originId === selfId.current ||
             msg.recipientUserId !== myUserId
           ) {
             return;
@@ -1631,23 +1648,23 @@ export default function AvatarSpace({
         .on("broadcast", { event: "dm-delete" }, ({ payload }) => {
           const msg = payload as {
             id: string;
+            originId: string;
             senderUserId: string;
             recipientUserId: string;
             deletedAt: string;
           };
           const myUserId = authUserIdRef.current;
+          // 自分の送信分かどうかの判定理由は上のdm/dm-editイベントと同じ。
           if (
-            msg.senderUserId === myUserId ||
+            msg.originId === selfId.current ||
             msg.recipientUserId !== myUserId
           ) {
             return;
           }
           setDmThreads((prev) => ({
             ...prev,
-            [msg.senderUserId]: (prev[msg.senderUserId] ?? []).map((m) =>
-              m.id === msg.id
-                ? { ...m, message: "", deletedAt: msg.deletedAt }
-                : m,
+            [msg.senderUserId]: (prev[msg.senderUserId] ?? []).filter(
+              (m) => m.id !== msg.id,
             ),
           }));
         })
@@ -2976,7 +2993,7 @@ export default function AvatarSpace({
         <div
           className={`${
             showParticipants ? "flex" : "hidden"
-          } fixed inset-y-0 left-0 z-40 w-64 flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-first sm:flex sm:w-56 sm:shrink-0`}
+          } fixed inset-y-0 left-0 z-40 w-64 flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-first sm:flex sm:w-[274px] sm:shrink-0`}
         >
           {/* 上半分:自分+参加者一覧(スクロール可能) */}
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -3100,58 +3117,48 @@ export default function AvatarSpace({
                           まだメッセージはありません
                         </p>
                       )}
-                      {thread.map((m) =>
-                        m.deletedAt ? (
-                          // 削除済みメッセージはプレースホルダーのみ表示し、
-                          // コピー/編集/削除のメニューは出さない(対象が無いため)。
-                          <div
-                            key={m.id}
-                            className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs italic text-slate-400 ${
-                              m.isSelf ? "ml-auto bg-slate-700/40" : "bg-slate-700/40"
-                            }`}
+                      {thread.map((m) => (
+                        // 削除済みメッセージはリアルタイム反映・初回読み込み
+                        // どちらの経路でもthreadから除外済みのため、ここでは
+                        // 通常メッセージのみを描画すればよい。
+                        <div
+                          key={m.id}
+                          onContextMenu={(e) => handleDmContextMenu(e, m)}
+                          onTouchStart={(e) => handleDmTouchStart(e, m)}
+                          onTouchMove={handleDmTouchMove}
+                          onTouchEnd={handleDmTouchEnd}
+                          onTouchCancel={handleDmTouchEnd}
+                          className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                            m.isSelf
+                              ? "ml-auto bg-emerald-600 text-white"
+                              : "bg-slate-700 text-slate-100"
+                          }`}
+                        >
+                          {/*
+                            (編集済み)ラベルはこの<p>の外に置く。
+                            「選択コピー」はこの<p>のDOMノード全体を
+                            Range.selectNodeContentsで選択するため、
+                            <p>の中に入れるとコピー内容に混ざってしまう。
+                          */}
+                          <p
+                            ref={(el) => {
+                              dmBubbleRefs.current[m.id] = el;
+                            }}
+                            className="inline whitespace-pre-wrap break-words"
                           >
-                            このメッセージは削除されました
-                          </div>
-                        ) : (
-                          <div
-                            key={m.id}
-                            onContextMenu={(e) => handleDmContextMenu(e, m)}
-                            onTouchStart={(e) => handleDmTouchStart(e, m)}
-                            onTouchMove={handleDmTouchMove}
-                            onTouchEnd={handleDmTouchEnd}
-                            onTouchCancel={handleDmTouchEnd}
-                            className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
-                              m.isSelf
-                                ? "ml-auto bg-emerald-600 text-white"
-                                : "bg-slate-700 text-slate-100"
-                            }`}
-                          >
-                            {/*
-                              (編集済み)ラベルはこの<p>の外に置く。
-                              「選択コピー」はこの<p>のDOMノード全体を
-                              Range.selectNodeContentsで選択するため、
-                              <p>の中に入れるとコピー内容に混ざってしまう。
-                            */}
-                            <p
-                              ref={(el) => {
-                                dmBubbleRefs.current[m.id] = el;
-                              }}
-                              className="inline whitespace-pre-wrap break-words"
+                            {m.message}
+                          </p>
+                          {m.editedAt && (
+                            <span
+                              className={`ml-1 text-[10px] ${
+                                m.isSelf ? "text-emerald-100" : "text-slate-400"
+                              }`}
                             >
-                              {m.message}
-                            </p>
-                            {m.editedAt && (
-                              <span
-                                className={`ml-1 text-[10px] ${
-                                  m.isSelf ? "text-emerald-100" : "text-slate-400"
-                                }`}
-                              >
-                                (編集済み)
-                              </span>
-                            )}
-                          </div>
-                        ),
-                      )}
+                              (編集済み)
+                            </span>
+                          )}
+                        </div>
+                      ))}
                     </div>
                     {showDmScrollButton && (
                       <button
