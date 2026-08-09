@@ -3030,9 +3030,12 @@ export default function AvatarSpace({
               DMが50%を占める分の残り)をこのブロックで使い切り、参加者が
               増えても自分欄は固定したまま参加者一覧だけがスクロールする
               ようにする。 */}
-          <div className="flex min-h-0 flex-1 flex-col p-3">
-            {/* ヘッダー:アイコン(左上)+閉じるボタン(右上、スマホのみ) */}
-            <div className="mb-2 flex shrink-0 items-center justify-between">
+          <div className="flex min-h-0 flex-1 flex-col pl-4 pr-3 pt-2 pb-3">
+            {/* ヘッダー:アイコン(左上)+閉じるボタン(右上、スマホのみ)。
+                左・上の余白はヘッダー(px-4 py-2)と揃えることで、
+                ハンバーガーメニューの開閉時にロゴの位置がずれて見えない
+                ようにする。 */}
+            <div className="mb-4 flex shrink-0 items-center justify-between">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img

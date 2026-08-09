@@ -74,7 +74,7 @@ export default function TouchControls({ onPress, onRelease }: Props) {
 
   return (
     <div
-      className="fixed bottom-[10px] right-8 z-50 grid grid-cols-3 grid-rows-3 gap-0 sm:hidden"
+      className="fixed bottom-8 right-8 z-50 grid grid-cols-3 grid-rows-3 gap-0 sm:hidden"
       style={{ touchAction: "none" }}
     >
       <div />
