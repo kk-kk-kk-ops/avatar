@@ -255,6 +255,7 @@ export default function AvatarSpace({
   }, [selectedPeerUserId]);
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
+  const [dmError, setDmError] = useState<string | null>(null);
   // 相手ごとの未読フラグ。参加者一覧の該当行にマークを出し、
   // そのスレッドを開いたタイミングでfalseに戻す。
   const [unreadFromPeers, setUnreadFromPeers] = useState<
@@ -401,6 +402,12 @@ export default function AvatarSpace({
     return () => clearTimeout(timer);
   }, [callError]);
 
+  useEffect(() => {
+    if (!dmError) return;
+    const timer = setTimeout(() => setDmError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [dmError]);
+
   // playersの最新値をrefにも反映(effect外・イベントハンドラ外から
   // 最新状態を参照したい箇所で使う)
   useEffect(() => {
@@ -506,6 +513,7 @@ export default function AvatarSpace({
     const senderName = selfState.current.name;
     const myUserId = authUserIdRef.current;
     setDmInput("");
+    setDmError(null);
     setDmSending(true);
     try {
       // viewOnlyの場合は通常のRLSでINSERTが拒否されるため、招待トークンを
@@ -539,6 +547,8 @@ export default function AvatarSpace({
       if (error || !data || !myUserId) {
         // eslint-disable-next-line no-console
         console.error("チャットメッセージの送信に失敗しました", error);
+        setDmInput(trimmed);
+        setDmError("送信に失敗しました。時間をおいて再度お試しください。");
         return;
       }
       setDmThreads((prev) => ({
@@ -2683,6 +2693,11 @@ export default function AvatarSpace({
                       </div>
                     ))}
                   </div>
+                  {dmError && (
+                    <p className="border-t border-slate-700 bg-red-900/80 px-3 py-1.5 text-[11px] text-red-100">
+                      {dmError}
+                    </p>
+                  )}
                   <div className="flex gap-1.5 border-t border-slate-700 p-2">
                     <input
                       value={dmInput}
