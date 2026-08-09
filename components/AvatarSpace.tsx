@@ -696,8 +696,22 @@ export default function AvatarSpace({
     [],
   );
 
+  // タッチ由来の操作が進行中かどうか(contextmenuイベントが本物の右クリック
+  // なのか、Android等が長押しで自動発火させたものなのかを区別するために使う)。
+  const dmTouchActiveRef = useRef(false);
+
   const handleDmContextMenu = useCallback(
     (e: React.MouseEvent, m: DmMessage) => {
+      if (dmTouchActiveRef.current) {
+        // タッチ由来のcontextmenu。ここでpreventDefault()すると、長押しに
+        // 連動してブラウザが進めているネイティブのテキスト選択(選択
+        // ハンドル)まで巻き込んで中断してしまうことがある(Android/
+        // Firefox等で、contextmenuでのpreventDefault()がtouchcancelを
+        // 誘発することが報告されている既知の挙動)。独自メニューは
+        // touchstart側の長押しタイマーで別途表示するため、ここでは
+        // 何もせずネイティブの選択動作をそのまま進行させる。
+        return;
+      }
       e.preventDefault();
       clearDmLongPressTimer();
       openDmContextMenu(e.clientX, e.clientY, m);
@@ -707,10 +721,11 @@ export default function AvatarSpace({
 
   // iOS Safariはテキスト上の長押しでcontextmenuイベントが発火しないため、
   // touchstart/touchmove/touchendから自前で長押し(500ms・移動量10px以内)を
-  // 検出する(Android Chrome/PCは基本的にcontextmenuイベント側で処理される。
-  // 両方発火しても、setDmContextMenuの内容を上書きするだけなので害はない)。
+  // 検出する(Android等でcontextmenuも発火した場合は上のハンドラ側で
+  // 無視されるので、こちらのメニュー表示だけが有効になる)。
   const handleDmTouchStart = useCallback(
     (e: React.TouchEvent, m: DmMessage) => {
+      dmTouchActiveRef.current = true;
       const touch = e.touches[0];
       if (!touch) return;
       dmLongPressStartRef.current = { x: touch.clientX, y: touch.clientY };
@@ -729,6 +744,15 @@ export default function AvatarSpace({
     if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) {
       clearDmLongPressTimer();
     }
+  }, [clearDmLongPressTimer]);
+
+  const handleDmTouchEnd = useCallback(() => {
+    clearDmLongPressTimer();
+    // このタッチ操作の直後に発火しうるcontextmenuイベントを「タッチ由来」と
+    // 判定できるよう、フラグを少し遅らせてから戻す。
+    window.setTimeout(() => {
+      dmTouchActiveRef.current = false;
+    }, 100);
   }, [clearDmLongPressTimer]);
 
   // 選択コピーモード:対象メッセージ全文を初期選択し、選択範囲の変化を
@@ -2901,8 +2925,8 @@ export default function AvatarSpace({
                           onContextMenu={(e) => handleDmContextMenu(e, m)}
                           onTouchStart={(e) => handleDmTouchStart(e, m)}
                           onTouchMove={handleDmTouchMove}
-                          onTouchEnd={clearDmLongPressTimer}
-                          onTouchCancel={clearDmLongPressTimer}
+                          onTouchEnd={handleDmTouchEnd}
+                          onTouchCancel={handleDmTouchEnd}
                           className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
                             m.isSelf
                               ? "ml-auto bg-emerald-600 text-white"
