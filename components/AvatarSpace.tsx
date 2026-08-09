@@ -70,6 +70,11 @@ function formatRemainingTime(remainingSeconds: number): string {
   return `${minutes}分${seconds}秒`;
 }
 
+// DMメッセージ一覧のスクロール位置が最下部付近(閾値px以内)かどうかを判定する。
+function isDmScrollNearBottom(el: HTMLDivElement, thresholdPx = 80): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= thresholdPx;
+}
+
 // 画面共有開始時点の最初の1フレームを、選択前プレビュー用の軽量な
 // JPEG dataURLとして切り出す。取得に失敗した場合はnullを返す
 // (プレビューが出ないだけで、選択視聴自体は引き続き可能)。
@@ -256,6 +261,18 @@ export default function AvatarSpace({
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
+  // メッセージ一覧のスクロール制御用。dmForceScrollRefがtrueの間に
+  // dmThreads(選択中の相手分)が更新されたら、次の描画後に一番下へ
+  // スクロールする(自分の送信時・スレッドを開いた時・最下部付近での
+  // 新着時)。falseのまま更新された場合は、最下部から離れて過去の
+  // メッセージを見ている間の新着なので、自動スクロールせず矢印ボタンを出す。
+  const dmScrollRef = useRef<HTMLDivElement | null>(null);
+  const dmForceScrollRef = useRef(false);
+  const [showDmScrollButton, setShowDmScrollButton] = useState(false);
+  // コピーボタンを押した直後、一時的に✓表示へ切り替えるためのメッセージID。
+  const [copiedDmMessageId, setCopiedDmMessageId] = useState<string | null>(
+    null,
+  );
   // 相手ごとの未読フラグ。参加者一覧の該当行にマークを出し、
   // そのスレッドを開いたタイミングでfalseに戻す。
   const [unreadFromPeers, setUnreadFromPeers] = useState<
@@ -424,6 +441,7 @@ export default function AvatarSpace({
   // しても同じ相手として履歴が引き継がれる)。
   useEffect(() => {
     if (!joined || !selectedPeerUserId) return;
+    dmForceScrollRef.current = true;
     let cancelled = false;
     const myUserId = authUserIdRef.current;
     (async () => {
@@ -467,6 +485,7 @@ export default function AvatarSpace({
         message: row.message,
         createdAt: row.created_at,
       }));
+      dmForceScrollRef.current = true;
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
       // スレッドを開いたので未読を消す
       setUnreadFromPeers((prev) =>
@@ -477,6 +496,27 @@ export default function AvatarSpace({
       cancelled = true;
     };
   }, [joined, roomId, supabase, viewOnlyInviteToken, selectedPeerUserId]);
+
+  // ---- チャット:表示中のスレッドが更新されるたびにスクロール位置を制御する ----
+  // dmForceScrollRef(送信直後・スレッドを開いた直後・最下部付近での新着)が
+  // trueなら一番下へスクロールしてフラグを消費する。falseのまま更新された
+  // (=最下部から離れて過去ログを見ている間の新着)場合は自動スクロールせず、
+  // 下向き矢印ボタンを表示する。
+  useEffect(() => {
+    if (!selectedPeerUserId) return;
+    const el = dmScrollRef.current;
+    if (!el) return;
+    if (dmForceScrollRef.current) {
+      dmForceScrollRef.current = false;
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+      setShowDmScrollButton(false);
+    } else {
+      setShowDmScrollButton(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPeerUserId, dmThreads[selectedPeerUserId ?? ""]]);
 
   // ---- β版の同時接続数カウント用ハートビート ----
   // 全顧客合計のオンライン人数(online_sessions)を30秒おきに更新する。
@@ -551,6 +591,7 @@ export default function AvatarSpace({
         setDmError("送信に失敗しました。時間をおいて再度お試しください。");
         return;
       }
+      dmForceScrollRef.current = true;
       setDmThreads((prev) => ({
         ...prev,
         [peerUserId]: [
@@ -580,6 +621,22 @@ export default function AvatarSpace({
       setDmSending(false);
     }
   }, [dmInput, dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken]);
+
+  // メッセージ本文をクリップボードへコピーし、一時的に✓表示へ切り替える。
+  const copyDmMessage = useCallback((id: string, message: string) => {
+    navigator.clipboard
+      .writeText(message)
+      .then(() => {
+        setCopiedDmMessageId(id);
+        setTimeout(() => {
+          setCopiedDmMessageId((current) => (current === id ? null : current));
+        }, 1500);
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("クリップボードへのコピーに失敗しました", err);
+      });
+  }, []);
 
   // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
@@ -1218,6 +1275,13 @@ export default function AvatarSpace({
             msg.recipientUserId !== myUserId
           ) {
             return;
+          }
+          // 表示中のスレッド宛ての新着なら、届いた時点でのスクロール位置を
+          // 見て「既に最下部付近にいたか」を判定し、force-scrollの要否を
+          // 決める(state更新・再描画より前に、更新前の位置を見る必要がある)。
+          if (selectedPeerUserIdRef.current === msg.senderUserId) {
+            const el = dmScrollRef.current;
+            dmForceScrollRef.current = el ? isDmScrollNearBottom(el) : true;
           }
           setDmThreads((prev) => ({
             ...prev,
@@ -2672,26 +2736,66 @@ export default function AvatarSpace({
                       ✕
                     </button>
                   </div>
-                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2">
-                    {thread.length === 0 && (
-                      <p className="mt-4 text-center text-[11px] text-slate-500">
-                        まだメッセージはありません
-                      </p>
-                    )}
-                    {thread.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
-                          m.isSelf
-                            ? "ml-auto bg-emerald-600 text-white"
-                            : "bg-slate-700 text-slate-100"
-                        }`}
-                      >
-                        <p className="whitespace-pre-wrap break-words">
-                          {m.message}
+                  <div className="relative min-h-0 flex-1">
+                    <div
+                      ref={dmScrollRef}
+                      onScroll={(e) => {
+                        if (isDmScrollNearBottom(e.currentTarget)) {
+                          setShowDmScrollButton(false);
+                        }
+                      }}
+                      className="h-full space-y-2 overflow-y-auto px-3 py-2"
+                    >
+                      {thread.length === 0 && (
+                        <p className="mt-4 text-center text-[11px] text-slate-500">
+                          まだメッセージはありません
                         </p>
-                      </div>
-                    ))}
+                      )}
+                      {thread.map((m) => (
+                        <div
+                          key={m.id}
+                          className={`flex items-end gap-1 ${
+                            m.isSelf ? "ml-auto flex-row-reverse" : ""
+                          }`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                              m.isSelf
+                                ? "bg-emerald-600 text-white"
+                                : "bg-slate-700 text-slate-100"
+                            }`}
+                          >
+                            <p className="whitespace-pre-wrap break-words">
+                              {m.message}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copyDmMessage(m.id, m.message)}
+                            className="shrink-0 rounded p-1 text-[11px] text-slate-400 opacity-60 hover:bg-white/10 hover:text-white hover:opacity-100"
+                            aria-label="メッセージをコピー"
+                            title="コピー"
+                          >
+                            {copiedDmMessageId === m.id ? "✓" : "📋"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {showDmScrollButton && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const el = dmScrollRef.current;
+                          if (el) el.scrollTop = el.scrollHeight;
+                          setShowDmScrollButton(false);
+                        }}
+                        aria-label="最新メッセージへ移動"
+                        title="最新メッセージへ移動"
+                        className="absolute bottom-2 left-1/2 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full bg-slate-600 text-white shadow-lg hover:bg-slate-500"
+                      >
+                        ↓
+                      </button>
+                    )}
                   </div>
                   {dmError && (
                     <p className="border-t border-slate-700 bg-red-900/80 px-3 py-1.5 text-[11px] text-red-100">
