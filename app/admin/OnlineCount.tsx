@@ -32,6 +32,15 @@ export default function OnlineCount({
   const [unbanningUserId, setUnbanningUserId] = useState<string | null>(null);
   const [unbanError, setUnbanError] = useState<string | null>(null);
 
+  // roomsはサーバーコンポーネント側で毎回新しい配列として生成されるため、
+  // 強制退出・BAN解除・プラン切り替えなど、このページでrevalidatePathが
+  // 呼ばれるたびに(ルームの中身自体は変わっていなくても)参照が変わる。
+  // 依存配列にrooms自体を使うとその都度全チャンネルを張り直してしまい、
+  // 再購読の間だけオンライン一覧が消えて見える(点滅する)不具合の原因に
+  // なっていたため、ルームID列という「内容が変わった時だけ変化する値」に
+  // 依存させる。
+  const roomIds = rooms.map((room) => room.id).join(",");
+
   useEffect(() => {
     if (rooms.length === 0) return;
     const supabase = createClient();
@@ -54,7 +63,8 @@ export default function OnlineCount({
     return () => {
       channels.forEach((channel) => supabase.removeChannel(channel));
     };
-  }, [rooms]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomIds]);
 
   const participants = Object.entries(entriesByRoom).flatMap(
     ([roomId, list]) => list.map((player) => ({ roomId, player })),
