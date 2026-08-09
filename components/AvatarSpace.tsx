@@ -850,6 +850,12 @@ export default function AvatarSpace({
 
   const handleDmContextMenu = useCallback(
     (e: React.MouseEvent, m: DmMessage) => {
+      // 部分コピー中(選択ハンドルをドラッグして範囲調整している間)は、
+      // その操作がAndroid等でネイティブのcontextmenuイベントとして
+      // 発火してしまっても無視する。ここでopenDmContextMenuを呼ぶと
+      // (source==="touch"のため)選択中の範囲がremoveAllRanges()で
+      // 消えてしまい、調整中の選択が壊れてしまうため。
+      if (dmSelectionModeMessageId) return;
       // ブラウザ標準の右クリックメニュー/長押しメニューは常に抑止し、
       // 独自メニューに一本化する。
       e.preventDefault();
@@ -857,7 +863,7 @@ export default function AvatarSpace({
       clearDmLongPressTimer();
       openDmContextMenu(m, source);
     },
-    [openDmContextMenu, clearDmLongPressTimer],
+    [openDmContextMenu, clearDmLongPressTimer, dmSelectionModeMessageId],
   );
 
   // iOS Safariはテキスト上の長押しでcontextmenuイベントが発火しないため、
@@ -866,6 +872,13 @@ export default function AvatarSpace({
   // 呼ばれ得るが、setDmContextMenuを上書きするだけなので実害は無い)。
   const handleDmTouchStart = useCallback(
     (e: React.TouchEvent, m: DmMessage) => {
+      // 部分コピー中に選択ハンドルをつかむと、この<div>への通常の
+      // touchstartとしても検知されてしまう。ここで長押しタイマーを
+      // 新たに仕込むと、ハンドルをドラッグして微調整している最中でも
+      // 500ms後にopenDmContextMenu(source: "touch")が発火し、選択範囲が
+      // removeAllRanges()で消えて1文字単位の調整ができなくなってしまう
+      // ため、選択モード中は長押し検出自体を行わない。
+      if (dmSelectionModeMessageId) return;
       dmTouchActiveRef.current = true;
       const touch = e.touches[0];
       if (!touch) return;
@@ -875,7 +888,7 @@ export default function AvatarSpace({
         openDmContextMenu(m, "touch");
       }, 500);
     },
-    [openDmContextMenu],
+    [openDmContextMenu, dmSelectionModeMessageId],
   );
 
   const handleDmTouchMove = useCallback((e: React.TouchEvent) => {
