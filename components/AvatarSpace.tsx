@@ -906,14 +906,25 @@ export default function AvatarSpace({
     }
   }, [clearDmLongPressTimer]);
 
-  const handleDmTouchEnd = useCallback(() => {
-    clearDmLongPressTimer();
-    // このタッチ操作の直後に発火しうるcontextmenuイベントを「タッチ由来」と
-    // 判定できるよう、フラグを少し遅らせてから戻す。
-    window.setTimeout(() => {
-      dmTouchActiveRef.current = false;
-    }, 100);
-  }, [clearDmLongPressTimer]);
+  const handleDmTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      // 部分コピー中に選択ハンドルから指を離すと、iOS Safariが選択用の
+      // 標準ポップアップ(コピー/調べる等)を表示しようとする。この
+      // touchendでpreventDefaultすることでその表示を止められる場合が
+      // ある(WebKit内部の挙動に依存するため、OSバージョンによっては
+      // 完全には抑止できない)。
+      if (dmSelectionModeMessageId) {
+        e.preventDefault();
+      }
+      clearDmLongPressTimer();
+      // このタッチ操作の直後に発火しうるcontextmenuイベントを「タッチ由来」と
+      // 判定できるよう、フラグを少し遅らせてから戻す。
+      window.setTimeout(() => {
+        dmTouchActiveRef.current = false;
+      }, 100);
+    },
+    [clearDmLongPressTimer, dmSelectionModeMessageId],
+  );
 
   // 部分コピーモード:対象メッセージ全文を初期選択し、ユーザーがブラウザ
   // 標準の選択ハンドルでドラッグして範囲を1文字単位で調整できるようにする。
