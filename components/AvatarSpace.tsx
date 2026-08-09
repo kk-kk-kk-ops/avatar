@@ -278,21 +278,32 @@ export default function AvatarSpace({
   const [showDmScrollButton, setShowDmScrollButton] = useState(false);
 
   // ---- チャット:メッセージのコピー(右クリック/長押しメニュー) ----
-  // 各メッセージ本文<p>へのref(選択中の相手の要素特定・メニュー位置算出
-  // (親の吹き出し枠のrect)に使う)。
+  // 各メッセージ本文<p>へのref(Range操作でメッセージ全文選択・選択中の
+  // 相手の要素特定・メニュー位置算出(親の吹き出し枠のrect)に使う)。
   const dmBubbleRefs = useRef<Record<string, HTMLParagraphElement | null>>(
     {},
   );
   // 右クリック(PC)/長押し(スマホ)で開くメニュー。sourceが"mouse"か
   // "touch"かで表示項目が変わる(PC:未選択なら「コピー」のみ・選択済みなら
-  // 「選択範囲をコピー」のみ。スマホ:テキスト選択自体を許可しないため
-  // 常に「コピー」のみ)。位置は常に対象メッセージの吹き出し枠の右上に
-  // 統一する(座標では管理しない)。
+  // 「選択範囲をコピー」のみ。スマホ:長押し時点では事前選択という概念が
+  // 無いため常に「コピー」「部分コピー」の2択のまま)。位置は常に対象
+  // メッセージの吹き出し枠の右上に統一する(座標では管理しない)。
   const [dmContextMenu, setDmContextMenu] = useState<{
     message: DmMessage;
     selectedText: string;
     source: "mouse" | "touch";
   } | null>(null);
+  // 「部分コピー」を選んだ場合に入る、範囲調整モード。対象メッセージ全文を
+  // 初期選択した状態にし、ユーザーがブラウザ標準の選択ハンドルでドラッグして
+  // 範囲を1文字単位で調整できるようにする(独自の選択ハンドルは描画しない。
+  // ブラウザ/OSネイティブの選択操作に乗せることで端末差異を吸収する)。
+  // このモードに入っている間だけ、対象メッセージに`dm-select-active`
+  // クラスを付与してテキスト選択を許可する(スマホの通常の長押しでは
+  // ネイティブ選択が発動しないよう、`.dm-selectable`自体は引き続き
+  // PC限定のままにするため)。
+  const [dmSelectionModeMessageId, setDmSelectionModeMessageId] = useState<
+    string | null
+  >(null);
   const [dmCopyToast, setDmCopyToast] = useState(false);
   // スマホの長押し検出用(contextmenuイベントが発火しないiOS Safari向け)。
   const dmLongPressTimerRef = useRef<number | null>(null);
@@ -797,6 +808,7 @@ export default function AvatarSpace({
 
   const closeDmCopyUi = useCallback(() => {
     setDmContextMenu(null);
+    setDmSelectionModeMessageId(null);
   }, []);
 
   const clearDmLongPressTimer = useCallback(() => {
@@ -806,9 +818,9 @@ export default function AvatarSpace({
     }
   }, []);
 
-  // 対象メッセージの「コピー」メニューを開く。sourceが"mouse"
+  // 対象メッセージの「コピー・部分コピー」メニューを開く。sourceが"mouse"
   // (PC右クリック)の場合のみ、その場で既に選択されていたテキストを拾う
-  // (スマホの長押しにはテキスト選択自体を許可していないため、常に""扱いにする)。
+  // (スマホの長押しには「事前選択」という概念が無いため、常に""扱いにする)。
   const openDmContextMenu = useCallback(
     (message: DmMessage, source: "mouse" | "touch") => {
       const sel = window.getSelection();
@@ -884,9 +896,29 @@ export default function AvatarSpace({
     }, 100);
   }, [clearDmLongPressTimer]);
 
-  // メニューの「コピー」吹き出しを表示する位置(対象メッセージの吹き出し枠の
-  // 右上)を算出する。dmBubbleRefsは本文<p>へのrefなので、その親要素
-  // (吹き出し枠のdiv)のrectを使う。
+  // 部分コピーモード:対象メッセージ全文を初期選択し、ユーザーがブラウザ
+  // 標準の選択ハンドルでドラッグして範囲を1文字単位で調整できるようにする。
+  // 「コピー」ボタンの位置は選択範囲を追わず、常にメッセージ吹き出し枠の
+  // 右上に固定する(JSX側でdmBubbleRefsのrectから都度算出する)。
+  useEffect(() => {
+    if (!dmSelectionModeMessageId) return;
+    const bubbleEl = dmBubbleRefs.current[dmSelectionModeMessageId];
+    if (!bubbleEl) return;
+
+    const range = document.createRange();
+    range.selectNodeContents(bubbleEl);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+
+    return () => {
+      window.getSelection()?.removeAllRanges();
+    };
+  }, [dmSelectionModeMessageId]);
+
+  // メニュー/部分コピーの「コピー」吹き出しを表示する位置(対象メッセージの
+  // 吹き出し枠の右上)を算出する。dmBubbleRefsは本文<p>へのrefなので、
+  // その親要素(吹き出し枠のdiv)のrectを使う。
   const getDmBubbleTopRight = useCallback((messageId: string) => {
     const bubbleEl = dmBubbleRefs.current[messageId]?.parentElement;
     if (!bubbleEl) return null;
@@ -894,7 +926,7 @@ export default function AvatarSpace({
     return { x: rect.right, y: rect.top };
   }, []);
 
-  // スレッド切り替え・Escapeキーでコピーメニュー/編集中を閉じる。
+  // スレッド切り替え・Escapeキーでコピーメニュー/選択モード/編集中を閉じる。
   useEffect(() => {
     closeDmCopyUi();
     setDmEditingMessageId(null);
@@ -902,13 +934,13 @@ export default function AvatarSpace({
   }, [selectedPeerUserId, closeDmCopyUi]);
 
   useEffect(() => {
-    if (!dmContextMenu) return;
+    if (!dmContextMenu && !dmSelectionModeMessageId) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeDmCopyUi();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dmContextMenu, closeDmCopyUi]);
+  }, [dmContextMenu, dmSelectionModeMessageId, closeDmCopyUi]);
 
   // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
@@ -3097,12 +3129,21 @@ export default function AvatarSpace({
                           onTouchEnd={handleDmTouchEnd}
                           onTouchCancel={handleDmTouchEnd}
                           className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                            dmSelectionModeMessageId === m.id
+                              ? "dm-select-active"
+                              : ""
+                          } ${
                             m.isSelf
                               ? "ml-auto bg-emerald-600 text-white"
                               : "bg-slate-700 text-slate-100"
                           }`}
                         >
-                          {/* (編集済み)ラベルはこの<p>の外に置く。 */}
+                          {/*
+                            (編集済み)ラベルはこの<p>の外に置く。
+                            「部分コピー」はこの<p>のDOMノード全体を
+                            Range.selectNodeContentsで選択するため、
+                            <p>の中に入れるとコピー内容に混ざってしまう。
+                          */}
                           <p
                             ref={(el) => {
                               dmBubbleRefs.current[m.id] = el;
@@ -3188,8 +3229,8 @@ export default function AvatarSpace({
         </div>
       </div>
 
-      {/* DMメッセージのコピーメニュー用の背景(外側タップで閉じる) */}
-      {dmContextMenu && (
+      {/* DMメッセージのコピーメニュー/部分コピー用の背景(外側タップで閉じる) */}
+      {(dmContextMenu || dmSelectionModeMessageId) && (
         <div className="fixed inset-0 z-40" onClick={closeDmCopyUi} />
       )}
 
@@ -3209,7 +3250,7 @@ export default function AvatarSpace({
             >
               {dmContextMenu.source === "mouse" && dmContextMenu.selectedText ? (
                 // PCで既に範囲選択済みの状態から開いた場合は、その場コピー
-                // だけを1項目で出す。
+                // だけを1項目で出す(「部分コピー」との二度手間を避ける)。
                 <button
                   type="button"
                   onClick={() => {
@@ -3221,16 +3262,32 @@ export default function AvatarSpace({
                   選択範囲をコピー
                 </button>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    copyDmText(dmContextMenu.message.message);
-                    closeDmCopyUi();
-                  }}
-                  className="block w-full px-3 py-2 text-left hover:bg-slate-700"
-                >
-                  コピー
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      copyDmText(dmContextMenu.message.message);
+                      closeDmCopyUi();
+                    }}
+                    className="block w-full px-3 py-2 text-left hover:bg-slate-700"
+                  >
+                    コピー
+                  </button>
+                  {dmContextMenu.source === "touch" && (
+                    // スマホの長押しには「事前選択」が無いため、部分選択に
+                    // 入るための入口として部分コピーを出す。
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDmSelectionModeMessageId(dmContextMenu.message.id);
+                        setDmContextMenu(null);
+                      }}
+                      className="block w-full border-t border-slate-700 px-3 py-2 text-left hover:bg-slate-700"
+                    >
+                      部分コピー
+                    </button>
+                  )}
+                </>
               )}
               {dmContextMenu.message.isSelf && (
                 // 自分が送信したメッセージにのみ、編集・削除を出す。
@@ -3265,6 +3322,31 @@ export default function AvatarSpace({
                 </>
               )}
             </div>
+          );
+        })()}
+
+      {/* 部分コピーモード中、対象メッセージの吹き出し枠の右上に固定表示する
+          「コピー」ボタン(選択範囲の形状は追わない)。 */}
+      {dmSelectionModeMessageId &&
+        (() => {
+          const point = getDmBubbleTopRight(dmSelectionModeMessageId);
+          if (!point) return null;
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                copyDmText(window.getSelection()?.toString() ?? "");
+                closeDmCopyUi();
+              }}
+              style={{
+                left: point.x,
+                top: point.y,
+                transform: "translate(-100%, calc(-100% - 6px))",
+              }}
+              className="fixed z-50 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-xl"
+            >
+              コピー
+            </button>
           );
         })()}
 

@@ -65,3 +65,17 @@ textarea,
     user-select: text;
   }
 }
+
+/* スマホの「部分コピー」メニューを選んだ場合だけ、対象メッセージに
+   このクラスが付与される(components/AvatarSpace.tsxのdmSelectionMode
+   MessageIdを参照)。この間だけテキスト選択を許可し、ブラウザ標準の
+   選択ハンドルをドラッグして1文字単位でコピー範囲を調整できるようにする。
+   pointer種別を問わず有効にする必要があるため、上のpointer: fine限定の
+   ルールとは別に用意する。 */
+.dm-select-active,
+.dm-select-active * {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
