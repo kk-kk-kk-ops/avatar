@@ -179,6 +179,37 @@ async function broadcastForceLeaveForAccount(
   );
 }
 
+// ダッシュボードの入室者一覧から、特定の参加者だけを強制退出させる。
+// broadcastForceLeaveForAccountと同じforce-leaveイベントを使うが、
+// targetIdを付けて送ることでAvatarSpace.tsx側が「自分宛てかどうか」を
+// 判定できるようにし、ルーム内の他の参加者は退出させない。
+export async function kickParticipant(
+  roomId: string,
+  participantId: string,
+): Promise<ActionResult> {
+  const { supabase, account } = await requireAdminAccount();
+
+  // 自分のアカウントが所有するルームかどうかを確認してから送る
+  // (他アカウントのルームへ勝手に強制退出broadcastを送れないようにする)。
+  const { data: room } = await supabase
+    .from("rooms")
+    .select("id")
+    .eq("id", roomId)
+    .eq("account_id", account.id)
+    .maybeSingle();
+  if (!room) return { ok: false, error: "ルームが見つかりません" };
+
+  try {
+    await supabase
+      .channel(`avatar-room-${roomId}`)
+      .httpSend("force-leave", { reason: "admin-kicked", targetId: participantId });
+  } catch {
+    return { ok: false, error: "退出処理に失敗しました" };
+  }
+
+  return { ok: true };
+}
+
 // デバッグ用: 環境変数DEBUG_PLAN_SWITCH_EMAILに一致するアカウントだけが、
 // 自分のプランを5プランの中から自由に切り替えられる(動作確認用)。
 // クライアント側の表示制御(app/admin/page.tsxのisDebugPlanSwitcherAllowed)

@@ -1708,9 +1708,19 @@ export default function AvatarSpace({
             ),
           }));
         })
-        .on("broadcast", { event: "force-leave" }, () => {
+        .on("broadcast", { event: "force-leave" }, ({ payload }) => {
+          const { reason, targetId } = payload as {
+            reason?: string;
+            targetId?: string;
+          };
+          // targetIdが指定されている(=特定の参加者だけを退出させる管理者
+          // 操作)場合は、自分宛てでなければ無視する。未指定の場合は従来通り
+          // プラン変更時と同じくルーム内全員が対象。
+          if (targetId && targetId !== selfId.current) return;
           setForceLeaveMessage(
-            "管理者がプランを変更したため、まもなく退出します...",
+            reason === "admin-kicked"
+              ? "管理者により退出させられました。まもなく退出します..."
+              : "管理者がプランを変更したため、まもなく退出します...",
           );
           setTimeout(() => window.location.reload(), 1500);
         })
