@@ -45,3 +45,15 @@ textarea,
   -ms-user-select: text;
   user-select: text;
 }
+
+/* DMメッセージ本文だけは、コピー機能(右クリック/長押しメニュー)のために
+   テキスト選択を許可する。iOS Safariはこのcalloutを完全には抑止できない
+   ことがあるため、ネイティブのコピー機能がフォールバックとして併存する
+   ことを許容する(components/AvatarSpace.tsxのDMコピー機能を参照)。 */
+.dm-selectable {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}

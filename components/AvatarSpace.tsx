@@ -269,10 +269,39 @@ export default function AvatarSpace({
   const dmScrollRef = useRef<HTMLDivElement | null>(null);
   const dmForceScrollRef = useRef(false);
   const [showDmScrollButton, setShowDmScrollButton] = useState(false);
-  // コピーボタンを押した直後、一時的に✓表示へ切り替えるためのメッセージID。
-  const [copiedDmMessageId, setCopiedDmMessageId] = useState<string | null>(
-    null,
+
+  // ---- チャット:メッセージのコピー(右クリック/長押しメニュー) ----
+  // 各メッセージ本文<p>へのref(Range操作でメッセージ全文選択・選択中の
+  // 相手の要素特定に使う)。
+  const dmBubbleRefs = useRef<Record<string, HTMLParagraphElement | null>>(
+    {},
   );
+  // 右クリック(PC)/長押し(スマホ)で開く「コピー・選択コピー」メニュー。
+  // selectedTextはメニューを開いた時点で既に選択範囲があった場合の
+  // その場コピー用(PCでドラッグ選択→右クリックのケース)。
+  const [dmContextMenu, setDmContextMenu] = useState<{
+    x: number;
+    y: number;
+    message: DmMessage;
+    selectedText: string;
+  } | null>(null);
+  // 「選択コピー」を選んだが、その時点でまだ選択範囲が無かった場合に
+  // 入る、範囲調整モード。対象メッセージ全文を初期選択した状態にし、
+  // ユーザーがブラウザ標準の選択ハンドルでドラッグして範囲を調整できる
+  // ようにする(独自の選択ハンドルは描画しない。LINEに寄せつつも
+  // ブラウザ/OSネイティブの選択操作に乗せることで端末差異を吸収する)。
+  const [dmSelectionModeMessageId, setDmSelectionModeMessageId] = useState<
+    string | null
+  >(null);
+  // 選択範囲の直上に追従表示する「コピー」吹き出しの位置。
+  const [dmSelectionBubblePos, setDmSelectionBubblePos] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [dmCopyToast, setDmCopyToast] = useState(false);
+  // スマホの長押し検出用(contextmenuイベントが発火しないiOS Safari向け)。
+  const dmLongPressTimerRef = useRef<number | null>(null);
+  const dmLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
   // 相手ごとの未読フラグ。参加者一覧の該当行にマークを出し、
   // そのスレッドを開いたタイミングでfalseに戻す。
   const [unreadFromPeers, setUnreadFromPeers] = useState<
@@ -622,21 +651,135 @@ export default function AvatarSpace({
     }
   }, [dmInput, dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken]);
 
-  // メッセージ本文をクリップボードへコピーし、一時的に✓表示へ切り替える。
-  const copyDmMessage = useCallback((id: string, message: string) => {
+  // 指定テキストをクリップボードへコピーし、一時的にトーストで知らせる。
+  const copyDmText = useCallback((text: string) => {
+    if (!text) return;
     navigator.clipboard
-      .writeText(message)
+      .writeText(text)
       .then(() => {
-        setCopiedDmMessageId(id);
-        setTimeout(() => {
-          setCopiedDmMessageId((current) => (current === id ? null : current));
-        }, 1500);
+        setDmCopyToast(true);
+        setTimeout(() => setDmCopyToast(false), 1500);
       })
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.error("クリップボードへのコピーに失敗しました", err);
       });
   }, []);
+
+  const closeDmCopyUi = useCallback(() => {
+    setDmContextMenu(null);
+    setDmSelectionModeMessageId(null);
+  }, []);
+
+  const clearDmLongPressTimer = useCallback(() => {
+    if (dmLongPressTimerRef.current !== null) {
+      window.clearTimeout(dmLongPressTimerRef.current);
+      dmLongPressTimerRef.current = null;
+    }
+  }, []);
+
+  // 右クリック/長押しの発生位置に、対象メッセージのコピーメニューを開く。
+  // 既にその場でテキストが選択されていれば(PCでドラッグ選択→右クリック)
+  // その選択内容を「選択コピー」のその場コピー用として保持する。
+  const openDmContextMenu = useCallback(
+    (x: number, y: number, message: DmMessage) => {
+      const sel = window.getSelection();
+      const bubbleEl = dmBubbleRefs.current[message.id];
+      const selectedText =
+        sel && !sel.isCollapsed && bubbleEl && sel.anchorNode
+          ? bubbleEl.contains(sel.anchorNode)
+            ? sel.toString()
+            : ""
+          : "";
+      setDmContextMenu({ x, y, message, selectedText });
+    },
+    [],
+  );
+
+  const handleDmContextMenu = useCallback(
+    (e: React.MouseEvent, m: DmMessage) => {
+      e.preventDefault();
+      clearDmLongPressTimer();
+      openDmContextMenu(e.clientX, e.clientY, m);
+    },
+    [openDmContextMenu, clearDmLongPressTimer],
+  );
+
+  // iOS Safariはテキスト上の長押しでcontextmenuイベントが発火しないため、
+  // touchstart/touchmove/touchendから自前で長押し(500ms・移動量10px以内)を
+  // 検出する(Android Chrome/PCは基本的にcontextmenuイベント側で処理される。
+  // 両方発火しても、setDmContextMenuの内容を上書きするだけなので害はない)。
+  const handleDmTouchStart = useCallback(
+    (e: React.TouchEvent, m: DmMessage) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      dmLongPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+      dmLongPressTimerRef.current = window.setTimeout(() => {
+        dmLongPressTimerRef.current = null;
+        openDmContextMenu(touch.clientX, touch.clientY, m);
+      }, 500);
+    },
+    [openDmContextMenu],
+  );
+
+  const handleDmTouchMove = useCallback((e: React.TouchEvent) => {
+    const start = dmLongPressStartRef.current;
+    const touch = e.touches[0];
+    if (!start || !touch || dmLongPressTimerRef.current === null) return;
+    if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) {
+      clearDmLongPressTimer();
+    }
+  }, [clearDmLongPressTimer]);
+
+  // 選択コピーモード:対象メッセージ全文を初期選択し、選択範囲の変化を
+  // 監視して直上に「コピー」吹き出しを追従表示する。
+  useEffect(() => {
+    if (!dmSelectionModeMessageId) return;
+    const bubbleEl = dmBubbleRefs.current[dmSelectionModeMessageId];
+    if (!bubbleEl) return;
+
+    const updateBubblePos = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+        setDmSelectionBubblePos(null);
+        return;
+      }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setDmSelectionBubblePos(null);
+        return;
+      }
+      setDmSelectionBubblePos({ x: rect.left + rect.width / 2, y: rect.top });
+    };
+
+    const range = document.createRange();
+    range.selectNodeContents(bubbleEl);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    updateBubblePos();
+
+    document.addEventListener("selectionchange", updateBubblePos);
+    return () => {
+      document.removeEventListener("selectionchange", updateBubblePos);
+      window.getSelection()?.removeAllRanges();
+      setDmSelectionBubblePos(null);
+    };
+  }, [dmSelectionModeMessageId]);
+
+  // スレッド切り替え・Escapeキーでコピーメニュー/選択モードを閉じる。
+  useEffect(() => {
+    closeDmCopyUi();
+  }, [selectedPeerUserId, closeDmCopyUi]);
+
+  useEffect(() => {
+    if (!dmContextMenu && !dmSelectionModeMessageId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeDmCopyUi();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dmContextMenu, dmSelectionModeMessageId, closeDmCopyUi]);
 
   // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
@@ -2743,6 +2886,7 @@ export default function AvatarSpace({
                         if (isDmScrollNearBottom(e.currentTarget)) {
                           setShowDmScrollButton(false);
                         }
+                        closeDmCopyUi();
                       }}
                       className="h-full space-y-2 overflow-y-auto px-3 py-2"
                     >
@@ -2754,30 +2898,25 @@ export default function AvatarSpace({
                       {thread.map((m) => (
                         <div
                           key={m.id}
-                          className={`flex items-end gap-1 ${
-                            m.isSelf ? "ml-auto flex-row-reverse" : ""
+                          onContextMenu={(e) => handleDmContextMenu(e, m)}
+                          onTouchStart={(e) => handleDmTouchStart(e, m)}
+                          onTouchMove={handleDmTouchMove}
+                          onTouchEnd={clearDmLongPressTimer}
+                          onTouchCancel={clearDmLongPressTimer}
+                          className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                            m.isSelf
+                              ? "ml-auto bg-emerald-600 text-white"
+                              : "bg-slate-700 text-slate-100"
                           }`}
                         >
-                          <div
-                            className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
-                              m.isSelf
-                                ? "bg-emerald-600 text-white"
-                                : "bg-slate-700 text-slate-100"
-                            }`}
+                          <p
+                            ref={(el) => {
+                              dmBubbleRefs.current[m.id] = el;
+                            }}
+                            className="whitespace-pre-wrap break-words"
                           >
-                            <p className="whitespace-pre-wrap break-words">
-                              {m.message}
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => copyDmMessage(m.id, m.message)}
-                            className="shrink-0 rounded p-1 text-[11px] text-slate-400 opacity-60 hover:bg-white/10 hover:text-white hover:opacity-100"
-                            aria-label="メッセージをコピー"
-                            title="コピー"
-                          >
-                            {copiedDmMessageId === m.id ? "✓" : "📋"}
-                          </button>
+                            {m.message}
+                          </p>
                         </div>
                       ))}
                     </div>
@@ -2829,6 +2968,71 @@ export default function AvatarSpace({
           </div>
         </div>
       </div>
+
+      {/* DMメッセージのコピーメニュー/選択コピー用の背景(外側タップで閉じる) */}
+      {(dmContextMenu || dmSelectionModeMessageId) && (
+        <div className="fixed inset-0 z-40" onClick={closeDmCopyUi} />
+      )}
+
+      {/* DMメッセージの右クリック/長押しメニュー */}
+      {dmContextMenu && (
+        <div
+          className="fixed z-50 min-w-[128px] overflow-hidden rounded-lg bg-slate-800 text-xs font-semibold text-white shadow-xl"
+          style={{ left: dmContextMenu.x, top: dmContextMenu.y }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              copyDmText(dmContextMenu.message.message);
+              closeDmCopyUi();
+            }}
+            className="block w-full px-3 py-2 text-left hover:bg-slate-700"
+          >
+            コピー
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (dmContextMenu.selectedText) {
+                copyDmText(dmContextMenu.selectedText);
+                closeDmCopyUi();
+              } else {
+                setDmSelectionModeMessageId(dmContextMenu.message.id);
+                setDmContextMenu(null);
+              }
+            }}
+            className="block w-full border-t border-slate-700 px-3 py-2 text-left hover:bg-slate-700"
+          >
+            選択コピー
+          </button>
+        </div>
+      )}
+
+      {/* 選択コピーモード中、選択範囲の直上に追従表示する「コピー」吹き出し */}
+      {dmSelectionModeMessageId && dmSelectionBubblePos && (
+        <button
+          type="button"
+          onClick={() => {
+            copyDmText(window.getSelection()?.toString() ?? "");
+            closeDmCopyUi();
+          }}
+          style={{
+            left: dmSelectionBubblePos.x,
+            top: dmSelectionBubblePos.y,
+            transform: "translate(-50%, calc(-100% - 8px))",
+          }}
+          className="fixed z-50 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-xl"
+        >
+          コピー
+        </button>
+      )}
+
+      {/* DMメッセージコピー成功時のトースト通知 */}
+      {dmCopyToast && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-lg">
+          ✅ コピーしました
+        </div>
+      )}
 
       {/* スマホ用移動ボタン(sm以上の画面では非表示) */}
       <TouchControls
