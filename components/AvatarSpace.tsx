@@ -283,10 +283,6 @@ export default function AvatarSpace({
   const dmBubbleRefs = useRef<Record<string, HTMLParagraphElement | null>>(
     {},
   );
-  // 部分コピーモード中に表示するコピー確定ボタンへのref。外側タップで
-  // 閉じる判定(下のpointerdown監視)で、このボタン自体へのタップを
-  // 「外側」と誤判定して閉じてしまわないようにするために使う。
-  const dmSelectionCopyButtonRef = useRef<HTMLButtonElement | null>(null);
   // 右クリック(PC)/長押し(スマホ)で開くメニュー。sourceが"mouse"か
   // "touch"かで表示項目が変わる(PC:未選択なら「コピー」のみ・選択済みなら
   // 「選択範囲をコピー」のみ。スマホ:長押し時点では事前選択という概念が
@@ -854,17 +850,14 @@ export default function AvatarSpace({
 
   const handleDmContextMenu = useCallback(
     (e: React.MouseEvent, m: DmMessage) => {
-      // ブラウザ標準の右クリックメニュー/長押しメニュー/選択確定時の
-      // ネイティブツールバーは常に抑止する(Android等では選択範囲を
-      // 確定した際にcontextmenuイベントとして発火するため、ここで
-      // preventDefaultしないとコピー等が並んだ標準ポップアップが
-      // 出てしまう)。
-      e.preventDefault();
-      // 部分コピー中(選択ハンドルをドラッグして範囲調整している間)は、
-      // 独自メニューは新たに開かない。ここでopenDmContextMenuを呼ぶと
-      // (source==="touch"のため)選択中の範囲がremoveAllRanges()で
-      // 消えてしまい、調整中の選択が壊れてしまうため。
+      // 部分コピー中(選択ハンドルをドラッグして範囲調整している間)は
+      // 何もしない。コピー自体はOS標準のポップアップ(コピー/調べる等)
+      // に任せるため、独自メニューを開いたりpreventDefaultしたりせず、
+      // ブラウザ標準の挙動をそのまま通す。
       if (dmSelectionModeMessageId) return;
+      // ブラウザ標準の右クリックメニュー/長押しメニューは常に抑止し、
+      // 独自メニューに一本化する。
+      e.preventDefault();
       const source = dmTouchActiveRef.current ? "touch" : "mouse";
       clearDmLongPressTimer();
       openDmContextMenu(m, source);
@@ -906,25 +899,14 @@ export default function AvatarSpace({
     }
   }, [clearDmLongPressTimer]);
 
-  const handleDmTouchEnd = useCallback(
-    (e: React.TouchEvent) => {
-      // 部分コピー中に選択ハンドルから指を離すと、iOS Safariが選択用の
-      // 標準ポップアップ(コピー/調べる等)を表示しようとする。この
-      // touchendでpreventDefaultすることでその表示を止められる場合が
-      // ある(WebKit内部の挙動に依存するため、OSバージョンによっては
-      // 完全には抑止できない)。
-      if (dmSelectionModeMessageId) {
-        e.preventDefault();
-      }
-      clearDmLongPressTimer();
-      // このタッチ操作の直後に発火しうるcontextmenuイベントを「タッチ由来」と
-      // 判定できるよう、フラグを少し遅らせてから戻す。
-      window.setTimeout(() => {
-        dmTouchActiveRef.current = false;
-      }, 100);
-    },
-    [clearDmLongPressTimer, dmSelectionModeMessageId],
-  );
+  const handleDmTouchEnd = useCallback(() => {
+    clearDmLongPressTimer();
+    // このタッチ操作の直後に発火しうるcontextmenuイベントを「タッチ由来」と
+    // 判定できるよう、フラグを少し遅らせてから戻す。
+    window.setTimeout(() => {
+      dmTouchActiveRef.current = false;
+    }, 100);
+  }, [clearDmLongPressTimer]);
 
   // 部分コピーモード:対象メッセージ全文を初期選択し、ユーザーがブラウザ
   // 標準の選択ハンドルでドラッグして範囲を1文字単位で調整できるようにする。
@@ -977,7 +959,7 @@ export default function AvatarSpace({
   // しまい、ドラッグでの範囲調整ができなくなる(実際にそれが原因で
   // 1文字単位の選択ができない不具合が起きていた)。そのため要素を
   // 覆う透明divは使わず、documentのpointerdownを監視して対象メッセージの
-  // 吹き出し・コピー確定ボタンの外側を押した時だけ閉じるようにする。
+  // 吹き出しの外側を押した時だけ閉じるようにする。
   useEffect(() => {
     if (!dmSelectionModeMessageId) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -985,7 +967,6 @@ export default function AvatarSpace({
       const bubbleEl =
         dmBubbleRefs.current[dmSelectionModeMessageId]?.parentElement;
       if (target && bubbleEl?.contains(target)) return;
-      if (target && dmSelectionCopyButtonRef.current?.contains(target)) return;
       closeDmCopyUi();
     };
     document.addEventListener("pointerdown", onPointerDown);
@@ -3375,32 +3356,6 @@ export default function AvatarSpace({
                 </>
               )}
             </div>
-          );
-        })()}
-
-      {/* 部分コピーモード中、対象メッセージの吹き出し枠の右上に固定表示する
-          「コピー」ボタン(選択範囲の形状は追わない)。 */}
-      {dmSelectionModeMessageId &&
-        (() => {
-          const point = getDmBubbleTopRight(dmSelectionModeMessageId);
-          if (!point) return null;
-          return (
-            <button
-              ref={dmSelectionCopyButtonRef}
-              type="button"
-              onClick={() => {
-                copyDmText(window.getSelection()?.toString() ?? "");
-                closeDmCopyUi();
-              }}
-              style={{
-                left: point.x,
-                top: point.y,
-                transform: "translate(-100%, calc(-100% - 6px))",
-              }}
-              className="fixed z-50 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-xl"
-            >
-              コピー
-            </button>
           );
         })()}
 
