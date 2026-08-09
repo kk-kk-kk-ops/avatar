@@ -679,14 +679,15 @@ create policy "chat_messages: insert own dm"
       join public.profiles p on p.account_id = r.account_id
       where p.user_id = auth.uid()
     )
-    -- 宛先(recipient_user_id)も、送信者と同じアカウントに所属する
-    -- 参加者であることを検証する(他アカウントのユーザーへ勝手に
-    -- 送れないようにするため)。
-    and recipient_user_id in (
-      select p2.user_id from public.profiles p2
-      join public.rooms r2 on r2.account_id = p2.account_id
-      where r2.id = room_id
-    )
+    -- 宛先(recipient_user_id)がアカウントのprofilesに所属することは
+    -- 検証しない。viewOnly(招待URL経由のゲスト)は設計上そのアカウントの
+    -- profilesに入らないため、この検証があると管理者からviewOnlyゲストへの
+    -- DMだけが拒否されてしまう(send_chat_message_by_invite_token関数
+    -- 経由のゲスト→管理者方向は同様の検証を行っておらず非対称だった)。
+    -- 実際に読めるかどうかはSELECT側のRLS([recipient_user_id = auth.uid()]
+    -- かつ本人のアカウントのルーム)、またはviewOnly側はinvite_token突合の
+    -- SECURITY DEFINER関数で別途制御されるため、ここを緩めても閲覧範囲は
+    -- 広がらない。
   );
 
 -- 9f-2. viewOnly(既に自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
