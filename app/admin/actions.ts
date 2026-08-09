@@ -9,7 +9,9 @@ import { PLANS, type PlanId } from "@/lib/types";
 // 差し替えられてしまう(Next.jsの仕様)ため、debugSetPlanだけは
 // throwではなく戻り値で成否とエラーメッセージを伝える
 // (app/master/actions.tsと同じ方針。他の関数は既存のまま据え置く)。
-type ActionResult = { ok: true } | { ok: false; error: string };
+type ActionResult =
+  | { ok: true; warning?: string }
+  | { ok: false; error: string };
 
 // デバッグ用プラン切り替えで選べる5プラン(masterは対象外)。
 const DEBUG_SWITCHABLE_PLANS: PlanId[] = [
@@ -206,22 +208,42 @@ export async function kickParticipant(
 
   // 管理者自身(オーナー)を誤ってBANし、自分自身のルームに入れなくなる
   // 事故を防ぐ(誰も解除できなくなってしまうため)。
+  // BAN登録(banned_participantsへの書き込み)は、今すぐタブを閉じさせる
+  // force-leaveの送信とは独立した「恒久的な再入室禁止」のための処理。
+  // 以前はBAN登録が先で、これが失敗する(例:マイグレーション未適用で
+  // テーブルが無い)と早期returnしてforce-leave自体が一切送られず、
+  // 「強制退出を押しても本人がまだ画面に残り続ける」不具合になっていた。
+  // 今すぐの退出はBAN登録の成否に関わらず必ず行うようにする。
+  let banFailed = false;
   if (participantUserId && participantUserId !== user.id) {
     const { error: banError } = await supabase
       .from("banned_participants")
       .upsert({ account_id: account.id, user_id: participantUserId });
-    if (banError) return { ok: false, error: "退出処理に失敗しました" };
+    if (banError) {
+      // eslint-disable-next-line no-console
+      console.error("BAN登録に失敗しました", banError);
+      banFailed = true;
+    }
   }
 
   try {
     await supabase
       .channel(`avatar-room-${roomId}`)
       .httpSend("force-leave", { reason: "admin-kicked", targetId: participantId });
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("強制退出の送信に失敗しました", err);
     return { ok: false, error: "退出処理に失敗しました" };
   }
 
   revalidatePath("/admin");
+  if (banFailed) {
+    return {
+      ok: true,
+      warning:
+        "退出させましたが、再入室防止(BAN)の登録に失敗しました。データベースの設定を確認してください。",
+    };
+  }
   return { ok: true };
 }
 

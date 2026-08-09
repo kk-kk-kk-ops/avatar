@@ -82,6 +82,7 @@ export default function OnlineCount({
     const result = await kickParticipant(roomId, player.id, player.userId ?? null);
     setKickingId(null);
     if (!result.ok) setKickError(result.error);
+    else if (result.warning) setKickError(result.warning);
   };
 
   const handleUnban = async (participant: BannedParticipant) => {
