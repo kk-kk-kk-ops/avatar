@@ -34,7 +34,7 @@ async function requireAdminAccount() {
     .maybeSingle();
   if (!account) redirect("/plan");
 
-  return { supabase, account };
+  return { supabase, account, user };
 }
 
 export async function addRoom(templateId: string) {
@@ -179,15 +179,20 @@ async function broadcastForceLeaveForAccount(
   );
 }
 
-// ダッシュボードの入室者一覧から、特定の参加者だけを強制退出させる。
+// ダッシュボードの入室者一覧から、特定の参加者を強制退出させ、管理者が
+// 「解除」するまで再入室できないようBANリスト(banned_participants)に
+// 登録する。単にforce-leaveでタブを閉じさせるだけだと、本人のアカウント
+// アクセス権自体は残ったままなのでルーム選択からすぐ入り直せてしまう
+// (実際にそう報告があった)ため、DB側の恒久的な制限とセットにした。
 // broadcastForceLeaveForAccountと同じforce-leaveイベントを使うが、
 // targetIdを付けて送ることでAvatarSpace.tsx側が「自分宛てかどうか」を
 // 判定できるようにし、ルーム内の他の参加者は退出させない。
 export async function kickParticipant(
   roomId: string,
   participantId: string,
+  participantUserId: string | null,
 ): Promise<ActionResult> {
-  const { supabase, account } = await requireAdminAccount();
+  const { supabase, account, user } = await requireAdminAccount();
 
   // 自分のアカウントが所有するルームかどうかを確認してから送る
   // (他アカウントのルームへ勝手に強制退出broadcastを送れないようにする)。
@@ -199,6 +204,15 @@ export async function kickParticipant(
     .maybeSingle();
   if (!room) return { ok: false, error: "ルームが見つかりません" };
 
+  // 管理者自身(オーナー)を誤ってBANし、自分自身のルームに入れなくなる
+  // 事故を防ぐ(誰も解除できなくなってしまうため)。
+  if (participantUserId && participantUserId !== user.id) {
+    const { error: banError } = await supabase
+      .from("banned_participants")
+      .upsert({ account_id: account.id, user_id: participantUserId });
+    if (banError) return { ok: false, error: "退出処理に失敗しました" };
+  }
+
   try {
     await supabase
       .channel(`avatar-room-${roomId}`)
@@ -207,6 +221,22 @@ export async function kickParticipant(
     return { ok: false, error: "退出処理に失敗しました" };
   }
 
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+// BANリストから外し、再入室できるようにする。
+export async function unbanParticipant(userId: string): Promise<ActionResult> {
+  const { supabase, account } = await requireAdminAccount();
+
+  const { error } = await supabase
+    .from("banned_participants")
+    .delete()
+    .eq("account_id", account.id)
+    .eq("user_id", userId);
+  if (error) return { ok: false, error: "解除に失敗しました" };
+
+  revalidatePath("/admin");
   return { ok: true };
 }
 

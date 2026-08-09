@@ -19,6 +19,11 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 type TemplateOption = { id: string; name: string; backgroundImageUrl: string };
+type BannedParticipant = {
+  userId: string;
+  displayName: string | null;
+  bannedAt: string;
+};
 
 export default function AdminDashboard({
   rooms,
@@ -31,6 +36,7 @@ export default function AdminDashboard({
   showMasterLink,
   userEmail,
   isDebugPlanSwitcherAllowed,
+  bannedParticipants,
 }: {
   rooms: Room[];
   plan: PlanId;
@@ -42,6 +48,7 @@ export default function AdminDashboard({
   showMasterLink: boolean;
   userEmail: string;
   isDebugPlanSwitcherAllowed: boolean;
+  bannedParticipants: BannedParticipant[];
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -142,7 +149,9 @@ export default function AdminDashboard({
 
       <main className="min-w-0 flex-1 overflow-y-auto bg-slate-50 p-6 pt-20 md:pt-6">
         <div className="mx-auto max-w-3xl">
-          {tab === "dashboard" && <OnlineCount rooms={rooms} />}
+          {tab === "dashboard" && (
+            <OnlineCount rooms={rooms} bannedParticipants={bannedParticipants} />
+          )}
           {tab === "rooms" && (
             <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
           )}

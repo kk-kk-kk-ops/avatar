@@ -2723,7 +2723,7 @@ export default function AvatarSpace({
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-slate-800">
       {/* ヘッダー */}
-      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 py-2 text-white">
+      <div className="flex h-16 min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 text-white">
         <div className="flex shrink-0 items-center gap-2">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3049,14 +3049,15 @@ export default function AvatarSpace({
               DMが50%を占める分の残り)をこのブロックで使い切り、参加者が
               増えても自分欄は固定したまま参加者一覧だけがスクロールする
               ようにする。 */}
-          <div className="flex min-h-0 flex-1 flex-col pl-4 pr-3 pt-2 pb-3">
+          <div className="flex min-h-0 flex-1 flex-col pl-4 pr-3 pb-3 sm:pt-2">
             {/* ヘッダー:アイコン(左上)+閉じるボタン(右上)。スマホの
                 ドロワー表示専用(PC版は常設サイドバーなので、上部の
                 メインヘッダーのロゴと重複するため非表示にする)。
-                左・上の余白はヘッダー(px-4 py-2)と揃えることで、
+                高さ(h-16)・左の余白(px-4)をメインヘッダーと揃えることで、
                 ハンバーガーメニューの開閉時にロゴの位置がずれて見えない
-                ようにする。 */}
-            <div className="mb-4 flex shrink-0 items-center justify-between sm:hidden">
+                ようにする(PC版はこの行自体が非表示になる分、親要素側の
+                sm:pt-2で元の上余白を維持する)。 */}
+            <div className="mb-4 flex h-16 shrink-0 items-center justify-between sm:hidden">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img

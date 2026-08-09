@@ -41,6 +41,22 @@ export default async function AdminPage() {
     .select("id, name, background_image_url")
     .order("created_at", { ascending: true });
 
+  const { data: bannedRows } = await supabase.rpc(
+    "list_banned_participants",
+    { p_account_id: state.accountId },
+  );
+  const bannedParticipants = (
+    (bannedRows ?? []) as {
+      user_id: string;
+      display_name: string | null;
+      banned_at: string;
+    }[]
+  ).map((b) => ({
+    userId: b.user_id,
+    displayName: b.display_name,
+    bannedAt: b.banned_at,
+  }));
+
   const templates = (templateRows ?? []).map((t) => ({
     id: t.id,
     name: t.name,
@@ -70,6 +86,7 @@ export default async function AdminPage() {
       showMasterLink={state.isMaster}
       userEmail={user.email ?? ""}
       isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
+      bannedParticipants={bannedParticipants}
     />
   );
 }

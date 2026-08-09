@@ -1155,6 +1155,82 @@ begin
   end if;
 end $$;
 
+-- ------------------------------------------------------------
+-- 15. banned_participants: 管理画面ダッシュボードの「強制退出」で
+--     BANされた参加者を、管理者が「解除」するまでそのアカウントの
+--     ルームへ再入室できないようにするためのリスト。
+-- ------------------------------------------------------------
+create table if not exists public.banned_participants (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  banned_at timestamptz not null default now(),
+  primary key (account_id, user_id)
+);
+
+alter table public.banned_participants enable row level security;
+
+-- 本人は自分がBANされているか(ルーム入室時のガードに使う)、
+-- 管理者は自分のアカウント分のBAN一覧を閲覧できる。
+drop policy if exists "banned_participants: select" on public.banned_participants;
+create policy "banned_participants: select"
+  on public.banned_participants for select
+  using (
+    auth.uid() = user_id
+    or account_id in (
+      select id from public.accounts where owner_user_id = auth.uid()
+    )
+  );
+
+-- 追加・削除(強制退出・解除)は自分がオーナーのアカウント分のみ。
+drop policy if exists "banned_participants: modify own account as owner" on public.banned_participants;
+create policy "banned_participants: modify own account as owner"
+  on public.banned_participants for all
+  using (
+    account_id in (
+      select id from public.accounts where owner_user_id = auth.uid()
+    )
+  )
+  with check (
+    account_id in (
+      select id from public.accounts where owner_user_id = auth.uid()
+    )
+  );
+
+-- BAN一覧を表示名付きで取得する関数。profilesは本人しかSELECTできない
+-- RLS("profiles: select own")のため、管理者が他人のdisplay_nameを
+-- 見るにはSECURITY DEFINER経由が必要。
+drop function if exists public.list_banned_participants(uuid);
+
+create function public.list_banned_participants(p_account_id uuid)
+returns table (
+  user_id uuid,
+  display_name text,
+  banned_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (
+    select 1 from public.accounts
+    where id = p_account_id and owner_user_id = auth.uid()
+  ) then
+    raise exception '権限がありません';
+  end if;
+
+  return query
+    select b.user_id, p.display_name, b.banned_at
+    from public.banned_participants b
+    left join public.profiles p on p.user_id = b.user_id
+    where b.account_id = p_account_id
+    order by b.banned_at desc;
+end;
+$$;
+
+grant execute on function public.list_banned_participants(uuid) to authenticated;
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。

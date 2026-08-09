@@ -54,9 +54,16 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // 未ログインで、ログイン不要なページ以外へアクセスした場合はTOPへ
+  // 未ログインで、ログイン不要なページ以外へアクセスした場合はTOPへ。
+  // クエリ文字列(招待URLの?invite=トークン等)は保持したままリダイレクト
+  // する。保持しないと、LINEアプリ内ブラウザ等で一度ログインまで進んだ
+  // 招待URLを、セッションCookieを共有しない別のブラウザで開いたときに
+  // invite情報が失われ、ゲスト用ログイン画面ではなく素のTOPページ
+  // (管理者用ログイン画面)に飛んでしまう不具合があった。
   if (!user && !isPublicPath(pathname)) {
-    return NextResponse.redirect(new URL("/", request.url));
+    const redirectUrl = new URL("/", request.url);
+    redirectUrl.search = request.nextUrl.search;
+    return NextResponse.redirect(redirectUrl);
   }
 
   return response;

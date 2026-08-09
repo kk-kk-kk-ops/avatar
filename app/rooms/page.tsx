@@ -3,6 +3,29 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
 import { PLANS, type PlanId, type Room } from "@/lib/types";
 import AvatarSpaceLoader from "@/components/AvatarSpaceLoader";
+import LogoutButton from "@/components/auth/LogoutButton";
+
+// 管理画面ダッシュボードの「強制退出」でBANされたユーザーに表示する画面。
+// 管理者が解除するまで、ルーム選択・入室のどちらも行わせない。
+function BannedNotice({ logoutRedirectTo }: { logoutRedirectTo: string }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
+      <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
+        <h1 className="mb-2 text-lg font-bold text-slate-800">
+          入室できません
+        </h1>
+        <p className="mb-6 text-sm text-slate-500">
+          管理者によってこのルームへの入室が制限されています。
+          心当たりがない場合は、招待した管理者にお問い合わせください。
+        </p>
+        <LogoutButton
+          className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+          redirectTo={logoutRedirectTo}
+        />
+      </div>
+    </div>
+  );
+}
 
 // ルーム選択〜アバター選択〜入室までを担う画面。
 // admin・guestの両方がここへ来る(招待されたゲストはログイン後直接ここへ)。
@@ -30,6 +53,20 @@ export default async function RoomsPage({
     );
     const viewAccount = viewAccountRows?.[0];
     if (viewAccount) {
+      const { data: banRow } = await supabase
+        .from("banned_participants")
+        .select("user_id")
+        .eq("account_id", viewAccount.id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (banRow) {
+        return (
+          <BannedNotice
+            logoutRedirectTo={`/?invite=${encodeURIComponent(viewInviteToken)}`}
+          />
+        );
+      }
+
       // rooms/accountsともに「自分自身が所属するアカウントのみ閲覧可」
       // というRLSがかかっているため、素のテーブルSELECTでは対象
       // アカウント(自分の所属先とは別のアカウント)のルームが常に
@@ -147,6 +184,26 @@ export default async function RoomsPage({
   // アカウントの招待URL(ゲスト用ログイン画面)に戻れるようにする。
   const guestInviteToken =
     state.type === "guest" ? account?.invite_token ?? null : null;
+
+  // 管理画面ダッシュボードから強制退出させられたゲストは、管理者が
+  // 解除するまでこのアカウントのルームへ再入室できない。
+  if (state.type === "guest") {
+    const { data: banRow } = await supabase
+      .from("banned_participants")
+      .select("user_id")
+      .eq("account_id", state.accountId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (banRow) {
+      return (
+        <BannedNotice
+          logoutRedirectTo={
+            guestInviteToken ? `/?invite=${guestInviteToken}` : "/"
+          }
+        />
+      );
+    }
+  }
 
   return (
     <AvatarSpaceLoader
