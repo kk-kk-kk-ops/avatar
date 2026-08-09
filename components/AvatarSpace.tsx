@@ -854,15 +854,17 @@ export default function AvatarSpace({
 
   const handleDmContextMenu = useCallback(
     (e: React.MouseEvent, m: DmMessage) => {
+      // ブラウザ標準の右クリックメニュー/長押しメニュー/選択確定時の
+      // ネイティブツールバーは常に抑止する(Android等では選択範囲を
+      // 確定した際にcontextmenuイベントとして発火するため、ここで
+      // preventDefaultしないとコピー等が並んだ標準ポップアップが
+      // 出てしまう)。
+      e.preventDefault();
       // 部分コピー中(選択ハンドルをドラッグして範囲調整している間)は、
-      // その操作がAndroid等でネイティブのcontextmenuイベントとして
-      // 発火してしまっても無視する。ここでopenDmContextMenuを呼ぶと
+      // 独自メニューは新たに開かない。ここでopenDmContextMenuを呼ぶと
       // (source==="touch"のため)選択中の範囲がremoveAllRanges()で
       // 消えてしまい、調整中の選択が壊れてしまうため。
       if (dmSelectionModeMessageId) return;
-      // ブラウザ標準の右クリックメニュー/長押しメニューは常に抑止し、
-      // 独自メニューに一本化する。
-      e.preventDefault();
       const source = dmTouchActiveRef.current ? "touch" : "mouse";
       clearDmLongPressTimer();
       openDmContextMenu(m, source);
