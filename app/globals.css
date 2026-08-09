@@ -46,22 +46,22 @@ textarea,
   user-select: text;
 }
 
-/* DMメッセージ本文だけは、コピー機能(右クリック/長押しメニュー)のために
-   テキスト選択を許可する。
+/* DMメッセージ本文だけは、コピー機能(右クリックメニュー/選択範囲コピー)の
+   ためにテキスト選択を許可する。ただしPC(マウス)限定とし、スマホでは
+   長押し時にブラウザ標準のテキスト選択(選択ハンドル)が独自メニューより
+   先に発動してしまうのを避けるため、user-select: noneのままにする
+   (スマホでの長押しは独自の「コピー」メニュー表示のみに一本化する)。
    user-selectは継承されるプロパティだが、上の`* { user-select: none }`が
    全要素(このクラスの子孫であるメッセージ本文<p>自身にも)直接
    マッチしてしまい、継承より子孫要素への直接指定が優先されるため、
    .dm-selectableだけに指定しても子孫のテキストは選択できないままだった。
-   `.dm-selectable *`も明示的に対象にすることで子孫にも確実に適用する。
-   -webkit-touch-callout: noneでiOS標準の長押しメニューを抑止する
-   (独自メニュー・独自の選択コピーUIに一本化するため。ただしOSバージョンに
-   よっては完全に抑止できない場合がある点はcomponents/AvatarSpace.tsxの
-   DMコピー機能側のコメントを参照)。 */
-.dm-selectable,
-.dm-selectable * {
-  -webkit-touch-callout: none;
-  -webkit-user-select: text;
-  -moz-user-select: text;
-  -ms-user-select: text;
-  user-select: text;
+   `.dm-selectable *`も明示的に対象にすることで子孫にも確実に適用する。 */
+@media (pointer: fine) {
+  .dm-selectable,
+  .dm-selectable * {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
 }
