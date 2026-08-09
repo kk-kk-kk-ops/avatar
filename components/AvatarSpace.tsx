@@ -75,6 +75,15 @@ function isDmScrollNearBottom(el: HTMLDivElement, thresholdPx = 80): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= thresholdPx;
 }
 
+// 参加者一覧の最終メッセージ時刻表示用に「HH:MM」形式へ整形する。
+function formatDmClockTime(iso: string): string {
+  const date = new Date(iso);
+  return date.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 // 画面共有開始時点の最初の1フレームを、選択前プレビュー用の軽量な
 // JPEG dataURLとして切り出す。取得に失敗した場合はnullを返す
 // (プレビューが出ないだけで、選択視聴自体は引き続き可能)。
@@ -308,10 +317,10 @@ export default function AvatarSpace({
   // スマホの長押し検出用(contextmenuイベントが発火しないiOS Safari向け)。
   const dmLongPressTimerRef = useRef<number | null>(null);
   const dmLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
-  // 相手ごとの未読フラグ。参加者一覧の該当行にマークを出し、
-  // そのスレッドを開いたタイミングでfalseに戻す。
+  // 相手ごとの未読件数。参加者一覧の該当行にLINE風のバッジで表示し、
+  // そのスレッドを開いたタイミングで0に戻す。
   const [unreadFromPeers, setUnreadFromPeers] = useState<
-    Record<string, boolean>
+    Record<string, number>
   >({});
   // 管理者がプランを切り替えた際、このルームの全員を強制退出させるための
   // 通知("force-leave" broadcast)を受け取ったときに表示するメッセージ。
@@ -531,7 +540,7 @@ export default function AvatarSpace({
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
       // スレッドを開いたので未読を消す
       setUnreadFromPeers((prev) =>
-        prev[selectedPeerUserId] ? { ...prev, [selectedPeerUserId]: false } : prev,
+        prev[selectedPeerUserId] ? { ...prev, [selectedPeerUserId]: 0 } : prev,
       );
     })();
     return () => {
@@ -1644,7 +1653,7 @@ export default function AvatarSpace({
           if (selectedPeerUserIdRef.current !== msg.senderUserId) {
             setUnreadFromPeers((prev) => ({
               ...prev,
-              [msg.senderUserId]: true,
+              [msg.senderUserId]: (prev[msg.senderUserId] ?? 0) + 1,
             }));
           }
         })
@@ -3087,37 +3096,54 @@ export default function AvatarSpace({
             <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
               {playerList
                 .filter((p) => p.id !== selfId.current)
-                .map((p) => (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      onClick={() => p.userId && setSelectedPeerUserId(p.userId)}
-                      disabled={!p.userId}
-                      className={`flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                        p.userId && selectedPeerUserId === p.userId
-                          ? "bg-white/10"
-                          : "hover:bg-white/5"
-                      }`}
-                    >
-                      <span
-                        className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor:
-                            PRESENCE_STATUS_COLORS[p.status ?? "available"],
-                        }}
-                      />
-                      {p.userId && unreadFromPeers[p.userId] && (
+                .map((p) => {
+                  const unreadCount = p.userId ? unreadFromPeers[p.userId] ?? 0 : 0;
+                  const peerThread = p.userId ? dmThreads[p.userId] : undefined;
+                  const lastMessageAt =
+                    peerThread && peerThread.length > 0
+                      ? peerThread[peerThread.length - 1].createdAt
+                      : null;
+                  return (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => p.userId && setSelectedPeerUserId(p.userId)}
+                        disabled={!p.userId}
+                        className={`flex w-full items-center gap-1.5 rounded px-1 py-1.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          p.userId && selectedPeerUserId === p.userId
+                            ? "bg-white/10"
+                            : "hover:bg-white/5"
+                        }`}
+                      >
                         <span
-                          className="shrink-0 text-xs"
-                          title="未読メッセージがあります"
-                        >
-                          💬
-                        </span>
-                      )}
-                      <span className="truncate">{p.name}</span>
-                    </button>
-                  </li>
-                ))}
+                          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{
+                            backgroundColor:
+                              PRESENCE_STATUS_COLORS[p.status ?? "available"],
+                          }}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                        {(unreadCount > 0 || lastMessageAt) && (
+                          <span className="flex shrink-0 flex-col items-end gap-0.5">
+                            {lastMessageAt && (
+                              <span className="text-[10px] leading-none text-slate-400">
+                                {formatDmClockTime(lastMessageAt)}
+                              </span>
+                            )}
+                            {unreadCount > 0 && (
+                              <span
+                                className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white"
+                                title="未読メッセージがあります"
+                              >
+                                {unreadCount > 99 ? "99+" : unreadCount}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
             </ul>
           </div>
 
