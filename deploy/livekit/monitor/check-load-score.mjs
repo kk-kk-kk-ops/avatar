@@ -5,7 +5,9 @@
 // 全く同じ考え方で行う。LiveKitのサーバーAPIでは「誰が誰の画面共有を
 // 視聴中か」までは取れないため、既存のSupabase Realtime presence
 // (avatar-room-{roomId}チャンネル)を直接購読して集計する
-// (video×1 + screen×10 + watching×10)。
+// (video×1 + screen×20 + watching×17。重みは実測帯域
+// (送信最大約3.1Mbps、受信最大約625kbps〜2.5Mbps、ビデオ通話150kbps)を
+// 踏まえて設定。deploy/livekit/LOAD_TEST_PLAN.md参照)。
 //
 // 実行方法(WebARENA Indigo等、任意のサーバーでcron実行を想定):
 //   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... SLACK_WEBHOOK_URL=... \
@@ -128,7 +130,7 @@ async function main() {
     });
   }
 
-  const loadScore = video * 1 + screen * 10 + watching * 10;
+  const loadScore = video * 1 + screen * 20 + watching * 17;
   const requiredNodes = tierForScore(loadScore);
 
   console.log(
