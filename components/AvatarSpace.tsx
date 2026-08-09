@@ -63,9 +63,11 @@ function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
 
-// 画面共有の残り時間(秒)を「◯分」表示に整形する(1分未満は切り上げ)。
-function formatRemainingMinutes(remainingSeconds: number): string {
-  return `${Math.ceil(remainingSeconds / 60)}分`;
+// 画面共有・ビデオ通話の残り時間(秒)を「◯分◯秒」表示に整形する。
+function formatRemainingTime(remainingSeconds: number): string {
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds % 60;
+  return `${minutes}分${seconds}秒`;
 }
 
 // 画面共有開始時点の最初の1フレームを、選択前プレビュー用の軽量な
@@ -233,23 +235,31 @@ export default function AvatarSpace({
     kind: "screen" | "camera";
   } | null>(null);
 
-  // ---- チャット(全プラン共通の標準機能) ----
-  type ChatMessage = {
+  // ---- チャット(参加者ごとの1対1DM。全プラン共通の標準機能) ----
+  type DmMessage = {
     id: string;
-    senderName: string;
+    senderUserId: string;
     isSelf: boolean;
     message: string;
     createdAt: string;
   };
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
-  const chatOpenRef = useRef(false);
+  // 会話相手(認証済みユーザーの安定ID)ごとのスレッド。
+  const [dmThreads, setDmThreads] = useState<Record<string, DmMessage[]>>({});
+  // 現在サイドバーで開いているスレッドの相手。nullなら未選択。
+  const [selectedPeerUserId, setSelectedPeerUserId] = useState<string | null>(
+    null,
+  );
+  const selectedPeerUserIdRef = useRef<string | null>(null);
   useEffect(() => {
-    chatOpenRef.current = chatOpen;
-  }, [chatOpen]);
-  const [chatInput, setChatInput] = useState("");
-  const [unreadChatCount, setUnreadChatCount] = useState(0);
-  const [chatSending, setChatSending] = useState(false);
+    selectedPeerUserIdRef.current = selectedPeerUserId;
+  }, [selectedPeerUserId]);
+  const [dmInput, setDmInput] = useState("");
+  const [dmSending, setDmSending] = useState(false);
+  // 相手ごとの未読フラグ。参加者一覧の該当行にマークを出し、
+  // そのスレッドを開いたタイミングでfalseに戻す。
+  const [unreadFromPeers, setUnreadFromPeers] = useState<
+    Record<string, boolean>
+  >({});
   // 管理者がプランを切り替えた際、このルームの全員を強制退出させるための
   // 通知("force-leave" broadcast)を受け取ったときに表示するメッセージ。
   // maxPeoplePerRoom等はサーバーから渡されたpropsのままなので、単純な
@@ -302,10 +312,21 @@ export default function AvatarSpace({
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
-  // チャット送信時のRLSチェック(sender_user_id = auth.uid())に必要な、
-  // 認証済みSupabaseユーザーのID(selfId.currentはブラウザごとのゲストIDで
-  // 別物のため、これとは別に保持する)。
+  // DM送受信・オンライン人数カウントに使う、認証済みSupabaseユーザーの
+  // 安定ID(selfId.currentはブラウザごとのランダムなゲストIDで別物)。
+  // handleJoin()が組み立てるPlayerState.userIdに使うため、入室操作より
+  // 前(マウント直後)に取得しておく必要がある。
   const authUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!cancelled) authUserIdRef.current = user?.id ?? null;
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const keysDown = useRef<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -390,17 +411,15 @@ export default function AvatarSpace({
     remoteScreenStreamsRef.current = remoteScreenStreams;
   }, [remoteScreenStreams]);
 
-  // ---- チャット:入室時に認証ユーザーIDを取得し、直近の履歴を読み込む ----
+  // ---- チャット:選択中の相手とのDMスレッドを読み込む ----
+  // 参加者一覧でクリックされ、selectedPeerUserIdが変わるたびに、その相手との
+  // 会話だけを取得する(相手を安定ID=auth.uid()で特定するため、リロード
+  // しても同じ相手として履歴が引き継がれる)。
   useEffect(() => {
-    if (!joined) return;
+    if (!joined || !selectedPeerUserId) return;
     let cancelled = false;
+    const myUserId = authUserIdRef.current;
     (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (cancelled) return;
-      authUserIdRef.current = user?.id ?? null;
-
       // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
       // 場合、通常のRLS(profiles.account_id経由)では対象ルームの
       // チャットが見えないため、招待トークンを検証するSECURITY DEFINER
@@ -409,11 +428,15 @@ export default function AvatarSpace({
         ? await supabase.rpc("list_chat_messages_by_invite_token", {
             token: viewOnlyInviteToken,
             target_room_id: roomId,
+            peer_user_id: selectedPeerUserId,
           })
         : await supabase
             .from("chat_messages")
-            .select("id, sender_name, message, created_at")
+            .select("id, sender_user_id, message, created_at")
             .eq("room_id", roomId)
+            .or(
+              `and(sender_user_id.eq.${myUserId},recipient_user_id.eq.${selectedPeerUserId}),and(sender_user_id.eq.${selectedPeerUserId},recipient_user_id.eq.${myUserId})`,
+            )
             .order("created_at", { ascending: false })
             .limit(50);
       if (cancelled) return;
@@ -424,24 +447,29 @@ export default function AvatarSpace({
       }
       const rows = (data ?? []) as Array<{
         id: string;
-        sender_name: string;
+        sender_user_id: string;
         message: string;
         created_at: string;
       }>;
-      setChatMessages(
-        (viewOnlyInviteToken ? rows : rows.slice().reverse()).map((row) => ({
-          id: row.id,
-          senderName: row.sender_name,
-          isSelf: false,
-          message: row.message,
-          createdAt: row.created_at,
-        })),
+      const messages: DmMessage[] = (
+        viewOnlyInviteToken ? rows : rows.slice().reverse()
+      ).map((row) => ({
+        id: row.id,
+        senderUserId: row.sender_user_id,
+        isSelf: row.sender_user_id === myUserId,
+        message: row.message,
+        createdAt: row.created_at,
+      }));
+      setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
+      // スレッドを開いたので未読を消す
+      setUnreadFromPeers((prev) =>
+        prev[selectedPeerUserId] ? { ...prev, [selectedPeerUserId]: false } : prev,
       );
     })();
     return () => {
       cancelled = true;
     };
-  }, [joined, roomId, supabase, viewOnlyInviteToken]);
+  }, [joined, roomId, supabase, viewOnlyInviteToken, selectedPeerUserId]);
 
   // ---- β版の同時接続数カウント用ハートビート ----
   // 全顧客合計のオンライン人数(online_sessions)を30秒おきに更新する。
@@ -471,13 +499,14 @@ export default function AvatarSpace({
     };
   }, [joined, supabase]);
 
-  const sendChatMessage = useCallback(async () => {
-    const trimmed = chatInput.trim();
-    if (!trimmed || !selfState.current || chatSending) return;
+  const sendDmMessage = useCallback(async () => {
+    const trimmed = dmInput.trim();
+    const peerUserId = selectedPeerUserId;
+    if (!trimmed || !selfState.current || !peerUserId || dmSending) return;
     const senderName = selfState.current.name;
-    const senderId = selfId.current;
-    setChatInput("");
-    setChatSending(true);
+    const myUserId = authUserIdRef.current;
+    setDmInput("");
+    setDmSending(true);
     try {
       // viewOnlyの場合は通常のRLSでINSERTが拒否されるため、招待トークンを
       // 検証するSECURITY DEFINER関数(send_chat_message_by_invite_token)
@@ -489,6 +518,7 @@ export default function AvatarSpace({
               {
                 token: viewOnlyInviteToken,
                 target_room_id: roomId,
+                recipient_user_id: peerUserId,
                 sender_name: senderName,
                 message: trimmed,
               },
@@ -499,42 +529,47 @@ export default function AvatarSpace({
             .from("chat_messages")
             .insert({
               room_id: roomId,
-              sender_user_id: authUserIdRef.current,
+              sender_user_id: myUserId,
+              recipient_user_id: peerUserId,
               sender_name: senderName,
               message: trimmed,
             })
             .select("id, created_at")
             .single();
-      if (error || !data) {
+      if (error || !data || !myUserId) {
         // eslint-disable-next-line no-console
         console.error("チャットメッセージの送信に失敗しました", error);
         return;
       }
-      setChatMessages((prev) => [
+      setDmThreads((prev) => ({
         ...prev,
-        {
-          id: data.id,
-          senderName,
-          isSelf: true,
-          message: trimmed,
-          createdAt: data.created_at,
-        },
-      ]);
+        [peerUserId]: [
+          ...(prev[peerUserId] ?? []),
+          {
+            id: data.id,
+            senderUserId: myUserId,
+            isSelf: true,
+            message: trimmed,
+            createdAt: data.created_at,
+          },
+        ],
+      }));
       channelRef.current?.send({
         type: "broadcast",
-        event: "chat",
+        event: "dm",
         payload: {
           id: data.id,
-          senderId,
+          senderUserId: myUserId,
+          recipientUserId: peerUserId,
           senderName,
           message: trimmed,
           createdAt: data.created_at,
         },
       });
     } finally {
-      setChatSending(false);
+      setDmSending(false);
     }
-  }, [chatInput, chatSending, roomId, supabase, viewOnlyInviteToken]);
+  }, [dmInput, dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken]);
 
   // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
@@ -725,6 +760,7 @@ export default function AvatarSpace({
     );
     const initial: PlayerState = {
       id: selfId.current,
+      userId: authUserIdRef.current ?? undefined,
       name,
       color: randomColor(),
       avatarImage: selectedAvatar,
@@ -1154,27 +1190,43 @@ export default function AvatarSpace({
           if (id === selfId.current) return;
           setScreenPreviewImages((prev) => ({ ...prev, [id]: dataUrl }));
         })
-        .on("broadcast", { event: "chat" }, ({ payload }) => {
+        .on("broadcast", { event: "dm" }, ({ payload }) => {
           const msg = payload as {
             id: string;
-            senderId: string;
+            senderUserId: string;
+            recipientUserId: string;
             senderName: string;
             message: string;
             createdAt: string;
           };
-          if (msg.senderId === selfId.current) return;
-          setChatMessages((prev) => [
+          const myUserId = authUserIdRef.current;
+          // 自分が送った分は既にローカルへ追加済み。自分宛てでなければ
+          // (別の相手同士のDMは同じルームチャンネルに乗って届くが自分には
+          // 関係ないので)無視する。
+          if (
+            msg.senderUserId === myUserId ||
+            msg.recipientUserId !== myUserId
+          ) {
+            return;
+          }
+          setDmThreads((prev) => ({
             ...prev,
-            {
-              id: msg.id,
-              senderName: msg.senderName,
-              isSelf: false,
-              message: msg.message,
-              createdAt: msg.createdAt,
-            },
-          ]);
-          if (!chatOpenRef.current) {
-            setUnreadChatCount((n) => n + 1);
+            [msg.senderUserId]: [
+              ...(prev[msg.senderUserId] ?? []),
+              {
+                id: msg.id,
+                senderUserId: msg.senderUserId,
+                isSelf: false,
+                message: msg.message,
+                createdAt: msg.createdAt,
+              },
+            ],
+          }));
+          if (selectedPeerUserIdRef.current !== msg.senderUserId) {
+            setUnreadFromPeers((prev) => ({
+              ...prev,
+              [msg.senderUserId]: true,
+            }));
           }
         })
         .on("broadcast", { event: "force-leave" }, () => {
@@ -2230,7 +2282,7 @@ export default function AvatarSpace({
                   }`}
                   title="画面共有の本日の残り利用可能時間(4:00にリセット)"
                 >
-                  残{formatRemainingMinutes(screenShareRemainingSeconds)}
+                  残{formatRemainingTime(screenShareRemainingSeconds)}
                 </span>
               )}
             </div>
@@ -2245,43 +2297,28 @@ export default function AvatarSpace({
                   }`}
                   title="ビデオ通話の本日の残り利用可能時間(4:00にリセット)"
                 >
-                  残{formatRemainingMinutes(videoCallRemainingSeconds)}
+                  残{formatRemainingTime(videoCallRemainingSeconds)}
                 </span>
               )}
             </div>
-            <div className="relative shrink-0">
+            {/* チャットは左サイドバーの参加者一覧に統合したため、ここには
+                アイコンを置かない(未読の有無はハンバーガーボタン側に
+                表示する)。設定アイコンはサイドバーの「自分」欄に移動した */}
+            {/* スマホのみ表示するハンバーガーボタン(未読DMがあれば赤丸を表示) */}
+            <div className="relative shrink-0 sm:hidden">
               <button
-                onClick={() => {
-                  setChatOpen((v) => !v);
-                  setUnreadChatCount(0);
-                }}
-                title="チャット"
-                aria-label="チャットを開く"
-                className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
-                  chatOpen
-                    ? "bg-emerald-600 text-white"
-                    : "bg-slate-700 text-slate-300"
-                } hover:opacity-80`}
+                onClick={() => setShowParticipants((v) => !v)}
+                className="rounded p-1.5 hover:bg-white/10"
+                aria-label="参加者一覧を開く"
               >
-                💬
+                <span className="mb-1 block h-0.5 w-5 bg-white" />
+                <span className="mb-1 block h-0.5 w-5 bg-white" />
+                <span className="block h-0.5 w-5 bg-white" />
               </button>
-              {unreadChatCount > 0 && (
-                <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
-                  {unreadChatCount > 9 ? "9+" : unreadChatCount}
-                </span>
+              {Object.values(unreadFromPeers).some(Boolean) && (
+                <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-red-500" />
               )}
             </div>
-            {/* 設定アイコンはサイドバーの「自分」欄に移動した */}
-            {/* スマホのみ表示するハンバーガーボタン */}
-            <button
-              onClick={() => setShowParticipants((v) => !v)}
-              className="shrink-0 rounded p-1.5 hover:bg-white/10 sm:hidden"
-              aria-label="参加者一覧を開く"
-            >
-              <span className="mb-1 block h-0.5 w-5 bg-white" />
-              <span className="mb-1 block h-0.5 w-5 bg-white" />
-              <span className="block h-0.5 w-5 bg-white" />
-            </button>
           </div>
         </div>
       </div>
@@ -2513,66 +2550,164 @@ export default function AvatarSpace({
           />
         )}
 
-        {/* サイドバー:オンラインリスト(スマホはドロワー表示) */}
+        {/* サイドバー:オンラインリスト+DM(スマホはドロワー表示) */}
         <div
           className={`${
             showParticipants ? "flex" : "hidden"
-          } fixed inset-y-0 left-0 z-40 w-64 flex-col overflow-y-auto border-r border-slate-700 bg-slate-900 p-3 text-white sm:static sm:z-auto sm:order-first sm:flex sm:w-52 sm:shrink-0`}
+          } fixed inset-y-0 left-0 z-40 w-64 flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-first sm:flex sm:w-56 sm:shrink-0`}
         >
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-xs font-semibold text-slate-400">自分</h2>
-            <button
-              onClick={() => setShowParticipants(false)}
-              className="text-slate-400 hover:text-white sm:hidden"
-              aria-label="閉じる"
-            >
-              ✕
-            </button>
-          </div>
-          {selfPlayer && (
-            <div className="mb-3 flex items-center justify-between gap-2 text-sm">
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{
-                    backgroundColor:
-                      PRESENCE_STATUS_COLORS[selfPlayer.status ?? "available"],
-                  }}
-                />
-                <span className="truncate">{selfPlayer.name}</span>
-                <span className="shrink-0 text-[10px] text-slate-400">
-                  (あなた)
-                </span>
-              </div>
+          {/* 上半分:自分+参加者一覧(スクロール可能) */}
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-xs font-semibold text-slate-400">自分</h2>
               <button
-                onClick={openSettings}
-                className="shrink-0 rounded p-1 text-sm hover:bg-white/10"
-                aria-label="アバター・名前の設定"
-                title="アバター・名前を変更"
+                onClick={() => setShowParticipants(false)}
+                className="text-slate-400 hover:text-white sm:hidden"
+                aria-label="閉じる"
               >
-                ⚙️
+                ✕
               </button>
             </div>
-          )}
-
-          <h2 className="mb-2 text-xs font-semibold text-slate-400">参加者</h2>
-          <ul className="space-y-1">
-            {playerList
-              .filter((p) => p.id !== selfId.current)
-              .map((p) => (
-                <li key={p.id} className="flex items-center gap-2 text-sm">
+            {selfPlayer && (
+              <div className="mb-3 flex items-center justify-between gap-2 text-sm">
+                <div className="flex min-w-0 items-center gap-2">
                   <span
                     className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{
                       backgroundColor:
-                        PRESENCE_STATUS_COLORS[p.status ?? "available"],
+                        PRESENCE_STATUS_COLORS[selfPlayer.status ?? "available"],
                     }}
                   />
-                  <span className="truncate">{p.name}</span>
-                </li>
-              ))}
-          </ul>
+                  <span className="truncate">{selfPlayer.name}</span>
+                  <span className="shrink-0 text-[10px] text-slate-400">
+                    (あなた)
+                  </span>
+                </div>
+                <button
+                  onClick={openSettings}
+                  className="shrink-0 rounded p-1 text-sm hover:bg-white/10"
+                  aria-label="アバター・名前の設定"
+                  title="アバター・名前を変更"
+                >
+                  ⚙️
+                </button>
+              </div>
+            )}
 
+            <h2 className="mb-2 text-xs font-semibold text-slate-400">
+              参加者(クリックでチャット)
+            </h2>
+            <ul className="space-y-1">
+              {playerList
+                .filter((p) => p.id !== selfId.current)
+                .map((p) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      onClick={() => p.userId && setSelectedPeerUserId(p.userId)}
+                      disabled={!p.userId}
+                      className={`flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        p.userId && selectedPeerUserId === p.userId
+                          ? "bg-white/10"
+                          : "hover:bg-white/5"
+                      }`}
+                    >
+                      <span
+                        className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{
+                          backgroundColor:
+                            PRESENCE_STATUS_COLORS[p.status ?? "available"],
+                        }}
+                      />
+                      {p.userId && unreadFromPeers[p.userId] && (
+                        <span
+                          className="shrink-0 text-xs"
+                          title="未読メッセージがあります"
+                        >
+                          💬
+                        </span>
+                      )}
+                      <span className="truncate">{p.name}</span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </div>
+
+          {/* 下半分:選択中の相手とのDM */}
+          <div className="flex h-64 shrink-0 flex-col border-t border-slate-700">
+            {(() => {
+              const peer = selectedPeerUserId
+                ? playerList.find((p) => p.userId === selectedPeerUserId)
+                : null;
+              if (!selectedPeerUserId) {
+                return (
+                  <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
+                    参加者を選択してチャットを開始してください
+                  </div>
+                );
+              }
+              const thread = dmThreads[selectedPeerUserId] ?? [];
+              return (
+                <>
+                  <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
+                    <h2 className="truncate text-xs font-semibold text-slate-300">
+                      {peer?.name ?? "退出したユーザー"}
+                    </h2>
+                    <button
+                      onClick={() => setSelectedPeerUserId(null)}
+                      className="shrink-0 text-slate-400 hover:text-white"
+                      aria-label="チャットを閉じる"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2">
+                    {thread.length === 0 && (
+                      <p className="mt-4 text-center text-[11px] text-slate-500">
+                        まだメッセージはありません
+                      </p>
+                    )}
+                    {thread.map((m) => (
+                      <div
+                        key={m.id}
+                        className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                          m.isSelf
+                            ? "ml-auto bg-emerald-600 text-white"
+                            : "bg-slate-700 text-slate-100"
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap break-words">
+                          {m.message}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5 border-t border-slate-700 p-2">
+                    <input
+                      value={dmInput}
+                      onChange={(e) => setDmInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                          sendDmMessage();
+                        }
+                      }}
+                      maxLength={500}
+                      placeholder="メッセージを入力"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
+                    />
+                    <button
+                      onClick={sendDmMessage}
+                      disabled={!dmInput.trim() || dmSending}
+                      className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      送信
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
         </div>
       </div>
 
@@ -2616,67 +2751,6 @@ export default function AvatarSpace({
             </div>
           );
         })()}
-
-      {/* チャットパネル(右側固定・トグル表示) */}
-      {chatOpen && (
-        <div className="fixed inset-y-0 right-0 z-40 flex w-72 max-w-[85vw] flex-col border-l border-slate-700 bg-slate-900 text-white">
-          <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
-            <h2 className="text-xs font-semibold text-slate-300">チャット</h2>
-            <button
-              onClick={() => setChatOpen(false)}
-              className="text-slate-400 hover:text-white"
-              aria-label="チャットを閉じる"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="flex-1 space-y-2 overflow-y-auto px-3 py-2">
-            {chatMessages.length === 0 && (
-              <p className="mt-4 text-center text-[11px] text-slate-500">
-                まだメッセージはありません
-              </p>
-            )}
-            {chatMessages.map((m) => (
-              <div
-                key={m.id}
-                className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
-                  m.isSelf
-                    ? "ml-auto bg-emerald-600 text-white"
-                    : "bg-slate-700 text-slate-100"
-                }`}
-              >
-                {!m.isSelf && (
-                  <p className="mb-0.5 text-[10px] font-semibold text-slate-300">
-                    {m.senderName}
-                  </p>
-                )}
-                <p className="whitespace-pre-wrap break-words">{m.message}</p>
-              </div>
-            ))}
-          </div>
-          <div className="flex gap-1.5 border-t border-slate-700 p-2">
-            <input
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                  sendChatMessage();
-                }
-              }}
-              maxLength={500}
-              placeholder="メッセージを入力"
-              className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
-            />
-            <button
-              onClick={sendChatMessage}
-              disabled={!chatInput.trim() || chatSending}
-              className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-            >
-              送信
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* プラン変更による強制退出の通知(最前面に表示し、少ししてから
           window.location.reload()で新プランの制限を反映し直す) */}
