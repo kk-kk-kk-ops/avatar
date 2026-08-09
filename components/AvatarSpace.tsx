@@ -283,6 +283,10 @@ export default function AvatarSpace({
   const dmBubbleRefs = useRef<Record<string, HTMLParagraphElement | null>>(
     {},
   );
+  // 部分コピーモード中に表示するコピー確定ボタンへのref。外側タップで
+  // 閉じる判定(下のpointerdown監視)で、このボタン自体へのタップを
+  // 「外側」と誤判定して閉じてしまわないようにするために使う。
+  const dmSelectionCopyButtonRef = useRef<HTMLButtonElement | null>(null);
   // 右クリック(PC)/長押し(スマホ)で開くメニュー。sourceが"mouse"か
   // "touch"かで表示項目が変わる(PC:未選択なら「コピー」のみ・選択済みなら
   // 「選択範囲をコピー」のみ。スマホ:長押し時点では事前選択という概念が
@@ -954,6 +958,26 @@ export default function AvatarSpace({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [dmContextMenu, dmSelectionModeMessageId, closeDmCopyUi]);
+
+  // 部分コピーモード中の「外側タップで閉じる」。dmContextMenu用の全画面
+  // divと同じ見た目にすると、選択ハンドルへのタッチもそのdivに吸われて
+  // しまい、ドラッグでの範囲調整ができなくなる(実際にそれが原因で
+  // 1文字単位の選択ができない不具合が起きていた)。そのため要素を
+  // 覆う透明divは使わず、documentのpointerdownを監視して対象メッセージの
+  // 吹き出し・コピー確定ボタンの外側を押した時だけ閉じるようにする。
+  useEffect(() => {
+    if (!dmSelectionModeMessageId) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      const bubbleEl =
+        dmBubbleRefs.current[dmSelectionModeMessageId]?.parentElement;
+      if (target && bubbleEl?.contains(target)) return;
+      if (target && dmSelectionCopyButtonRef.current?.contains(target)) return;
+      closeDmCopyUi();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [dmSelectionModeMessageId, closeDmCopyUi]);
 
   // ---- LiveKit接続(音声:Phase2、カメラ:Phase3、画面共有:Phase4)----
   // Room参加時のみToken発行APIを叩き、LiveKitのRoomに接続する。近接方式を
@@ -3242,8 +3266,11 @@ export default function AvatarSpace({
         </div>
       </div>
 
-      {/* DMメッセージのコピーメニュー/部分コピー用の背景(外側タップで閉じる) */}
-      {(dmContextMenu || dmSelectionModeMessageId) && (
+      {/* DMメッセージのコピーメニュー用の背景(外側タップで閉じる)。
+          部分コピーモード中は選択ハンドルのドラッグ操作を妨げてしまう
+          ため、この全画面divは出さない(外側タップでの閉じる処理は
+          下のdocumentレベルのpointerdownリスナーで代替する)。 */}
+      {dmContextMenu && (
         <div className="fixed inset-0 z-40" onClick={closeDmCopyUi} />
       )}
 
@@ -3346,6 +3373,7 @@ export default function AvatarSpace({
           if (!point) return null;
           return (
             <button
+              ref={dmSelectionCopyButtonRef}
               type="button"
               onClick={() => {
                 copyDmText(window.getSelection()?.toString() ?? "");
