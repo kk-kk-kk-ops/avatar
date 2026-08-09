@@ -81,6 +81,31 @@ export default function TemplateEditor({
   const [mapHeightInput, setMapHeightInput] = useState(String(template.height));
   const mapWidth = clampMapSize(mapWidthInput, template.width);
   const mapHeight = clampMapSize(mapHeightInput, template.height);
+  const [measuringImageSize, setMeasuringImageSize] = useState(false);
+
+  // アップロード画像の実ピクセルサイズを取得し、マップサイズ欄へ反映する。
+  const applyImageNaturalSize = () => {
+    setMeasuringImageSize(true);
+    const img = new Image();
+    img.onload = () => {
+      setMapWidthInput(String(img.naturalWidth));
+      setMapHeightInput(String(img.naturalHeight));
+      setMeasuringImageSize(false);
+    };
+    img.onerror = () => setMeasuringImageSize(false);
+    img.src = backgroundImageUrl;
+  };
+
+  // 「作成」直後(まだ一度もレイアウト保存していない=マップサイズが
+  // テンプレート作成時のDBデフォルト値のまま)の初回編集時だけ、手動で
+  // 「デフォルト」を押さなくても最初からアップロード画像の実サイズを
+  // 表示する。一度でも保存されるとマップサイズはDBデフォルトから
+  // 変わるため、2回目以降の編集では保存された値をそのまま尊重する。
+  useEffect(() => {
+    if (template.width !== 1900 || template.height !== 1900) return;
+    applyImageNaturalSize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const dragState = useRef<DragState | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(MAX_DISPLAY_WIDTH);
@@ -423,6 +448,13 @@ export default function TemplateEditor({
             />
             <span className="text-xs text-slate-400">px</span>
           </div>
+          <button
+            onClick={applyImageNaturalSize}
+            disabled={measuringImageSize}
+            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {measuringImageSize ? "取得中..." : "デフォルト(画像の実サイズ)"}
+          </button>
         </div>
 
         <div>
