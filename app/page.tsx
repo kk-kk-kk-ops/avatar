@@ -2,18 +2,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
+import { AUTH_ERROR_MESSAGES } from "@/lib/authErrorMessages";
 import GoogleLoginButton from "@/components/auth/GoogleLoginButton";
-
-const ERROR_MESSAGES: Record<string, string> = {
-  cancelled: "ログインがキャンセルされました。",
-  auth_failed: "ログインに失敗しました。もう一度お試しください。",
-  session_expired:
-    "セッションの有効期限が切れました。もう一度ログインしてください。",
-  network:
-    "ネットワークエラーが発生しました。通信環境をご確認のうえ、再度お試しください。",
-  invalid_invite:
-    "招待リンクが無効です。招待した管理者に再発行を依頼してください。",
-};
 
 // TOPページ(公開)。ログイン済みならプラン選択/管理画面/ルーム選択の
 // いずれかへ自動的に進む(何度再訪してもここが入り口になる)。
@@ -64,7 +54,7 @@ export default async function Home({
   }
 
   const errorMessage = searchParams.error
-    ? ERROR_MESSAGES[searchParams.error]
+    ? AUTH_ERROR_MESSAGES[searchParams.error]
     : null;
 
   // 未ログインで招待URL経由の場合、ログイン画面に「〇〇〇さんからの招待」
