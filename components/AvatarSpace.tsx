@@ -43,6 +43,7 @@ import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
+import LeaveRoomButton from "./LeaveRoomButton";
 import LogoutButton from "./auth/LogoutButton";
 
 const COLORS = [
@@ -2800,6 +2801,9 @@ export default function AvatarSpace({
                 </span>
               )}
             </div>
+            <div className="shrink-0">
+              <LeaveRoomButton onClick={handleLeaveRoom} />
+            </div>
             {/* チャットは左サイドバーの参加者一覧に統合したため、ここには
                 アイコンを置かない(未読の有無はハンバーガーボタン側に
                 表示する)。設定アイコンはサイドバーの「自分」欄に移動した */}
@@ -3582,33 +3586,26 @@ export default function AvatarSpace({
               </button>
             </div>
 
-            <div className="mt-4 space-y-2 border-t border-slate-200 pt-4">
-              {isAccountAdmin && (
-                <Link
-                  href="/admin"
-                  className="block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
-                >
-                  管理画面へ
-                </Link>
-              )}
-              {isMaster && (
-                <Link
-                  href="/master"
-                  className="block w-full rounded-lg bg-emerald-50 py-2 text-center text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
-                >
-                  マスター画面へ
-                </Link>
-              )}
-              <button
-                onClick={() => {
-                  setSettingsOpen(false);
-                  handleLeaveRoom();
-                }}
-                className="w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
-              >
-                退出
-              </button>
-            </div>
+            {(isAccountAdmin || isMaster) && (
+              <div className="mt-4 space-y-2 border-t border-slate-200 pt-4">
+                {isAccountAdmin && (
+                  <Link
+                    href="/admin"
+                    className="block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
+                  >
+                    管理画面へ
+                  </Link>
+                )}
+                {isMaster && (
+                  <Link
+                    href="/master"
+                    className="block w-full rounded-lg bg-emerald-50 py-2 text-center text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+                  >
+                    マスター画面へ
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
