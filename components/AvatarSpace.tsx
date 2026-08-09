@@ -272,32 +272,29 @@ export default function AvatarSpace({
 
   // ---- チャット:メッセージのコピー(右クリック/長押しメニュー) ----
   // 各メッセージ本文<p>へのref(Range操作でメッセージ全文選択・選択中の
-  // 相手の要素特定に使う)。
+  // 相手の要素特定・メニュー位置算出(親の吹き出し枠のrect)に使う)。
   const dmBubbleRefs = useRef<Record<string, HTMLParagraphElement | null>>(
     {},
   );
-  // 右クリック(PC)/長押し(スマホ)で開く「コピー・選択コピー」メニュー。
-  // selectedTextはメニューを開いた時点で既に選択範囲があった場合の
-  // その場コピー用(PCでドラッグ選択→右クリックのケース)。
+  // 右クリック(PC)/長押し(スマホ)で開くメニュー。sourceが"mouse"か
+  // "touch"かで表示項目が変わる(PC:未選択なら「コピー」のみ・選択済みなら
+  // 「選択範囲をコピー」のみ。スマホ:長押し時点では事前選択という概念が
+  // 無いため常に「コピー」「選択コピー」の2択のまま)。位置は常に対象
+  // メッセージの吹き出し枠の右上に統一する(座標では管理しない)。
   const [dmContextMenu, setDmContextMenu] = useState<{
-    x: number;
-    y: number;
     message: DmMessage;
     selectedText: string;
+    source: "mouse" | "touch";
   } | null>(null);
-  // 「選択コピー」を選んだが、その時点でまだ選択範囲が無かった場合に
-  // 入る、範囲調整モード。対象メッセージ全文を初期選択した状態にし、
-  // ユーザーがブラウザ標準の選択ハンドルでドラッグして範囲を調整できる
-  // ようにする(独自の選択ハンドルは描画しない。LINEに寄せつつも
-  // ブラウザ/OSネイティブの選択操作に乗せることで端末差異を吸収する)。
+  // 「選択コピー」を選んだ場合に入る、範囲調整モード。対象メッセージ全文を
+  // 初期選択した状態にし、ユーザーがブラウザ標準の選択ハンドルでドラッグして
+  // 範囲を調整できるようにする(独自の選択ハンドルは描画しない。ブラウザ/
+  // OSネイティブの選択操作に乗せることで端末差異を吸収する。長押し時に
+  // ブラウザが独自に開始するネイティブ選択とは別物として、ここで毎回
+  // 選択し直すため、長押しメニューの表示を止めても影響を受けない)。
   const [dmSelectionModeMessageId, setDmSelectionModeMessageId] = useState<
     string | null
   >(null);
-  // 選択範囲の直上に追従表示する「コピー」吹き出しの位置。
-  const [dmSelectionBubblePos, setDmSelectionBubblePos] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
   const [dmCopyToast, setDmCopyToast] = useState(false);
   // スマホの長押し検出用(contextmenuイベントが発火しないiOS Safari向け)。
   const dmLongPressTimerRef = useRef<number | null>(null);
@@ -678,20 +675,28 @@ export default function AvatarSpace({
     }
   }, []);
 
-  // 右クリック/長押しの発生位置に、対象メッセージのコピーメニューを開く。
-  // 既にその場でテキストが選択されていれば(PCでドラッグ選択→右クリック)
-  // その選択内容を「選択コピー」のその場コピー用として保持する。
+  // 対象メッセージの「コピー・選択コピー」メニューを開く。sourceが"mouse"
+  // (PC右クリック)の場合のみ、その場で既に選択されていたテキストを拾う
+  // (スマホの長押しには「事前選択」という概念が無いため、常に""扱いにする)。
   const openDmContextMenu = useCallback(
-    (x: number, y: number, message: DmMessage) => {
+    (message: DmMessage, source: "mouse" | "touch") => {
       const sel = window.getSelection();
       const bubbleEl = dmBubbleRefs.current[message.id];
       const selectedText =
-        sel && !sel.isCollapsed && bubbleEl && sel.anchorNode
-          ? bubbleEl.contains(sel.anchorNode)
-            ? sel.toString()
-            : ""
+        source === "mouse" &&
+        sel &&
+        !sel.isCollapsed &&
+        bubbleEl &&
+        sel.anchorNode &&
+        bubbleEl.contains(sel.anchorNode)
+          ? sel.toString()
           : "";
-      setDmContextMenu({ x, y, message, selectedText });
+      if (source === "touch") {
+        // 長押しでブラウザが自動的に開始した単語選択などが、独自メニューの
+        // 裏に中途半端に残らないようクリアしておく。
+        sel?.removeAllRanges();
+      }
+      setDmContextMenu({ message, selectedText, source });
     },
     [],
   );
@@ -702,27 +707,22 @@ export default function AvatarSpace({
 
   const handleDmContextMenu = useCallback(
     (e: React.MouseEvent, m: DmMessage) => {
-      if (dmTouchActiveRef.current) {
-        // タッチ由来のcontextmenu。ここでpreventDefault()すると、長押しに
-        // 連動してブラウザが進めているネイティブのテキスト選択(選択
-        // ハンドル)まで巻き込んで中断してしまうことがある(Android/
-        // Firefox等で、contextmenuでのpreventDefault()がtouchcancelを
-        // 誘発することが報告されている既知の挙動)。独自メニューは
-        // touchstart側の長押しタイマーで別途表示するため、ここでは
-        // 何もせずネイティブの選択動作をそのまま進行させる。
-        return;
-      }
+      // ブラウザ標準の右クリックメニュー/長押しメニューは常に抑止し、
+      // 独自メニューに一本化する。「選択コピー」モードは対象メッセージを
+      // 毎回JSで選択し直す作りのため、ここでネイティブの選択操作が
+      // 中断されても「選択コピー」自体の動作には影響しない。
       e.preventDefault();
+      const source = dmTouchActiveRef.current ? "touch" : "mouse";
       clearDmLongPressTimer();
-      openDmContextMenu(e.clientX, e.clientY, m);
+      openDmContextMenu(m, source);
     },
     [openDmContextMenu, clearDmLongPressTimer],
   );
 
   // iOS Safariはテキスト上の長押しでcontextmenuイベントが発火しないため、
   // touchstart/touchmove/touchendから自前で長押し(500ms・移動量10px以内)を
-  // 検出する(Android等でcontextmenuも発火した場合は上のハンドラ側で
-  // 無視されるので、こちらのメニュー表示だけが有効になる)。
+  // 検出する(Android等でcontextmenuも発火した場合は上のハンドラと二重に
+  // 呼ばれ得るが、setDmContextMenuを上書きするだけなので実害は無い)。
   const handleDmTouchStart = useCallback(
     (e: React.TouchEvent, m: DmMessage) => {
       dmTouchActiveRef.current = true;
@@ -731,7 +731,7 @@ export default function AvatarSpace({
       dmLongPressStartRef.current = { x: touch.clientX, y: touch.clientY };
       dmLongPressTimerRef.current = window.setTimeout(() => {
         dmLongPressTimerRef.current = null;
-        openDmContextMenu(touch.clientX, touch.clientY, m);
+        openDmContextMenu(m, "touch");
       }, 500);
     },
     [openDmContextMenu],
@@ -755,41 +755,35 @@ export default function AvatarSpace({
     }, 100);
   }, [clearDmLongPressTimer]);
 
-  // 選択コピーモード:対象メッセージ全文を初期選択し、選択範囲の変化を
-  // 監視して直上に「コピー」吹き出しを追従表示する。
+  // 選択コピーモード:対象メッセージ全文を初期選択し、ユーザーがブラウザ
+  // 標準の選択ハンドルでドラッグして範囲を調整できるようにする。
+  // 「コピー」ボタンの位置は選択範囲を追わず、常にメッセージ吹き出し枠の
+  // 右上に固定する(JSX側でdmBubbleRefsのrectから都度算出する)。
   useEffect(() => {
     if (!dmSelectionModeMessageId) return;
     const bubbleEl = dmBubbleRefs.current[dmSelectionModeMessageId];
     if (!bubbleEl) return;
-
-    const updateBubblePos = () => {
-      const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-        setDmSelectionBubblePos(null);
-        return;
-      }
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) {
-        setDmSelectionBubblePos(null);
-        return;
-      }
-      setDmSelectionBubblePos({ x: rect.left + rect.width / 2, y: rect.top });
-    };
 
     const range = document.createRange();
     range.selectNodeContents(bubbleEl);
     const sel = window.getSelection();
     sel?.removeAllRanges();
     sel?.addRange(range);
-    updateBubblePos();
 
-    document.addEventListener("selectionchange", updateBubblePos);
     return () => {
-      document.removeEventListener("selectionchange", updateBubblePos);
       window.getSelection()?.removeAllRanges();
-      setDmSelectionBubblePos(null);
     };
   }, [dmSelectionModeMessageId]);
+
+  // メニュー/選択コピーの「コピー」吹き出しを表示する位置(対象メッセージの
+  // 吹き出し枠の右上)を算出する。dmBubbleRefsは本文<p>へのrefなので、
+  // その親要素(吹き出し枠のdiv)のrectを使う。
+  const getDmBubbleTopRight = useCallback((messageId: string) => {
+    const bubbleEl = dmBubbleRefs.current[messageId]?.parentElement;
+    if (!bubbleEl) return null;
+    const rect = bubbleEl.getBoundingClientRect();
+    return { x: rect.right, y: rect.top };
+  }, []);
 
   // スレッド切り替え・Escapeキーでコピーメニュー/選択モードを閉じる。
   useEffect(() => {
@@ -2999,57 +2993,88 @@ export default function AvatarSpace({
       )}
 
       {/* DMメッセージの右クリック/長押しメニュー */}
-      {dmContextMenu && (
-        <div
-          className="fixed z-50 min-w-[128px] overflow-hidden rounded-lg bg-slate-800 text-xs font-semibold text-white shadow-xl"
-          style={{ left: dmContextMenu.x, top: dmContextMenu.y }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              copyDmText(dmContextMenu.message.message);
-              closeDmCopyUi();
-            }}
-            className="block w-full px-3 py-2 text-left hover:bg-slate-700"
-          >
-            コピー
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (dmContextMenu.selectedText) {
-                copyDmText(dmContextMenu.selectedText);
-                closeDmCopyUi();
-              } else {
-                setDmSelectionModeMessageId(dmContextMenu.message.id);
-                setDmContextMenu(null);
-              }
-            }}
-            className="block w-full border-t border-slate-700 px-3 py-2 text-left hover:bg-slate-700"
-          >
-            選択コピー
-          </button>
-        </div>
-      )}
+      {dmContextMenu &&
+        (() => {
+          const point = getDmBubbleTopRight(dmContextMenu.message.id);
+          if (!point) return null;
+          return (
+            <div
+              className="fixed z-50 min-w-[128px] overflow-hidden rounded-lg bg-slate-800 text-xs font-semibold text-white shadow-xl"
+              style={{
+                left: point.x,
+                top: point.y,
+                transform: "translate(-100%, calc(-100% - 6px))",
+              }}
+            >
+              {dmContextMenu.source === "mouse" && dmContextMenu.selectedText ? (
+                // PCで既に範囲選択済みの状態から開いた場合は、その場コピー
+                // だけを1項目で出す(「選択コピー」との二度手間を避ける)。
+                <button
+                  type="button"
+                  onClick={() => {
+                    copyDmText(dmContextMenu.selectedText);
+                    closeDmCopyUi();
+                  }}
+                  className="block w-full px-3 py-2 text-left hover:bg-slate-700"
+                >
+                  選択範囲をコピー
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      copyDmText(dmContextMenu.message.message);
+                      closeDmCopyUi();
+                    }}
+                    className="block w-full px-3 py-2 text-left hover:bg-slate-700"
+                  >
+                    コピー
+                  </button>
+                  {dmContextMenu.source === "touch" && (
+                    // スマホの長押しには「事前選択」が無いため、部分選択に
+                    // 入るための入口として引き続き選択コピーを出す。
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDmSelectionModeMessageId(dmContextMenu.message.id);
+                        setDmContextMenu(null);
+                      }}
+                      className="block w-full border-t border-slate-700 px-3 py-2 text-left hover:bg-slate-700"
+                    >
+                      選択コピー
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
 
-      {/* 選択コピーモード中、選択範囲の直上に追従表示する「コピー」吹き出し */}
-      {dmSelectionModeMessageId && dmSelectionBubblePos && (
-        <button
-          type="button"
-          onClick={() => {
-            copyDmText(window.getSelection()?.toString() ?? "");
-            closeDmCopyUi();
-          }}
-          style={{
-            left: dmSelectionBubblePos.x,
-            top: dmSelectionBubblePos.y,
-            transform: "translate(-50%, calc(-100% - 8px))",
-          }}
-          className="fixed z-50 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-xl"
-        >
-          コピー
-        </button>
-      )}
+      {/* 選択コピーモード中、対象メッセージの吹き出し枠の右上に固定表示する
+          「コピー」ボタン(選択範囲の形状は追わない)。 */}
+      {dmSelectionModeMessageId &&
+        (() => {
+          const point = getDmBubbleTopRight(dmSelectionModeMessageId);
+          if (!point) return null;
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                copyDmText(window.getSelection()?.toString() ?? "");
+                closeDmCopyUi();
+              }}
+              style={{
+                left: point.x,
+                top: point.y,
+                transform: "translate(-100%, calc(-100% - 6px))",
+              }}
+              className="fixed z-50 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-xl"
+            >
+              コピー
+            </button>
+          );
+        })()}
 
       {/* DMメッセージコピー成功時のトースト通知 */}
       {dmCopyToast && (
