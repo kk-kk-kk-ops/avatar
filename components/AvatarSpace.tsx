@@ -313,7 +313,6 @@ export default function AvatarSpace({
   const [dmSelectionModeMessageId, setDmSelectionModeMessageId] = useState<
     string | null
   >(null);
-  const [dmCopyToast, setDmCopyToast] = useState(false);
   // スマホの長押し検出用(contextmenuイベントが発火しないiOS Safari向け)。
   const dmLongPressTimerRef = useRef<number | null>(null);
   const dmLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -800,14 +799,14 @@ export default function AvatarSpace({
     [selectedPeerUserId, supabase, viewOnlyInviteToken, dmEditingMessageId],
   );
 
-  // 指定テキストをクリップボードへコピーし、一時的にトーストで知らせる。
+  // 指定テキストをクリップボードへコピーする。コピー後は選択範囲の
+  // ハイライトが残り続けないよう解除する。
   const copyDmText = useCallback((text: string) => {
     if (!text) return;
     navigator.clipboard
       .writeText(text)
       .then(() => {
-        setDmCopyToast(true);
-        setTimeout(() => setDmCopyToast(false), 1500);
+        window.getSelection()?.removeAllRanges();
       })
       .catch((err) => {
         // eslint-disable-next-line no-console
@@ -936,6 +935,17 @@ export default function AvatarSpace({
       window.getSelection()?.removeAllRanges();
     };
   }, [dmSelectionModeMessageId]);
+
+  // 部分コピーモード中は、ブラウザ標準の選択ハンドルから「コピー」が
+  // 実行された(document上でcopyイベントが発火した)時点で選択モードを
+  // 終了する。closeDmCopyUiでdmSelectionModeMessageIdがnullに戻ると、
+  // 上のuseEffectのクリーンアップが走って選択ハイライトも消える。
+  useEffect(() => {
+    if (!dmSelectionModeMessageId) return;
+    const onCopy = () => closeDmCopyUi();
+    document.addEventListener("copy", onCopy);
+    return () => document.removeEventListener("copy", onCopy);
+  }, [dmSelectionModeMessageId, closeDmCopyUi]);
 
   // メニュー/部分コピーの「コピー」吹き出しを表示する位置(対象メッセージの
   // 吹き出し枠の右上)を算出する。dmBubbleRefsは本文<p>へのrefなので、
@@ -3412,13 +3422,6 @@ export default function AvatarSpace({
             </div>
           );
         })()}
-
-      {/* DMメッセージコピー成功時のトースト通知 */}
-      {dmCopyToast && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-lg">
-          ✅ コピーしました
-        </div>
-      )}
 
       {/* スマホ用移動ボタン(sm以上の画面では非表示)。参加者一覧
           ドロワー(ハンバーガーメニュー)を開いている間はトーク画面と
