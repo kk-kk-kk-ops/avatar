@@ -3442,10 +3442,12 @@ export default function AvatarSpace({
       {settingsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-            <h2 className="mb-4 text-base font-bold text-slate-800">
-              アバター・名前の変更
-            </h2>
+            <h2 className="text-base font-bold text-slate-800">設定</h2>
+            <hr className="mb-4 mt-2 border-slate-200" />
 
+            <p className="mb-2 text-xs font-semibold text-slate-500">
+              アバター
+            </p>
             <div className="mb-4">
               <AvatarPicker
                 selected={settingsAvatar}
@@ -3453,6 +3455,9 @@ export default function AvatarSpace({
               />
             </div>
 
+            <p className="mb-2 text-xs font-semibold text-slate-500">
+              表示名
+            </p>
             <input
               value={settingsNameInput}
               onChange={(e) => setSettingsNameInput(e.target.value)}
