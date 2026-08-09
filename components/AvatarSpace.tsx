@@ -2745,7 +2745,7 @@ export default function AvatarSpace({
               />
               {screenShareRemainingSeconds !== null && (
                 <span
-                  className={`mt-0.5 hidden text-[9px] leading-none sm:inline ${
+                  className={`mt-0.5 inline text-[9px] leading-none ${
                     screenShareRemainingSeconds <= 0
                       ? "text-red-400"
                       : "text-slate-400"
@@ -2760,7 +2760,7 @@ export default function AvatarSpace({
               <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
               {videoCallRemainingSeconds !== null && (
                 <span
-                  className={`mt-0.5 hidden text-[9px] leading-none sm:inline ${
+                  className={`mt-0.5 inline text-[9px] leading-none ${
                     videoCallRemainingSeconds <= 0
                       ? "text-red-400"
                       : "text-slate-400"
@@ -3031,11 +3031,13 @@ export default function AvatarSpace({
               増えても自分欄は固定したまま参加者一覧だけがスクロールする
               ようにする。 */}
           <div className="flex min-h-0 flex-1 flex-col pl-4 pr-3 pt-2 pb-3">
-            {/* ヘッダー:アイコン(左上)+閉じるボタン(右上、スマホのみ)。
+            {/* ヘッダー:アイコン(左上)+閉じるボタン(右上)。スマホの
+                ドロワー表示専用(PC版は常設サイドバーなので、上部の
+                メインヘッダーのロゴと重複するため非表示にする)。
                 左・上の余白はヘッダー(px-4 py-2)と揃えることで、
                 ハンバーガーメニューの開閉時にロゴの位置がずれて見えない
                 ようにする。 */}
-            <div className="mb-4 flex shrink-0 items-center justify-between">
+            <div className="mb-4 flex shrink-0 items-center justify-between sm:hidden">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
