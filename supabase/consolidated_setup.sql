@@ -606,12 +606,18 @@ grant execute on function public.get_daily_usage_used_seconds(text) to authentic
 
 
 -- ------------------------------------------------------------
--- 9f. chat_messages: ルーム内チャット(全プラン共通の標準機能)。
+-- 9f. chat_messages: 参加者ごとの1対1DM(旧仕様は「ルーム全体への
+--     一括投稿」だったが、DM形式に刷新した)。
 --     配信自体は既存のSupabase Realtime broadcast(avatar-room-{roomId}
---     チャンネル)にそのまま"chat"イベントを流すことで即時反映し、この
+--     チャンネル)にそのまま"dm"イベントを流すことで即時反映し、この
 --     テーブルは「リロード後・再入室後も履歴が見える」ための永続化専用に
---     使う(postgres_changesの購読は使わない。入室時に直近の履歴を
---     まとめてSELECTするだけで済むため)。
+--     使う(postgres_changesの購読は使わない。スレッドを開いた時点で
+--     相手との履歴をまとめてSELECTするだけで済むため)。
+--     宛先(recipient_user_id)は、バーチャル空間の参加者ID
+--     (ブラウザセッションごとのランダムID)ではなく、認証済み
+--     ユーザーの安定ID(auth.uid())を使う。参加者IDはリロードのたびに
+--     変わってしまい、DMの宛先として使うと過去のスレッドが別人扱いに
+--     なってしまうため。
 -- ------------------------------------------------------------
 create table if not exists public.chat_messages (
   id uuid primary key default gen_random_uuid(),
@@ -622,16 +628,38 @@ create table if not exists public.chat_messages (
   created_at timestamptz not null default now()
 );
 
+-- DM化にあたっての一度きりの移行。旧「ルーム全体への一括投稿」データには
+-- 宛先という概念が無くDMへ意味的に変換できないため、recipient_user_id列が
+-- まだ無い場合(=このブロックを初めて実行する場合)にのみ、旧データを
+-- 削除してから列を追加する。既にDM化済み(列が存在する)場合は何もしない
+-- ため、再実行してもそれ以降に蓄積したDMデータは消えない。
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'chat_messages'
+      and column_name = 'recipient_user_id'
+  ) then
+    delete from public.chat_messages;
+    alter table public.chat_messages
+      add column recipient_user_id uuid references auth.users(id) on delete cascade not null;
+  end if;
+end $$;
+
 create index if not exists chat_messages_room_id_created_at_idx
   on public.chat_messages (room_id, created_at);
+create index if not exists chat_messages_thread_idx
+  on public.chat_messages (room_id, sender_user_id, recipient_user_id);
 
 alter table public.chat_messages enable row level security;
 
 drop policy if exists "chat_messages: select own account rooms" on public.chat_messages;
-create policy "chat_messages: select own account rooms"
+drop policy if exists "chat_messages: select own dm" on public.chat_messages;
+create policy "chat_messages: select own dm"
   on public.chat_messages for select
   using (
-    room_id in (
+    (sender_user_id = auth.uid() or recipient_user_id = auth.uid())
+    and room_id in (
       select r.id from public.rooms r
       join public.profiles p on p.account_id = r.account_id
       where p.user_id = auth.uid()
@@ -639,15 +667,25 @@ create policy "chat_messages: select own account rooms"
   );
 
 drop policy if exists "chat_messages: insert own account rooms" on public.chat_messages;
-create policy "chat_messages: insert own account rooms"
+drop policy if exists "chat_messages: insert own dm" on public.chat_messages;
+create policy "chat_messages: insert own dm"
   on public.chat_messages for insert
   with check (
     sender_user_id = auth.uid()
+    and recipient_user_id <> auth.uid()
     and char_length(message) <= 500
     and room_id in (
       select r.id from public.rooms r
       join public.profiles p on p.account_id = r.account_id
       where p.user_id = auth.uid()
+    )
+    -- 宛先(recipient_user_id)も、送信者と同じアカウントに所属する
+    -- 参加者であることを検証する(他アカウントのユーザーへ勝手に
+    -- 送れないようにするため)。
+    and recipient_user_id in (
+      select p2.user_id from public.profiles p2
+      join public.rooms r2 on r2.account_id = p2.account_id
+      where r2.id = room_id
     )
   );
 
@@ -659,15 +697,22 @@ create policy "chat_messages: insert own account rooms"
 --       トークンの一致をSECURITY DEFINERで検証したうえでRLSを迂回する
 --       関数を別途用意し、viewOnly時はクライアントからこちらを呼ぶ
 --       (app/api/livekit-token/route.tsの認可判定と同じ「通常ルート/
---       viewOnlyルート」の使い分け)。
+--       viewOnlyルート」の使い分け)。DMになったため、どちらの関数も
+--       会話相手(peer_user_id / recipient_user_id)を引数に取る。
+-- 引数を追加(peer_user_id)して関数シグネチャが変わったため、旧シグネチャ
+-- (本番に既に存在しうる)・新シグネチャ(再実行時に既に存在しうる)の
+-- 両方をdropしてから作り直す。
 drop function if exists public.list_chat_messages_by_invite_token(text, uuid);
+drop function if exists public.list_chat_messages_by_invite_token(text, uuid, uuid);
 
 create function public.list_chat_messages_by_invite_token(
   token text,
-  target_room_id uuid
+  target_room_id uuid,
+  peer_user_id uuid
 )
 returns table (
   id uuid,
+  sender_user_id uuid,
   sender_name text,
   message text,
   created_at timestamptz
@@ -676,23 +721,31 @@ language sql
 security definer
 set search_path = public
 as $$
-  select m.id, m.sender_name, m.message, m.created_at
+  select m.id, m.sender_user_id, m.sender_name, m.message, m.created_at
   from public.chat_messages m
   join public.rooms r on r.id = m.room_id
   join public.accounts a on a.id = r.account_id
   where a.invite_token = token
     and r.id = target_room_id
+    and (
+      (m.sender_user_id = auth.uid() and m.recipient_user_id = peer_user_id)
+      or (m.sender_user_id = peer_user_id and m.recipient_user_id = auth.uid())
+    )
   order by m.created_at asc
   limit 50;
 $$;
 
-grant execute on function public.list_chat_messages_by_invite_token(text, uuid) to authenticated;
+grant execute on function public.list_chat_messages_by_invite_token(text, uuid, uuid) to authenticated;
 
+-- 引数を追加(recipient_user_id)して関数シグネチャが変わったため、
+-- 旧シグネチャ・新シグネチャの両方をdropしてから作り直す。
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, text, text);
+drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text);
 
 create function public.send_chat_message_by_invite_token(
   token text,
   target_room_id uuid,
+  recipient_user_id uuid,
   sender_name text,
   message text
 )
@@ -706,6 +759,9 @@ declare
 begin
   if auth.uid() is null then
     raise exception 'ログインが必要です';
+  end if;
+  if recipient_user_id = auth.uid() then
+    raise exception '自分自身には送信できません';
   end if;
   if char_length(message) = 0 or char_length(message) > 500 then
     raise exception 'メッセージの長さが不正です';
@@ -722,13 +778,14 @@ begin
   end if;
 
   return query
-    insert into public.chat_messages (room_id, sender_user_id, sender_name, message)
-    values (v_room_id, auth.uid(), sender_name, message)
+    insert into public.chat_messages
+      (room_id, sender_user_id, recipient_user_id, sender_name, message)
+    values (v_room_id, auth.uid(), recipient_user_id, sender_name, message)
     returning chat_messages.id, chat_messages.created_at;
 end;
 $$;
 
-grant execute on function public.send_chat_message_by_invite_token(text, uuid, text, text) to authenticated;
+grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text) to authenticated;
 
 -- 9f-3. チャット履歴の削除ポリシー。
 --   ・投稿から1ヶ月経過したメッセージは自動削除する(pg_cronで毎日実行)

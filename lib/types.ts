@@ -3,6 +3,8 @@ export type PresenceStatus = "available" | "busy" | "away";
 
 export type PlayerState = {
   id: string; // ブラウザごとのランダムID(ゲストID)
+  userId?: string; // 認証済みSupabaseユーザーの安定ID(auth.uid())。DMの
+  // 宛先特定に使う(idはリロードのたびに変わるため宛先には使えない)。
   name: string;
   color: string;
   x: number;
