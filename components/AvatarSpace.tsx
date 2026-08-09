@@ -247,6 +247,8 @@ export default function AvatarSpace({
     isSelf: boolean;
     message: string;
     createdAt: string;
+    editedAt: string | null;
+    deletedAt: string | null;
   };
   // 会話相手(認証済みユーザーの安定ID)ごとのスレッド。
   const [dmThreads, setDmThreads] = useState<Record<string, DmMessage[]>>({});
@@ -261,6 +263,11 @@ export default function AvatarSpace({
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
+  // 編集中のメッセージID。設定されている間、入力欄は送信ではなく更新用に
+  // 動作する(dmInputにそのメッセージの文面を読み込んで使う)。
+  const [dmEditingMessageId, setDmEditingMessageId] = useState<string | null>(
+    null,
+  );
   // メッセージ一覧のスクロール制御用。dmForceScrollRefがtrueの間に
   // dmThreads(選択中の相手分)が更新されたら、次の描画後に一番下へ
   // スクロールする(自分の送信時・スレッドを開いた時・最下部付近での
@@ -483,7 +490,7 @@ export default function AvatarSpace({
           })
         : await supabase
             .from("chat_messages")
-            .select("id, sender_user_id, message, created_at")
+            .select("id, sender_user_id, message, created_at, edited_at, deleted_at")
             .eq("room_id", roomId)
             .or(
               `and(sender_user_id.eq.${myUserId},recipient_user_id.eq.${selectedPeerUserId}),and(sender_user_id.eq.${selectedPeerUserId},recipient_user_id.eq.${myUserId})`,
@@ -501,6 +508,8 @@ export default function AvatarSpace({
         sender_user_id: string;
         message: string;
         created_at: string;
+        edited_at: string | null;
+        deleted_at: string | null;
       }>;
       const messages: DmMessage[] = (
         viewOnlyInviteToken ? rows : rows.slice().reverse()
@@ -510,6 +519,8 @@ export default function AvatarSpace({
         isSelf: row.sender_user_id === myUserId,
         message: row.message,
         createdAt: row.created_at,
+        editedAt: row.edited_at,
+        deletedAt: row.deleted_at,
       }));
       dmForceScrollRef.current = true;
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
@@ -628,6 +639,8 @@ export default function AvatarSpace({
             isSelf: true,
             message: trimmed,
             createdAt: data.created_at,
+            editedAt: null,
+            deletedAt: null,
           },
         ],
       }));
@@ -647,6 +660,128 @@ export default function AvatarSpace({
       setDmSending(false);
     }
   }, [dmInput, dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken]);
+
+  // 編集モードに入る:メニューの「編集」から呼ばれ、入力欄に文面を読み込む。
+  const startEditDmMessage = useCallback((m: DmMessage) => {
+    setDmEditingMessageId(m.id);
+    setDmInput(m.message);
+    setDmError(null);
+  }, []);
+
+  const cancelEditDmMessage = useCallback(() => {
+    setDmEditingMessageId(null);
+    setDmInput("");
+  }, []);
+
+  // 編集中のメッセージを更新する(自分の送信分のみ)。
+  const updateDmMessage = useCallback(async () => {
+    const trimmed = dmInput.trim();
+    const messageId = dmEditingMessageId;
+    const peerUserId = selectedPeerUserId;
+    const myUserId = authUserIdRef.current;
+    if (!trimmed || !messageId || !peerUserId || !myUserId || dmSending) {
+      return;
+    }
+    setDmSending(true);
+    try {
+      const editedAt = new Date().toISOString();
+      const { error } = viewOnlyInviteToken
+        ? await supabase.rpc("edit_chat_message_by_invite_token", {
+            token: viewOnlyInviteToken,
+            p_message_id: messageId,
+            p_new_message: trimmed,
+            p_edited_at: editedAt,
+          })
+        : await supabase
+            .from("chat_messages")
+            .update({ message: trimmed, edited_at: editedAt })
+            .eq("id", messageId)
+            .eq("sender_user_id", myUserId);
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("メッセージの編集に失敗しました", error);
+        setDmError("編集に失敗しました。時間をおいて再度お試しください。");
+        return;
+      }
+      setDmThreads((prev) => ({
+        ...prev,
+        [peerUserId]: (prev[peerUserId] ?? []).map((m) =>
+          m.id === messageId ? { ...m, message: trimmed, editedAt } : m,
+        ),
+      }));
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "dm-edit",
+        payload: {
+          id: messageId,
+          senderUserId: myUserId,
+          recipientUserId: peerUserId,
+          message: trimmed,
+          editedAt,
+        },
+      });
+      setDmEditingMessageId(null);
+      setDmInput("");
+    } finally {
+      setDmSending(false);
+    }
+  }, [
+    dmInput,
+    dmEditingMessageId,
+    dmSending,
+    selectedPeerUserId,
+    supabase,
+    viewOnlyInviteToken,
+  ]);
+
+  // メッセージを削除する(論理削除。自分の送信分のみ)。確認ダイアログは
+  // 呼び出し元(メニューのonClick)で表示する。
+  const deleteDmMessage = useCallback(
+    async (m: DmMessage) => {
+      const peerUserId = selectedPeerUserId;
+      const myUserId = authUserIdRef.current;
+      if (!peerUserId || !myUserId) return;
+      const deletedAt = new Date().toISOString();
+      const { error } = viewOnlyInviteToken
+        ? await supabase.rpc("delete_chat_message_by_invite_token", {
+            token: viewOnlyInviteToken,
+            p_message_id: m.id,
+            p_deleted_at: deletedAt,
+          })
+        : await supabase
+            .from("chat_messages")
+            .update({ message: "", deleted_at: deletedAt })
+            .eq("id", m.id)
+            .eq("sender_user_id", myUserId);
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("メッセージの削除に失敗しました", error);
+        setDmError("削除に失敗しました。時間をおいて再度お試しください。");
+        return;
+      }
+      setDmThreads((prev) => ({
+        ...prev,
+        [peerUserId]: (prev[peerUserId] ?? []).map((msg) =>
+          msg.id === m.id ? { ...msg, message: "", deletedAt } : msg,
+        ),
+      }));
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "dm-delete",
+        payload: {
+          id: m.id,
+          senderUserId: myUserId,
+          recipientUserId: peerUserId,
+          deletedAt,
+        },
+      });
+      if (dmEditingMessageId === m.id) {
+        setDmEditingMessageId(null);
+        setDmInput("");
+      }
+    },
+    [selectedPeerUserId, supabase, viewOnlyInviteToken, dmEditingMessageId],
+  );
 
   // 指定テキストをクリップボードへコピーし、一時的にトーストで知らせる。
   const copyDmText = useCallback((text: string) => {
@@ -785,9 +920,11 @@ export default function AvatarSpace({
     return { x: rect.right, y: rect.top };
   }, []);
 
-  // スレッド切り替え・Escapeキーでコピーメニュー/選択モードを閉じる。
+  // スレッド切り替え・Escapeキーでコピーメニュー/選択モード/編集中を閉じる。
   useEffect(() => {
     closeDmCopyUi();
+    setDmEditingMessageId(null);
+    setDmInput("");
   }, [selectedPeerUserId, closeDmCopyUi]);
 
   useEffect(() => {
@@ -1454,6 +1591,8 @@ export default function AvatarSpace({
                 isSelf: false,
                 message: msg.message,
                 createdAt: msg.createdAt,
+                editedAt: null,
+                deletedAt: null,
               },
             ],
           }));
@@ -1463,6 +1602,54 @@ export default function AvatarSpace({
               [msg.senderUserId]: true,
             }));
           }
+        })
+        .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
+          const msg = payload as {
+            id: string;
+            senderUserId: string;
+            recipientUserId: string;
+            message: string;
+            editedAt: string;
+          };
+          const myUserId = authUserIdRef.current;
+          // 自分の編集分は既にローカルへ反映済み。自分宛てでなければ無視する。
+          if (
+            msg.senderUserId === myUserId ||
+            msg.recipientUserId !== myUserId
+          ) {
+            return;
+          }
+          setDmThreads((prev) => ({
+            ...prev,
+            [msg.senderUserId]: (prev[msg.senderUserId] ?? []).map((m) =>
+              m.id === msg.id
+                ? { ...m, message: msg.message, editedAt: msg.editedAt }
+                : m,
+            ),
+          }));
+        })
+        .on("broadcast", { event: "dm-delete" }, ({ payload }) => {
+          const msg = payload as {
+            id: string;
+            senderUserId: string;
+            recipientUserId: string;
+            deletedAt: string;
+          };
+          const myUserId = authUserIdRef.current;
+          if (
+            msg.senderUserId === myUserId ||
+            msg.recipientUserId !== myUserId
+          ) {
+            return;
+          }
+          setDmThreads((prev) => ({
+            ...prev,
+            [msg.senderUserId]: (prev[msg.senderUserId] ?? []).map((m) =>
+              m.id === msg.id
+                ? { ...m, message: "", deletedAt: msg.deletedAt }
+                : m,
+            ),
+          }));
         })
         .on("broadcast", { event: "force-leave" }, () => {
           setForceLeaveMessage(
@@ -2913,30 +3100,58 @@ export default function AvatarSpace({
                           まだメッセージはありません
                         </p>
                       )}
-                      {thread.map((m) => (
-                        <div
-                          key={m.id}
-                          onContextMenu={(e) => handleDmContextMenu(e, m)}
-                          onTouchStart={(e) => handleDmTouchStart(e, m)}
-                          onTouchMove={handleDmTouchMove}
-                          onTouchEnd={handleDmTouchEnd}
-                          onTouchCancel={handleDmTouchEnd}
-                          className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
-                            m.isSelf
-                              ? "ml-auto bg-emerald-600 text-white"
-                              : "bg-slate-700 text-slate-100"
-                          }`}
-                        >
-                          <p
-                            ref={(el) => {
-                              dmBubbleRefs.current[m.id] = el;
-                            }}
-                            className="whitespace-pre-wrap break-words"
+                      {thread.map((m) =>
+                        m.deletedAt ? (
+                          // 削除済みメッセージはプレースホルダーのみ表示し、
+                          // コピー/編集/削除のメニューは出さない(対象が無いため)。
+                          <div
+                            key={m.id}
+                            className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs italic text-slate-400 ${
+                              m.isSelf ? "ml-auto bg-slate-700/40" : "bg-slate-700/40"
+                            }`}
                           >
-                            {m.message}
-                          </p>
-                        </div>
-                      ))}
+                            このメッセージは削除されました
+                          </div>
+                        ) : (
+                          <div
+                            key={m.id}
+                            onContextMenu={(e) => handleDmContextMenu(e, m)}
+                            onTouchStart={(e) => handleDmTouchStart(e, m)}
+                            onTouchMove={handleDmTouchMove}
+                            onTouchEnd={handleDmTouchEnd}
+                            onTouchCancel={handleDmTouchEnd}
+                            className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                              m.isSelf
+                                ? "ml-auto bg-emerald-600 text-white"
+                                : "bg-slate-700 text-slate-100"
+                            }`}
+                          >
+                            {/*
+                              (編集済み)ラベルはこの<p>の外に置く。
+                              「選択コピー」はこの<p>のDOMノード全体を
+                              Range.selectNodeContentsで選択するため、
+                              <p>の中に入れるとコピー内容に混ざってしまう。
+                            */}
+                            <p
+                              ref={(el) => {
+                                dmBubbleRefs.current[m.id] = el;
+                              }}
+                              className="inline whitespace-pre-wrap break-words"
+                            >
+                              {m.message}
+                            </p>
+                            {m.editedAt && (
+                              <span
+                                className={`ml-1 text-[10px] ${
+                                  m.isSelf ? "text-emerald-100" : "text-slate-400"
+                                }`}
+                              >
+                                (編集済み)
+                              </span>
+                            )}
+                          </div>
+                        ),
+                      )}
                     </div>
                     {showDmScrollButton && (
                       <button
@@ -2959,13 +3174,29 @@ export default function AvatarSpace({
                       {dmError}
                     </p>
                   )}
+                  {dmEditingMessageId && (
+                    <div className="flex items-center justify-between border-t border-slate-700 bg-slate-800/60 px-3 py-1.5 text-[11px] text-slate-300">
+                      <span>編集中</span>
+                      <button
+                        type="button"
+                        onClick={cancelEditDmMessage}
+                        className="text-slate-400 hover:text-white"
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  )}
                   <div className="flex gap-1.5 border-t border-slate-700 p-2">
                     <input
                       value={dmInput}
                       onChange={(e) => setDmInput(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                          sendDmMessage();
+                          if (dmEditingMessageId) {
+                            updateDmMessage();
+                          } else {
+                            sendDmMessage();
+                          }
                         }
                       }}
                       maxLength={500}
@@ -2973,11 +3204,11 @@ export default function AvatarSpace({
                       className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
                     />
                     <button
-                      onClick={sendDmMessage}
+                      onClick={dmEditingMessageId ? updateDmMessage : sendDmMessage}
                       disabled={!dmInput.trim() || dmSending}
                       className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
-                      送信
+                      {dmEditingMessageId ? "更新" : "送信"}
                     </button>
                   </div>
                 </>
@@ -3045,6 +3276,38 @@ export default function AvatarSpace({
                       選択コピー
                     </button>
                   )}
+                </>
+              )}
+              {dmContextMenu.message.isSelf && (
+                // 自分が送信したメッセージにのみ、編集・削除を出す。
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startEditDmMessage(dmContextMenu.message);
+                      closeDmCopyUi();
+                    }}
+                    className="block w-full border-t border-slate-700 px-3 py-2 text-left hover:bg-slate-700"
+                  >
+                    編集
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = dmContextMenu.message;
+                      closeDmCopyUi();
+                      if (
+                        window.confirm(
+                          "このメッセージを削除します。よろしいですか?",
+                        )
+                      ) {
+                        deleteDmMessage(target);
+                      }
+                    }}
+                    className="block w-full border-t border-slate-700 px-3 py-2 text-left text-red-300 hover:bg-slate-700"
+                  >
+                    削除
+                  </button>
                 </>
               )}
             </div>
