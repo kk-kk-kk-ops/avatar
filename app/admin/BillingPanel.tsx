@@ -1,11 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { PLANS, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
 
-const DEBUG_SWITCHABLE_PLAN_ORDER: PlanId[] = [
+const PLAN_DISPLAY_ORDER: PlanId[] = [
   "free",
   "light",
   "standard",
@@ -29,7 +28,6 @@ export default function BillingPanel({
   isDebugPlanSwitcherAllowed: boolean;
 }) {
   const [showStripeNotice, setShowStripeNotice] = useState(false);
-  const planInfo = PLANS[plan];
 
   const [debugPendingPlan, setDebugPendingPlan] = useState<PlanId | null>(
     null,
@@ -57,22 +55,52 @@ export default function BillingPanel({
     <div className="space-y-6">
       <div>
         <p className="mb-1 text-xs font-semibold text-slate-500">契約プラン</p>
-        <p className="text-base font-bold text-slate-800">
-          {planInfo.label} {planInfo.subLabel}
-        </p>
         {trialEndsAt && (
-          <p className="mt-1 text-xs text-amber-600">
+          <p className="mb-3 text-xs text-amber-600">
             無料お試しは{new Date(trialEndsAt).toLocaleDateString("ja-JP")}
             までです。
           </p>
         )}
-        <div className="mt-3 flex gap-2">
-          <Link
-            href="/plan"
-            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-          >
-            プラン変更
-          </Link>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {PLAN_DISPLAY_ORDER.map((id) => {
+            const info = PLANS[id];
+            const isCurrent = plan === id;
+            return (
+              <div
+                key={id}
+                className={`flex flex-col rounded-xl border-2 bg-white p-4 ${
+                  isCurrent ? "border-emerald-500" : "border-slate-200"
+                }`}
+              >
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-bold text-slate-800">
+                    {info.label}
+                  </p>
+                  {isCurrent && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                      現在のプラン
+                    </span>
+                  )}
+                </div>
+                <p className="mb-3 text-lg font-bold text-slate-900">
+                  {info.priceLabel}
+                </p>
+                <ul className="mb-4 flex-1 space-y-1 text-[11px] text-slate-600">
+                  <li>同時入室: {info.maxPeoplePerRoom}人</li>
+                  <li>画面共有: {formatDailyLimit(info.screenShareDailyMinutes)}</li>
+                  <li>ビデオ通話: {formatDailyLimit(info.videoCallDailyMinutes)}</li>
+                  <li>音声通話: 無制限</li>
+                  <li>チャット: 無制限</li>
+                </ul>
+                <button
+                  disabled
+                  className="cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-500"
+                >
+                  {isCurrent ? "利用中" : "お問い合わせください"}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -104,7 +132,7 @@ export default function BillingPanel({
           </p>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {DEBUG_SWITCHABLE_PLAN_ORDER.map((id) => {
+            {PLAN_DISPLAY_ORDER.map((id) => {
               const info = PLANS[id];
               const isCurrent = plan === id;
               return (
