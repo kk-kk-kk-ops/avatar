@@ -20,6 +20,22 @@ services:
       - caddy_config:/config
     restart: unless-stopped
 
+  # マスター画面のサーバーリソース表示用。VPS自体のCPU/RAM/帯域/接続数を
+  # 収集するPrometheus公式のOS監視エージェント。127.0.0.1:9100にのみ
+  # bindするため外部からは到達不可(caddyコンテナも同じくhostネットワーク
+  # なのでlocalhost:9100へreverse_proxy可能)。ファイアウォール変更は不要。
+  node-exporter:
+    image: prom/node-exporter:latest
+    network_mode: host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=127.0.0.1:9100
+      - --collector.netdev.device-exclude=^(lo|docker.*|veth.*|br-.*|virbr.*|tun.*|tap.*)$
+    restart: unless-stopped
+
 volumes:
   caddy_data:
   caddy_config:

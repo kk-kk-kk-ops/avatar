@@ -35,6 +35,10 @@ Indigoでは「セキュリティグループ」ではなく「**ファイアウ
 | TCP | 5349 | 0.0.0.0 | TURN TLS |
 | UDP | 5349 | 0.0.0.0 | TURN TLS |
 
+node_exporter(サーバーリソース表示用、ポート9100)は`127.0.0.1`にのみ
+bindしCaddy経由(443)でBasic認証越しに公開するため、上記に加えて
+ファイアウォールルールを追加する必要はない。
+
 **Redisノード用ファイアウォール**(`grovina-livekit-redis`に適用)
 
 | プロトコル | ポート | 送信元IP | 用途 |
@@ -47,6 +51,9 @@ Indigoでは「セキュリティグループ」ではなく「**ファイアウ
 - `livekit.yourdomain.com` → LiveKitノードのグローバルIPv4(Aレコード)
 - `turn.yourdomain.com` → 同上(TURN TLS証明書用。Caddyが自動取得する想定なら
   同じAレコードで問題ない)
+- `metrics.yourdomain.com` → 同上(マスター画面のサーバーリソース表示用。
+  node_exporterはBasic認証で保護してから公開するため、443さえ開いていれば
+  ファイアウォールの追加設定は不要)
 - ノードを増設する場合、同じAレコードにIPを追加(ラウンドロビン)するか、
   ロードバランサ/複数レコードでの分散を検討する
 
@@ -75,6 +82,9 @@ ssh user@<ノードIP>
 cd ~/livekit-node
 cp .env.example .env
 # .envを編集: LIVEKIT_DOMAIN, TURN_DOMAIN, LIVEKIT_API_KEY/SECRET, REDIS_ADDRESS(RedisノードのIP), REDIS_PASSWORD
+# METRICS_DOMAIN / METRICS_BASIC_AUTH_USER / METRICS_BASIC_AUTH_HASH も編集する
+# (ハッシュは `docker run --rm caddy:2-alpine caddy hash-password --plaintext '<パスワード>'` で生成。
+# 平文パスワードは.envに書かず、Vercel環境変数とパスワードマネージャーにのみ保存する)
 
 # livekit-server自体は設定ファイル内の${VAR}プレースホルダーを展開しないため、
 # .envの値を実ファイルに描画してからマウントする(render-config.shが実施)
@@ -89,6 +99,11 @@ docker compose up -d
 `./render-config.sh && docker compose up -d`を実行し直してください。
 `render-config.sh`が生成する`livekit.effective.yaml`には実際のAPIキー等の
 秘密情報が平文で書き込まれるため、Gitには含めない(`.gitignore`済み)。
+
+**注意2**: `Caddyfile`だけを変更した場合(例: metricsのsite block追加)は、
+`docker compose up -d`だけではcaddyコンテナは再作成されず、変更が反映されません。
+`Caddyfile`の内容はマウントされたファイルとして読み込まれるため、
+必ず`docker compose restart caddy`を明示的に実行してください。
 
 ## 5. デプロイ手順(Redisノード)
 

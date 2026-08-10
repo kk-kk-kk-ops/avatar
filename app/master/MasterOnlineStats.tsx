@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PlayerState, Room } from "@/lib/types";
+import ServerMetrics from "./ServerMetrics";
 
 type Stats = {
   total: number;
@@ -152,6 +153,7 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
             {badge.label}(推奨{requiredNodes}台)
           </span>
         </div>
+        <ServerMetrics />
       </div>
       <div className="mt-4 grid grid-cols-5 gap-3 border-t border-slate-100 pt-4 text-center">
         <div>

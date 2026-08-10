@@ -1,3 +1,13 @@
 {$LIVEKIT_DOMAIN} {
   reverse_proxy localhost:7880
 }
+
+# マスター画面のサーバーリソース表示用。node_exporterの/metricsは
+# サーバー情報を含むため、Basic認証で保護してから公開する。
+# ハッシュ生成: docker run --rm caddy:2-alpine caddy hash-password --plaintext '<パスワード>'
+{$METRICS_DOMAIN} {
+  basic_auth {
+    {$METRICS_BASIC_AUTH_USER} {$METRICS_BASIC_AUTH_HASH}
+  }
+  reverse_proxy localhost:9100
+}
