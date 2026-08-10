@@ -456,7 +456,7 @@ grant execute on function public.increment_screen_watch_seconds(integer) to auth
 -- 9e. daily_usage: 「1日あたり利用時間」上限管理の汎用テーブル
 --     (旧screen_share_usageを一般化。当初は画面共有専用だったが、
 --     ビデオ通話にも全く同じ形の日次上限が必要になったため、種別列
---     kind('screen_share' | 'video_call')を持つ1つのテーブル・1組の
+--     kind('screen_share' | 'video_call' | 'voice_call')を持つ1つのテーブル・1組の
 --     RPCに統合した。ロジック(JST4:00リセット・30秒ハートビート・
 --     60秒/回の加算上限)を2重管理しないための判断)。
 --     ログインユーザー・日・種別ごとに1行持ち、day_keyはJST 4:00を
@@ -507,7 +507,7 @@ alter table public.daily_usage alter column kind set not null;
 
 alter table public.daily_usage drop constraint if exists daily_usage_kind_check;
 alter table public.daily_usage add constraint daily_usage_kind_check
-  check (kind in ('screen_share', 'video_call'));
+  check (kind in ('screen_share', 'video_call', 'voice_call'));
 
 -- 主キーをリネーム前(user_id, day_key)から(user_id, day_key, kind)へ
 -- 付け替える(リネームされたテーブルの旧PK名・新規作成時のPK名の両方を
@@ -549,7 +549,7 @@ begin
   if auth.uid() is null then
     return 0;
   end if;
-  if p_kind not in ('screen_share', 'video_call') then
+  if p_kind not in ('screen_share', 'video_call', 'voice_call') then
     raise exception '不正な種別です';
   end if;
   -- 1回の加算は60秒までに制限し、クライアントからの誤送信・不正な

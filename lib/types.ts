@@ -117,10 +117,12 @@ export type ProfileRole = "admin" | "guest";
 
 export type PlanId = "free" | "light" | "standard" | "pro" | "business";
 
-// 各プランの上限(ルーム数、ルームごとの同時接続人数、画面共有・ビデオ通話の
-// 1日あたり利用可能時間)と表示用ラベル。
-// screenShareDailyMinutes/videoCallDailyMinutesはnullで「無制限」を表す
-// (スタンダード以上は無制限。日次カウント自体を行わない)。
+// 各プランの上限(ルーム数、ルームごとの同時接続人数、画面共有・ビデオ通話・
+// 音声通話の1日あたり利用可能時間)と表示用ラベル。
+// screenShareDailyMinutes/videoCallDailyMinutes/voiceCallDailyMinutesは
+// nullで「無制限」を表す(無制限プランでは日次カウント自体を行わない)。
+// roomCreationは表示用(契約情報画面向け)で、実際のアクセス制御はまだ
+// 存在しない(テンプレート以外のルーム作成機能自体が未実装のため)。
 // 料金・上限はサービス側の固定値のためDBではなくここで管理する。
 export const PLANS: Record<
   PlanId,
@@ -133,37 +135,48 @@ export const PLANS: Record<
     maxPeoplePerRoom: number;
     screenShareDailyMinutes: number | null; // 1人1日あたりの画面共有可能時間(分)。毎日4:00にリセット。nullは無制限
     videoCallDailyMinutes: number | null; // 1人1日あたりのビデオ通話可能時間(分)。毎日4:00にリセット。nullは無制限
+    voiceCallDailyMinutes: number | null; // 1人1日あたりの音声通話可能時間(分)。毎日4:00にリセット。nullは無制限
+    roomCreation: "template-only" | "template-or-original"; // 表示用。ルーム作成方法の説明
   }
 > = {
   free: {
     label: "無料",
-    subLabel: "（ミーティングルーム1つ　人数上限：5名／画面共有・ビデオ通話：1日5分まで）",
+    subLabel:
+      "（ミーティングルーム1つ　人数上限：5名／画面共有・ビデオ通話：1日5分まで／音声通話：1日45分まで）",
     priceLabel: "無料",
     priceYen: 0,
     maxRooms: 1,
     maxPeoplePerRoom: 5,
     screenShareDailyMinutes: 5,
     videoCallDailyMinutes: 5,
+    voiceCallDailyMinutes: 45,
+    roomCreation: "template-only",
   },
   light: {
     label: "ライト",
-    subLabel: "（ミーティングルーム1つ　人数上限：10名／画面共有・ビデオ通話：1日60分まで）",
+    subLabel:
+      "（ミーティングルーム1つ　人数上限：10名／画面共有・ビデオ通話：1日45分まで／音声通話：1日90分まで）",
     priceLabel: "1,980円/月",
     priceYen: 1980,
     maxRooms: 1,
     maxPeoplePerRoom: 10,
-    screenShareDailyMinutes: 60,
-    videoCallDailyMinutes: 60,
+    screenShareDailyMinutes: 45,
+    videoCallDailyMinutes: 45,
+    voiceCallDailyMinutes: 90,
+    roomCreation: "template-only",
   },
   standard: {
     label: "スタンダード",
-    subLabel: "（ミーティングルーム1つ　人数上限：15名／画面共有・ビデオ通話：無制限）",
+    subLabel:
+      "（ミーティングルーム1つ　人数上限：15名／画面共有・ビデオ通話：1日90分まで／音声通話：無制限）",
     priceLabel: "4,980円/月",
     priceYen: 4980,
     maxRooms: 1,
     maxPeoplePerRoom: 15,
-    screenShareDailyMinutes: null,
-    videoCallDailyMinutes: null,
+    screenShareDailyMinutes: 90,
+    videoCallDailyMinutes: 90,
+    voiceCallDailyMinutes: null,
+    roomCreation: "template-only",
   },
   pro: {
     label: "プロ",
@@ -174,6 +187,8 @@ export const PLANS: Record<
     maxPeoplePerRoom: 30,
     screenShareDailyMinutes: null,
     videoCallDailyMinutes: null,
+    voiceCallDailyMinutes: null,
+    roomCreation: "template-or-original",
   },
   business: {
     label: "ビジネス",
@@ -184,6 +199,8 @@ export const PLANS: Record<
     maxPeoplePerRoom: 50,
     screenShareDailyMinutes: null,
     videoCallDailyMinutes: null,
+    voiceCallDailyMinutes: null,
+    roomCreation: "template-or-original",
   },
 };
 

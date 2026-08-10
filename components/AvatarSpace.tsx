@@ -127,6 +127,11 @@ type Props = {
   // プランごとのビデオ通話1日あたり利用可能時間(分)。nullは無制限。
   // 画面共有と全く同じ仕組み(daily_usageテーブル、kind='video_call')。
   videoCallDailyMinutes: number | null;
+  // プランごとの音声通話1日あたり利用可能時間(分)。nullは無制限。
+  // 画面共有・ビデオ通話と全く同じ仕組み(daily_usageテーブル、
+  // kind='voice_call')。「音声通話中」はマイクON かつ 近くに人がいる
+  // (eligiblePeerIds.length > 0)状態として計測する。
+  voiceCallDailyMinutes: number | null;
   isAccountAdmin: boolean;
   isMaster: boolean;
   // 他人の招待URL経由で参加しているゲストの場合のみ渡される招待
@@ -148,6 +153,7 @@ export default function AvatarSpace({
   maxPeoplePerRoom,
   screenShareDailyMinutes,
   videoCallDailyMinutes,
+  voiceCallDailyMinutes,
   isAccountAdmin,
   isMaster,
   guestInviteToken,
@@ -193,6 +199,15 @@ export default function AvatarSpace({
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  // 音声通話の「今日の残り利用可能時間(秒)」。画面共有・ビデオ通話と全く
+  // 同じ考え方(null = 未取得中 or プランが無制限)。daily_usageテーブルの
+  // kind='voice_call'を使う。
+  const [voiceCallRemainingSeconds, setVoiceCallRemainingSeconds] =
+    useState<number | null>(null);
+  const voiceCallRemainingRef = useRef<number | null>(null);
+  useEffect(() => {
+    voiceCallRemainingRef.current = voiceCallRemainingSeconds;
+  }, [voiceCallRemainingSeconds]);
   const [remoteStreams, setRemoteStreams] = useState<
     Record<string, MediaStream>
   >({});
@@ -2169,6 +2184,17 @@ export default function AvatarSpace({
   // setMicrophoneEnabledの呼び出しとUI状態の同期のみ行う。
   const toggleMic = useCallback(async () => {
     setMicError(null);
+    const next = !micEnabled;
+    if (
+      next &&
+      voiceCallRemainingRef.current !== null &&
+      voiceCallRemainingRef.current <= 0
+    ) {
+      setMicError(
+        "本日の音声通話可能時間の上限に達しています(4:00にリセットされます)。",
+      );
+      return;
+    }
     const room = livekitRoomRef.current;
     if (!room) {
       setMicError(
@@ -2177,7 +2203,6 @@ export default function AvatarSpace({
       return;
     }
     try {
-      const next = !micEnabled;
       await room.localParticipant.setMicrophoneEnabled(next);
       setMicEnabled(next);
       if (selfState.current) {
@@ -2190,6 +2215,25 @@ export default function AvatarSpace({
       );
     }
   }, [micEnabled]);
+
+  // 音声通話の残り時間が尽きた際に、マイクを強制的にオフにする(画面共有・
+  // ビデオ通話の強制終了と同じ考え方)。次にオンにしようとしてもtoggleMic側
+  // のガードで弾かれる。
+  const forceMuteMic = useCallback(async () => {
+    const room = livekitRoomRef.current;
+    if (room) {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(false);
+      } catch {
+        // 既にオフになっている場合などは無視
+      }
+    }
+    setMicEnabled(false);
+    if (selfState.current) {
+      selfState.current.micOn = false;
+      channelRef.current?.track(selfState.current);
+    }
+  }, []);
 
   // 退室時、プレビュー表示用のref参照をリセットする。実体(マイク・カメラ・
   // 画面共有のトラック停止)はLiveKit側のroom.disconnect()が担うため、
@@ -2476,6 +2520,82 @@ export default function AvatarSpace({
     }, 1000);
     return () => clearInterval(interval);
   }, [inCall, videoCallDailyLimitSeconds]);
+
+  // ---- 音声通話の「1日あたり利用時間」上限管理(画面共有・ビデオ通話と同じ仕組み) ----
+  // 「音声通話中」は、マイクがONかつ近くに人がいる(eligiblePeerIds.length > 0、
+  // 実際に音声を送信し得る)状態として計測する(マスター画面の「音声通話中」
+  // バッジと同じeligiblePeerIds基準に、送信中かどうかの条件を足したもの)。
+  const voiceCallDailyLimitSeconds =
+    voiceCallDailyMinutes === null ? null : voiceCallDailyMinutes * 60;
+  useEffect(() => {
+    if (!joined || voiceCallDailyLimitSeconds === null) return;
+    let cancelled = false;
+    supabase
+      .rpc("get_daily_usage_used_seconds", { p_kind: "voice_call" })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("音声通話利用時間の取得に失敗しました", error);
+          return;
+        }
+        setVoiceCallRemainingSeconds(
+          Math.max(0, voiceCallDailyLimitSeconds - (data ?? 0)),
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, supabase, voiceCallDailyLimitSeconds]);
+
+  const isVoiceCallActive = micEnabled && eligiblePeerIds.length > 0;
+
+  useEffect(() => {
+    if (!joined || voiceCallDailyLimitSeconds === null) return;
+    const interval = setInterval(() => {
+      if (!isVoiceCallActive) return;
+      supabase
+        .rpc("increment_daily_usage_seconds", {
+          p_kind: "voice_call",
+          seconds: 30,
+        })
+        .then(({ data, error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error("音声通話利用時間の記録に失敗しました", error);
+            return;
+          }
+          const remaining = Math.max(
+            0,
+            voiceCallDailyLimitSeconds - (data ?? 0),
+          );
+          setVoiceCallRemainingSeconds(remaining);
+          if (remaining <= 0) {
+            setMicError(
+              "本日の音声通話可能時間の上限に達したため、マイクをオフにしました。",
+            );
+            forceMuteMic();
+          }
+        });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [
+    joined,
+    isVoiceCallActive,
+    supabase,
+    voiceCallDailyLimitSeconds,
+    forceMuteMic,
+  ]);
+
+  useEffect(() => {
+    if (!isVoiceCallActive || voiceCallDailyLimitSeconds === null) return;
+    const interval = setInterval(() => {
+      setVoiceCallRemainingSeconds((prev) =>
+        prev === null ? prev : Math.max(0, prev - 1),
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isVoiceCallActive, voiceCallDailyLimitSeconds]);
 
   // 退室時、位置補間用の記録とAvatar DOM参照をクリアする。音声・映像・
   // 画面共有はLiveKit側のroom.disconnect()が担当するが、念のため
@@ -2765,8 +2885,20 @@ export default function AvatarSpace({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <div className="shrink-0">
+            <div className="flex shrink-0 flex-col items-center">
               <MicButton enabled={micEnabled} onClick={toggleMic} />
+              {voiceCallRemainingSeconds !== null && (
+                <span
+                  className={`mt-0.5 inline text-[9px] leading-none ${
+                    voiceCallRemainingSeconds <= 0
+                      ? "text-red-400"
+                      : "text-slate-400"
+                  }`}
+                  title="音声通話の本日の残り利用可能時間(4:00にリセット)"
+                >
+                  残{formatRemainingTime(voiceCallRemainingSeconds)}
+                </span>
+              )}
             </div>
             <div className="flex shrink-0 flex-col items-center">
               <ScreenShareButton

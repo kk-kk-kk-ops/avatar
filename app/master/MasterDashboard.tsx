@@ -111,7 +111,7 @@ export default function MasterDashboard({
                 : "text-slate-300 hover:bg-slate-800"
             }`}
           >
-            テンプレート作成・編集
+            テンプレート
           </button>
           <button
             onClick={() => selectTab("avatar")}
@@ -175,9 +175,7 @@ export default function MasterDashboard({
               <ul className="space-y-1 text-sm text-slate-700">
                 {(Object.keys(PLANS) as PlanId[]).map((plan) => (
                     <li key={plan} className="flex justify-between">
-                      <span>
-                        {PLANS[plan].label} {PLANS[plan].subLabel}
-                      </span>
+                      <span>{PLANS[plan].label}</span>
                       <span>{planCounts[plan] ?? 0}件</span>
                     </li>
                   ))}
