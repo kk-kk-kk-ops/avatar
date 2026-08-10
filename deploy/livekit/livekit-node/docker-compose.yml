@@ -12,6 +12,8 @@ services:
   caddy:
     image: caddy:2-alpine
     network_mode: host
+    env_file:
+      - .env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
