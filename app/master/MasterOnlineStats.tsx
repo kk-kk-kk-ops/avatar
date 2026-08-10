@@ -14,6 +14,33 @@ type Stats = {
 
 const EMPTY: Stats = { total: 0, mic: 0, video: 0, screen: 0, watching: 0 };
 
+// deploy/livekit/monitor/check-load-score.mjsのTHRESHOLDSと同じ値。
+// 両者は必ず同期させること(片方だけ閾値を変えると通知内容と画面表示がずれる)。
+const LOAD_THRESHOLDS = [
+  { overScore: 1200, nodes: 5 },
+  { overScore: 900, nodes: 4 },
+  { overScore: 600, nodes: 3 },
+  { overScore: 300, nodes: 2 },
+];
+
+function tierForScore(score: number): number {
+  const hit = LOAD_THRESHOLDS.find((t) => score > t.overScore);
+  return hit ? hit.nodes : 1;
+}
+
+function tierBadge(nodes: number): { label: string; className: string } {
+  if (nodes === 1) {
+    return { label: "通常運用", className: "bg-slate-100 text-slate-600" };
+  }
+  if (nodes === 2) {
+    return { label: "1台追加を検討", className: "bg-yellow-100 text-yellow-700" };
+  }
+  if (nodes === 3) {
+    return { label: "2台追加を検討", className: "bg-orange-100 text-orange-700" };
+  }
+  return { label: `${nodes}台構成を検討`, className: "bg-red-100 text-red-700" };
+}
+
 // 秒数を「X時間Y分」形式に整形する(1時間未満は「Y分」のみ)。
 function formatWatchDuration(totalSeconds: number): string {
   const totalMinutes = Math.floor(totalSeconds / 60);
@@ -106,6 +133,8 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
   // 重み付けし、共有中×20・視聴中×17とする
   // (deploy/livekit/monitor/check-load-score.mjsと同じ重み)。
   const loadScore = stats.video * 1 + stats.screen * 20 + stats.watching * 17;
+  const requiredNodes = tierForScore(loadScore);
+  const badge = tierBadge(requiredNodes);
 
   return (
     <div className="rounded-xl border border-slate-200 p-6">
@@ -117,6 +146,11 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
         <div>
           <p className="text-xs font-semibold text-slate-500">負荷スコア</p>
           <p className="mt-1 text-3xl font-bold text-slate-800">{loadScore}</p>
+          <span
+            className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge.className}`}
+          >
+            {badge.label}(推奨{requiredNodes}台)
+          </span>
         </div>
       </div>
       <div className="mt-4 grid grid-cols-5 gap-3 border-t border-slate-100 pt-4 text-center">
