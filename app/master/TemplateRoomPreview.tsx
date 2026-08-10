@@ -41,19 +41,24 @@ export default function TemplateRoomPreview({
     return () => observer.disconnect();
   }, []);
 
-  const viewportWidth = Math.min(areaSize.width || mapWidth, mapWidth);
-  const viewportHeight = Math.min(areaSize.height || mapHeight, mapHeight);
+  // ここは実際の画面の描画領域そのものの幅・高さを使う(mapWidth/Height側に
+  // クランプしてはいけない)。クランプしてしまうと、マップが画面より小さい
+  // 場合にmaxCameraが常に0に潰れ、マップ(と中心にいるアバター)が画面左上に
+  // 張り付いて見えてしまう(=アバターが画面中央より上に見えるバグの原因)。
+  const viewportWidth = areaSize.width;
+  const viewportHeight = areaSize.height;
   const spawnX = mapWidth / 2;
   const spawnY = mapHeight / 2;
-  const maxCameraX = Math.max(mapWidth - viewportWidth, 0);
-  const maxCameraY = Math.max(mapHeight - viewportHeight, 0);
+  // マップが画面より小さい場合はcameraを負の値にしてマップ自体を画面中央へ
+  // 寄せ、大きい場合は従来通り画面端で止める。どちらの場合も
+  // 「アバターは常に画面の中央」になる。
   const cameraX = Math.min(
-    Math.max(spawnX - viewportWidth / 2, 0),
-    maxCameraX,
+    Math.max(spawnX - viewportWidth / 2, Math.min(0, mapWidth - viewportWidth)),
+    Math.max(0, mapWidth - viewportWidth),
   );
   const cameraY = Math.min(
-    Math.max(spawnY - viewportHeight / 2, 0),
-    maxCameraY,
+    Math.max(spawnY - viewportHeight / 2, Math.min(0, mapHeight - viewportHeight)),
+    Math.max(0, mapHeight - viewportHeight),
   );
   const avatarLeft = spawnX - cameraX - avatarSizePx / 2;
   const avatarTop = spawnY - cameraY - avatarSizePx;

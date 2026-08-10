@@ -112,6 +112,7 @@ export default function TemplateEditor({
   }, []);
   const dragState = useRef<DragState | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(MAX_DISPLAY_WIDTH);
   const [availableHeight, setAvailableHeight] = useState(600);
   const [zoom, setZoom] = useState(1);
@@ -232,13 +233,34 @@ export default function TemplateEditor({
     dragState.current = null;
   };
 
+  // 新規アイテムを追加する位置。固定座標(旧: 常に100,100=マップ左上)だと
+  // ズームして画面外を見ている最中に追加した際、新しいアイテムが画面外の
+  // 左上に置かれて見失ってしまうため、常に「今スクロールして見えている
+  // 範囲の中心」の地図座標を返す。
+  const getVisibleCenterMapPoint = () => {
+    const el = scrollRef.current;
+    if (!el) return { x: mapWidth / 2, y: mapHeight / 2 };
+    return {
+      x: (el.scrollLeft + el.clientWidth / 2) / scale,
+      y: (el.scrollTop + el.clientHeight / 2) / scale,
+    };
+  };
+
   const addObstacle = () => {
+    const center = getVisibleCenterMapPoint();
+    const pos = clampPosition(
+      center.x - NEW_ITEM_SIZE / 2,
+      center.y - NEW_ITEM_SIZE / 2,
+      NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE,
+      mapWidth,
+      mapHeight,
+    );
     setObstacles((prev) => [
       ...prev,
       {
         id: randomItemId("obstacle"),
-        x: 100,
-        y: 100,
+        ...pos,
         width: NEW_ITEM_SIZE,
         height: NEW_ITEM_SIZE,
         label: "🧱 障害物",
@@ -247,12 +269,20 @@ export default function TemplateEditor({
   };
 
   const addMeetingZone = () => {
+    const center = getVisibleCenterMapPoint();
+    const pos = clampPosition(
+      center.x - NEW_ITEM_SIZE,
+      center.y - NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE * 2,
+      NEW_ITEM_SIZE * 2,
+      mapWidth,
+      mapHeight,
+    );
     setMeetingZones((prev) => [
       ...prev,
       {
         id: randomItemId("meeting"),
-        x: 100,
-        y: 100,
+        ...pos,
         width: NEW_ITEM_SIZE * 2,
         height: NEW_ITEM_SIZE * 2,
         label: "ミーティングエリア",
@@ -265,12 +295,20 @@ export default function TemplateEditor({
   // 全く同じだが、バーチャル空間内では見た目に出さない(透明・枠なし・
   // ラベル非表示)エリア。編集画面でだけ薄緑色+「会議室」と表示される。
   const addConferenceRoom = () => {
+    const center = getVisibleCenterMapPoint();
+    const pos = clampPosition(
+      center.x - NEW_ITEM_SIZE,
+      center.y - NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE * 2,
+      NEW_ITEM_SIZE * 2,
+      mapWidth,
+      mapHeight,
+    );
     setMeetingZones((prev) => [
       ...prev,
       {
         id: randomItemId("conference"),
-        x: 100,
-        y: 100,
+        ...pos,
         width: NEW_ITEM_SIZE * 2,
         height: NEW_ITEM_SIZE * 2,
         label: "会議室",
@@ -548,6 +586,7 @@ export default function TemplateEditor({
       {/* 編集キャンバス: 残り幅いっぱい(画面右端)まで広げる */}
       <div ref={measureRef} className="min-w-0 flex-1">
         <div
+          ref={scrollRef}
           className="relative touch-none overflow-auto rounded-lg border border-slate-300 bg-slate-700"
           style={{ width: viewportWidth, height: viewportHeight }}
           onPointerMove={handlePointerMove}
