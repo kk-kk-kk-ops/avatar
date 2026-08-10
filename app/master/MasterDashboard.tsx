@@ -188,7 +188,9 @@ export default function MasterDashboard({
           </div>
         )}
 
-        {tab === "templates" && <TemplateManager templates={templates} />}
+        {tab === "templates" && (
+          <TemplateManager templates={templates} avatarSizePx={avatarSizePx} />
+        )}
 
         {tab === "avatar" && (
           <AvatarSettingsPanel initialSizePx={avatarSizePx} />

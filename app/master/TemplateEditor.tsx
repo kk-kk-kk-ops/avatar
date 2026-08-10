@@ -15,6 +15,7 @@ import {
 } from "./actions";
 import { uploadTemplateImageClient } from "./uploadTemplateImage";
 import ConfirmModal from "@/components/ConfirmModal";
+import TemplateRoomPreview from "./TemplateRoomPreview";
 
 type ItemType = "obstacle" | "zone";
 
@@ -52,9 +53,11 @@ function clampMapSize(rawInput: string, fallback: number): number {
 // マップ編集はここに一本化されており、個々のルームでは編集できない。
 export default function TemplateEditor({
   template,
+  avatarSizePx,
   onClose,
 }: {
   template: MapTemplate;
+  avatarSizePx: number;
   onClose: () => void;
 }) {
   const [obstacles, setObstacles] = useState<Obstacle[]>(template.obstacles);
@@ -72,6 +75,7 @@ export default function TemplateEditor({
   const [nameInput, setNameInput] = useState(template.name);
   const [renaming, setRenaming] = useState(false);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   // 入力欄には生の文字列を持たせ、自由に打ち直せるようにする(数値state
   // に直接min/maxで丸めていると、例えば1900を消して2500と打ち直す途中の
   // 「2」の時点でMIN_MAP_SIZEまで丸められてしまい、自由に入力できな
@@ -496,6 +500,13 @@ export default function TemplateEditor({
           )}
         </div>
 
+        <button
+          onClick={() => setPreviewOpen(true)}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+        >
+          プレビュー
+        </button>
+
         <div className="mt-auto flex flex-col gap-2">
           <button
             onClick={handleSaveAndClose}
@@ -524,7 +535,17 @@ export default function TemplateEditor({
         />
       )}
 
-      {/* プレビュー: 残り幅いっぱい(画面右端)まで広げる */}
+      {previewOpen && (
+        <TemplateRoomPreview
+          mapWidth={mapWidth}
+          mapHeight={mapHeight}
+          backgroundImageUrl={backgroundImageUrl}
+          avatarSizePx={avatarSizePx}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
+
+      {/* 編集キャンバス: 残り幅いっぱい(画面右端)まで広げる */}
       <div ref={measureRef} className="min-w-0 flex-1">
         <div
           className="relative touch-none overflow-auto rounded-lg border border-slate-300 bg-slate-700"

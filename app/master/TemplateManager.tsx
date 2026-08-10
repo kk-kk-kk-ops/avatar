@@ -13,8 +13,10 @@ type PendingAction = { type: "create" } | { type: "delete"; id: string };
 
 export default function TemplateManager({
   templates,
+  avatarSizePx,
 }: {
   templates: MapTemplate[];
+  avatarSizePx: number;
 }) {
   const [pending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
@@ -71,7 +73,11 @@ export default function TemplateManager({
 
   if (editing) {
     return (
-      <TemplateEditor template={editing} onClose={() => setEditingId(null)} />
+      <TemplateEditor
+        template={editing}
+        avatarSizePx={avatarSizePx}
+        onClose={() => setEditingId(null)}
+      />
     );
   }
 
