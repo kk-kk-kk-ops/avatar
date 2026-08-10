@@ -89,8 +89,14 @@ export default function BillingPanel({
                   <li>同時入室: {info.maxPeoplePerRoom}人</li>
                   <li>画面共有: {formatDailyLimit(info.screenShareDailyMinutes)}</li>
                   <li>ビデオ通話: {formatDailyLimit(info.videoCallDailyMinutes)}</li>
-                  <li>音声通話: 無制限</li>
+                  <li>音声通話: {formatDailyLimit(info.voiceCallDailyMinutes)}</li>
                   <li>チャット: 無制限</li>
+                  <li>
+                    ルーム作成:{" "}
+                    {info.roomCreation === "template-or-original"
+                      ? "テンプレート＋オリジナル作成可"
+                      : "テンプレートのみ"}
+                  </li>
                 </ul>
                 <button
                   disabled

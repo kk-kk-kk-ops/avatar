@@ -87,8 +87,8 @@ export default function ServerMetrics() {
         <div className="mt-1 grid grid-cols-5 gap-x-3 text-center">
           <Metric label="CPU" value={fmtPercent(derived?.cpuPercent)} />
           <Metric label="RAM" value={derived ? `${derived.ramPercent.toFixed(0)}%` : "…"} />
-          <Metric label="↓" value={fmtMbps(derived?.downMbps)} />
-          <Metric label="↑" value={fmtMbps(derived?.upMbps)} />
+          <Metric label="下り" value={fmtMbps(derived?.downMbps)} />
+          <Metric label="上り" value={fmtMbps(derived?.upMbps)} />
           <Metric label="TCP" value={derived ? String(derived.tcpConnections) : "…"} />
         </div>
       )}
