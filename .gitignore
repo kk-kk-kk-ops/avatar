@@ -3,6 +3,7 @@ node_modules/
 .env
 .env.local
 .env*.local
+deploy/livekit/livekit-node/livekit.effective.yaml
 *.log
 .DS_Store
 tsconfig.tsbuildinfo

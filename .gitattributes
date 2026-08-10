@@ -1,0 +1,6 @@
+deploy/livekit/**/*.sh text eol=lf
+deploy/livekit/**/*.yaml text eol=lf
+deploy/livekit/**/*.yml text eol=lf
+deploy/livekit/**/Caddyfile text eol=lf
+deploy/livekit/**/.env.example text eol=lf
+deploy/livekit/**/*.md text eol=lf

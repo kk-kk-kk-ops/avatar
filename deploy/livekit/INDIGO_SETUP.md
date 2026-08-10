@@ -75,8 +75,20 @@ ssh user@<ノードIP>
 cd ~/livekit-node
 cp .env.example .env
 # .envを編集: LIVEKIT_DOMAIN, TURN_DOMAIN, LIVEKIT_API_KEY/SECRET, REDIS_ADDRESS(RedisノードのIP), REDIS_PASSWORD
+
+# livekit-server自体は設定ファイル内の${VAR}プレースホルダーを展開しないため、
+# .envの値を実ファイルに描画してからマウントする(render-config.shが実施)
+sudo apt-get install -y gettext-base
+chmod +x render-config.sh
+./render-config.sh
+
 docker compose up -d
 ```
+
+**注意**: `.env`の値を変更した場合は、`docker compose restart`ではなく
+`./render-config.sh && docker compose up -d`を実行し直してください。
+`render-config.sh`が生成する`livekit.effective.yaml`には実際のAPIキー等の
+秘密情報が平文で書き込まれるため、Gitには含めない(`.gitignore`済み)。
 
 ## 5. デプロイ手順(Redisノード)
 

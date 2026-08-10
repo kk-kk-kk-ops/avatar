@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./livekit.yaml:/etc/livekit.yaml:ro
+      - ./livekit.effective.yaml:/etc/livekit.yaml:ro
     restart: unless-stopped
 
   caddy:
