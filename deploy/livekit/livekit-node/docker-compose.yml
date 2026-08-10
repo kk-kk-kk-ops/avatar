@@ -6,12 +6,14 @@ services:
     env_file:
       - .env
     volumes:
-      - ./livekit.yaml:/etc/livekit.yaml:ro
+      - ./livekit.effective.yaml:/etc/livekit.yaml:ro
     restart: unless-stopped
 
   caddy:
     image: caddy:2-alpine
     network_mode: host
+    env_file:
+      - .env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
