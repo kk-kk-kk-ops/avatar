@@ -21,6 +21,7 @@ Indigoは「セキュリティグループ」単位でインバウンドルー�
 
 | プロトコル | ポート | 用途 |
 |---|---|---|
+| TCP | 80 | Caddyの自動HTTPS(Let's Encrypt証明書発行・更新、HTTP→HTTPSリダイレクト)に必須。閉じたままだと証明書取得が失敗・不安定になる |
 | TCP | 443 | Caddy(WSS/HTTPS) |
 | TCP | 7881 | LiveKit ICE/TCPフォールバック(ノード内部向け。外部公開は必須ではないが疎通確認用に開放しておく) |
 | UDP | 50000-60000 | RTCメディア(`livekit.yaml`の`port_range_start`/`port_range_end`と一致させる) |
@@ -44,8 +45,20 @@ Indigoは「セキュリティグループ」単位でインバウンドルー�
 ## 4. デプロイ手順(LiveKitノード)
 
 ```bash
-# Dockerインストール(Ubuntuの場合)
-curl -fsSL https://get.docker.com | sh
+# Dockerインストール(Ubuntu公式リポジトリ経由。Docker公式が
+# 「get.docker.com経由の簡易インストールは本番非推奨・検証用途限定」
+# としているため、本番はこちらの手順を使う)
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 # このリポジトリのdeploy/livekit/livekit-node/を転送
 scp -r deploy/livekit/livekit-node user@<ノードIP>:~/livekit-node
@@ -60,7 +73,19 @@ docker compose up -d
 ## 5. デプロイ手順(Redisノード)
 
 ```bash
-curl -fsSL https://get.docker.com | sh
+# Dockerインストール(手順4と同じ、Ubuntu公式リポジトリ経由)
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
 scp -r deploy/livekit/redis-node user@<RedisノードIP>:~/redis-node
 ssh user@<RedisノードIP>
 cd ~/redis-node
@@ -81,6 +106,14 @@ LIVEKIT_API_SECRET=<同上>
 
 ## 7. 動作確認
 
+- `docker compose logs -f caddy`でCaddyがLIVEKIT_DOMAIN宛のLet's Encrypt証明書を
+  正常に取得できているか確認する(エラーが出ていないこと)
+- `docker compose logs -f livekit`でRedis接続・TURN起動にエラーが出ていないか確認する。
+  特にTURN(`turn.yourdomain.com`, `external_tls: true`)は証明書ファイルの明示指定が
+  `livekit.yaml`に無いため、実際にどう証明書を得ているか(内蔵ACME機能を使うのか、
+  別途証明書を用意する必要があるのか)をログで確認し、エラーが出ていれば個別に対応する
+- `docker compose ps`で両コンテナ(LiveKitノード: livekit/caddy、Redisノード: redis)が
+  `Up`状態であることを確認する
 - `deploy/QA_CHECKLIST.md`の「OSS基盤」セクションに沿って音声/ビデオ/画面共有を確認
 - `deploy/livekit/LOAD_TEST_PLAN.md`に沿って`lk load-test`を実施
 
