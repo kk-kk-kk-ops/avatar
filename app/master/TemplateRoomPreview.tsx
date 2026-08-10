@@ -122,7 +122,7 @@ export default function TemplateRoomPreview({
               <img
                 src={AVATAR_FRONT_IMAGE}
                 alt="アバターのプレビュー"
-                className="absolute"
+                className="absolute object-contain"
                 style={{
                   left: avatarLeft,
                   top: avatarTop,
