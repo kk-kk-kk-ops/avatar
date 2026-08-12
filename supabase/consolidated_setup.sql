@@ -723,9 +723,14 @@ alter table public.chat_messages add column if not exists image_path text;
 
 -- テキストも画像も無い空メッセージを禁止する(画像添付時はmessageが
 -- 空文字でも許容するため、画像添付機能の導入に合わせてこの制約を追加)。
+-- 論理削除(上のedited_at/deleted_at列。削除時はmessageを空文字にする
+-- 既存の仕様)された行は、本文・画像どちらも無い状態が正常なので、
+-- deleted_at is not nullの行はこの制約の対象外にする
+-- (これを入れ忘れると、本番に既に存在する削除済みメッセージ行が
+-- 軒並み制約違反になり、ALTER TABLE自体が失敗する)。
 alter table public.chat_messages drop constraint if exists chat_messages_content_check;
 alter table public.chat_messages add constraint chat_messages_content_check
-  check (message <> '' or image_path is not null);
+  check (message <> '' or image_path is not null or deleted_at is not null);
 
 create index if not exists chat_messages_room_id_created_at_idx
   on public.chat_messages (room_id, created_at);
