@@ -137,6 +137,9 @@ export const PLANS: Record<
     videoCallDailyMinutes: number | null; // 1人1日あたりのビデオ通話可能時間(分)。毎日4:00にリセット。nullは無制限
     voiceCallDailyMinutes: number | null; // 1人1日あたりの音声通話可能時間(分)。毎日4:00にリセット。nullは無制限
     roomCreation: "template-only" | "template-or-original"; // 表示用。ルーム作成方法の説明
+    historyRetentionLabel: string; // チャット・画像履歴の保管期間(表示用)。実際の削除判定は
+    // supabase/consolidated_setup.sqlのget_expired_chat_message_ids()に同じ期間をハードコードしている
+    // (DBはこの表示値を読まない。他の上限値と同じくコード側を唯一の情報源とする方針のため)
   }
 > = {
   free: {
@@ -151,6 +154,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: 5,
     voiceCallDailyMinutes: 45,
     roomCreation: "template-only",
+    historyRetentionLabel: "7日",
   },
   light: {
     label: "ライト",
@@ -164,6 +168,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: 45,
     voiceCallDailyMinutes: 90,
     roomCreation: "template-only",
+    historyRetentionLabel: "1ヶ月",
   },
   standard: {
     label: "スタンダード",
@@ -177,6 +182,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: 90,
     voiceCallDailyMinutes: null,
     roomCreation: "template-only",
+    historyRetentionLabel: "1ヶ月",
   },
   pro: {
     label: "プロ",
@@ -189,6 +195,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: null,
     voiceCallDailyMinutes: null,
     roomCreation: "template-or-original",
+    historyRetentionLabel: "3ヶ月",
   },
   business: {
     label: "ビジネス",
@@ -201,6 +208,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: null,
     voiceCallDailyMinutes: null,
     roomCreation: "template-or-original",
+    historyRetentionLabel: "3ヶ月",
   },
 };
 

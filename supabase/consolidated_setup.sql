@@ -648,10 +648,15 @@ end $$;
 
 -- メッセージの編集・削除(自分の送信分のみ)対応。編集はedited_atを、
 -- 削除はdeleted_atを立てる論理削除にする(messageは空文字にし、行自体は
--- 残す)。既存の「投稿から1ヶ月で自動削除」のcronはそのまま生きているため、
--- 削除済み行もそのサイクルでいずれ物理削除される。
+-- 残す)。削除済み行も、保管期間経過後は下のget_expired_chat_message_ids()
+-- 経由のバッチ削除でいずれ物理削除される。
 alter table public.chat_messages add column if not exists edited_at timestamptz;
 alter table public.chat_messages add column if not exists deleted_at timestamptz;
+
+-- 画像添付機能用。Supabase Storageの"chat-images"バケット内のパスを
+-- 保持する(未添付メッセージはnull)。バケット・アップロードフロー・
+-- 関連のRLS/CHECK制約は画像添付機能の導入時に別途追加する。
+alter table public.chat_messages add column if not exists image_path text;
 
 create index if not exists chat_messages_room_id_created_at_idx
   on public.chat_messages (room_id, created_at);
@@ -898,54 +903,64 @@ $$;
 grant execute on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) to authenticated;
 
 -- 9f-3. チャット履歴の削除ポリシー。
---   ・投稿から1ヶ月経過したメッセージは自動削除する(pg_cronで毎日実行)
+--   ・保管期間はプラン別(free:7日/light,standard:1ヶ月/pro,business:3ヶ月)。
+--     判定は「削除処理実行時点でのそのルームが属するアカウントの現在の
+--     プラン」を使う(chat_messages.room_id → rooms.account_id → accounts.plan)。
 --   ・ルーム自体が削除された場合は、chat_messages.room_idの
---     "on delete cascade"により1ヶ月を待たず即座に削除される
+--     "on delete cascade"により保管期間を待たず即座に削除される
 --     (上のcreate table定義で対応済み。追加対応不要)
---   画像添付機能は現時点で未実装(chat_messagesはmessage列のみ)のため、
---   画像の削除ルールはテキストと同じ仕組みが必要になった時点で
---   (Supabase Storageのオブジェクト削除を絡めて)別途実装する。
 --
--- pg_cronの有効化・スケジュール登録は失敗してもこのブロック内で
--- 握りつぶし、後続のセクション(10以降の管理者付与処理など)が
--- 巻き込まれてロールバックされないようにする(Supabase SQL Editorは
--- 既定でスクリプト全体を1トランザクションとして実行するため、途中の
--- 1文の失敗でそれ以前・以降の変更も含め全てロールバックされてしまう)。
--- pg_cronの権限が無いプロジェクトでは、RAISE NOTICEの案内に従って
--- Database → Extensions で「pg_cron」を有効化してから再実行すること。
+--   従来はここでpg_cronから直接delete_expired_chat_messages()を呼んで
+--   いたが、画像添付機能(image_path列。導入時に追記)のStorageオブジェクト
+--   本体はSQLのDELETEだけでは実ファイルが削除されない(storage.objectsの
+--   行を消してもStorageバックエンド上の実体は残る、というSupabase Storageの
+--   既知の制約)。そのため実際の削除実行はアプリ側
+--   (app/api/cron/cleanup-chat-history/route.ts、Vercel Cronから毎日
+--   4:00 JSTに起動)に移し、ここでは「削除対象を選ぶだけ」のSECURITY
+--   DEFINER関数を用意する。service_roleからのみ実行できるようにし、
+--   一般ユーザー(authenticated/anon)には実行権限を渡さない。
 drop function if exists public.delete_expired_chat_messages();
 
-create function public.delete_expired_chat_messages()
-returns void
+drop function if exists public.get_expired_chat_message_ids();
+
+create function public.get_expired_chat_message_ids()
+returns table (id uuid, image_path text)
 language sql
 security definer
 set search_path = public
+stable
 as $$
-  delete from public.chat_messages
-  where created_at < now() - interval '1 month';
+  select m.id, m.image_path
+  from public.chat_messages m
+  join public.rooms r on r.id = m.room_id
+  join public.accounts a on a.id = r.account_id
+  where m.created_at < now() - (
+    case a.plan
+      when 'free' then interval '7 days'
+      when 'light' then interval '1 month'
+      when 'standard' then interval '1 month'
+      when 'pro' then interval '3 months'
+      when 'business' then interval '3 months'
+      else interval '1 month'
+    end
+  );
 $$;
 
-do $$
-begin
-  execute 'create extension if not exists pg_cron';
-exception when others then
-  raise notice 'pg_cron拡張の有効化に失敗しました(%)。Database → Extensions で手動有効化した後にこのSQLを再実行してください。チャット履歴の自動削除は登録されていません。', sqlerrm;
-end $$;
+revoke all on function public.get_expired_chat_message_ids() from public;
+grant execute on function public.get_expired_chat_message_ids() to service_role;
 
+-- 旧pg_cronジョブ(delete-expired-chat-messages)は上記の理由で廃止。
+-- 既存プロジェクトに残っている場合に備え、存在すれば解除しておく
+-- (pg_cron拡張が無いプロジェクトでは何もしない)。
 do $$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
     if exists (select 1 from cron.job where jobname = 'delete-expired-chat-messages') then
       perform cron.unschedule('delete-expired-chat-messages');
     end if;
-    perform cron.schedule(
-      'delete-expired-chat-messages',
-      '0 4 * * *',
-      'select public.delete_expired_chat_messages();'
-    );
   end if;
 exception when others then
-  raise notice 'delete-expired-chat-messagesジョブの登録に失敗しました(%)。', sqlerrm;
+  raise notice 'delete-expired-chat-messagesジョブの解除に失敗しました(%)。', sqlerrm;
 end $$;
 
 
