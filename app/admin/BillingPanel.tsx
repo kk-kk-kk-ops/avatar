@@ -90,7 +90,7 @@ export default function BillingPanel({
                   <li>画面共有: {formatDailyLimit(info.screenShareDailyMinutes)}</li>
                   <li>ビデオ通話: {formatDailyLimit(info.videoCallDailyMinutes)}</li>
                   <li>音声通話: {formatDailyLimit(info.voiceCallDailyMinutes)}</li>
-                  <li>チャット: 無制限</li>
+                  <li>チャット・画像履歴の保管期間: {info.historyRetentionLabel}</li>
                   <li>
                     ルーム作成:{" "}
                     {info.roomCreation === "template-or-original"
@@ -166,7 +166,7 @@ export default function BillingPanel({
                     <li>画面共有: {formatDailyLimit(info.screenShareDailyMinutes)}</li>
                     <li>ビデオ通話: {formatDailyLimit(info.videoCallDailyMinutes)}</li>
                     <li>音声通話: 無制限</li>
-                    <li>チャット: 無制限</li>
+                    <li>チャット・画像履歴の保管期間: {info.historyRetentionLabel}</li>
                   </ul>
                   <button
                     onClick={() => handleDebugSwitch(id)}
