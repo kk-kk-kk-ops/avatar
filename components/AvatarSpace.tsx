@@ -45,6 +45,8 @@ import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
 import LogoutButton from "./auth/LogoutButton";
+import { uploadRawChatImage, validateChatImageFile } from "./uploadChatImage";
+import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
 
 const COLORS = [
   "#F97316",
@@ -274,6 +276,7 @@ export default function AvatarSpace({
     createdAt: string;
     editedAt: string | null;
     deletedAt: string | null;
+    imagePath: string | null;
   };
   // 会話相手(認証済みユーザーの安定ID)ごとのスレッド。
   const [dmThreads, setDmThreads] = useState<Record<string, DmMessage[]>>({});
@@ -288,6 +291,11 @@ export default function AvatarSpace({
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
+  const [dmImageUploading, setDmImageUploading] = useState(false);
+  const dmImageInputRef = useRef<HTMLInputElement | null>(null);
+  // メッセージごとの署名付き画像URL(取得済み分のキャッシュ)。有効期限
+  // (5分)が近いことは気にせず、スレッドを開き直した際に再取得する簡易実装。
+  const [dmImageUrls, setDmImageUrls] = useState<Record<string, string>>({});
   // 編集中のメッセージID。設定されている間、入力欄は送信ではなく更新用に
   // 動作する(dmInputにそのメッセージの文面を読み込んで使う)。
   const [dmEditingMessageId, setDmEditingMessageId] = useState<string | null>(
@@ -516,7 +524,9 @@ export default function AvatarSpace({
           })
         : await supabase
             .from("chat_messages")
-            .select("id, sender_user_id, message, created_at, edited_at, deleted_at")
+            .select(
+              "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path",
+            )
             .eq("room_id", roomId)
             .or(
               `and(sender_user_id.eq.${myUserId},recipient_user_id.eq.${selectedPeerUserId}),and(sender_user_id.eq.${selectedPeerUserId},recipient_user_id.eq.${myUserId})`,
@@ -536,6 +546,7 @@ export default function AvatarSpace({
         created_at: string;
         edited_at: string | null;
         deleted_at: string | null;
+        image_path: string | null;
       }>;
       const messages: DmMessage[] = (
         viewOnlyInviteToken ? rows : rows.slice().reverse()
@@ -550,6 +561,7 @@ export default function AvatarSpace({
           createdAt: row.created_at,
           editedAt: row.edited_at,
           deletedAt: row.deleted_at,
+          imagePath: row.image_path,
         }));
       dmForceScrollRef.current = true;
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
@@ -612,84 +624,207 @@ export default function AvatarSpace({
     };
   }, [joined, supabase]);
 
-  const sendDmMessage = useCallback(async () => {
-    const trimmed = dmInput.trim();
-    const peerUserId = selectedPeerUserId;
-    if (!trimmed || !selfState.current || !peerUserId || dmSending) return;
-    const senderName = selfState.current.name;
-    const myUserId = authUserIdRef.current;
-    setDmInput("");
-    setDmError(null);
-    setDmSending(true);
-    try {
-      // viewOnlyの場合は通常のRLSでINSERTが拒否されるため、招待トークンを
-      // 検証するSECURITY DEFINER関数(send_chat_message_by_invite_token)
-      // 経由で送信する。
-      const { data, error } = viewOnlyInviteToken
-        ? await (async () => {
-            const res = await supabase.rpc(
-              "send_chat_message_by_invite_token",
-              {
-                token: viewOnlyInviteToken,
-                target_room_id: roomId,
+  // テキスト送信・画像送信で共通の本体部分(RLS/viewOnlyの2経路振り分け・
+  // ローカル反映・Realtime配信)。戻り値は送信に成功したかどうか
+  // (呼び出し元が失敗時に入力欄の文面を復元できるように)。
+  const postDmMessage = useCallback(
+    async (text: string, imagePath: string | null) => {
+      const peerUserId = selectedPeerUserId;
+      if ((!text && !imagePath) || !selfState.current || !peerUserId || dmSending) {
+        return false;
+      }
+      const senderName = selfState.current.name;
+      const myUserId = authUserIdRef.current;
+      setDmError(null);
+      setDmSending(true);
+      try {
+        // viewOnlyの場合は通常のRLSでINSERTが拒否されるため、招待トークンを
+        // 検証するSECURITY DEFINER関数(send_chat_message_by_invite_token)
+        // 経由で送信する。
+        const { data, error } = viewOnlyInviteToken
+          ? await (async () => {
+              const res = await supabase.rpc(
+                "send_chat_message_by_invite_token",
+                {
+                  token: viewOnlyInviteToken,
+                  target_room_id: roomId,
+                  recipient_user_id: peerUserId,
+                  sender_name: senderName,
+                  message: text,
+                  p_image_path: imagePath,
+                },
+              );
+              return { data: res.data?.[0] ?? null, error: res.error };
+            })()
+          : await supabase
+              .from("chat_messages")
+              .insert({
+                room_id: roomId,
+                sender_user_id: myUserId,
                 recipient_user_id: peerUserId,
                 sender_name: senderName,
-                message: trimmed,
-              },
-            );
-            return { data: res.data?.[0] ?? null, error: res.error };
-          })()
-        : await supabase
-            .from("chat_messages")
-            .insert({
-              room_id: roomId,
-              sender_user_id: myUserId,
-              recipient_user_id: peerUserId,
-              sender_name: senderName,
-              message: trimmed,
-            })
-            .select("id, created_at")
-            .single();
-      if (error || !data || !myUserId) {
-        // eslint-disable-next-line no-console
-        console.error("チャットメッセージの送信に失敗しました", error);
-        setDmInput(trimmed);
-        setDmError("送信に失敗しました。時間をおいて再度お試しください。");
+                message: text,
+                image_path: imagePath,
+              })
+              .select("id, created_at")
+              .single();
+        if (error || !data || !myUserId) {
+          // eslint-disable-next-line no-console
+          console.error("チャットメッセージの送信に失敗しました", error);
+          setDmError("送信に失敗しました。時間をおいて再度お試しください。");
+          return false;
+        }
+        dmForceScrollRef.current = true;
+        setDmThreads((prev) => ({
+          ...prev,
+          [peerUserId]: [
+            ...(prev[peerUserId] ?? []),
+            {
+              id: data.id,
+              senderUserId: myUserId,
+              isSelf: true,
+              message: text,
+              createdAt: data.created_at,
+              editedAt: null,
+              deletedAt: null,
+              imagePath,
+            },
+          ],
+        }));
+        channelRef.current?.send({
+          type: "broadcast",
+          event: "dm",
+          payload: {
+            id: data.id,
+            originId: selfId.current,
+            senderUserId: myUserId,
+            recipientUserId: peerUserId,
+            senderName,
+            message: text,
+            createdAt: data.created_at,
+            imagePath,
+          },
+        });
+        return true;
+      } finally {
+        setDmSending(false);
+      }
+    },
+    [dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken],
+  );
+
+  const sendDmMessage = useCallback(async () => {
+    const trimmed = dmInput.trim();
+    if (!trimmed) return;
+    setDmInput("");
+    const ok = await postDmMessage(trimmed, null);
+    if (!ok) setDmInput(trimmed);
+  }, [dmInput, postDmMessage]);
+
+  // 画像添付メッセージの送信(テキストは付けず、画像のみのメッセージにする)。
+  const sendDmImageMessage = useCallback(
+    (imagePath: string) => postDmMessage("", imagePath),
+    [postDmMessage],
+  );
+
+  // 画像選択ボタン(input[type=file])のonChangeから呼ばれる。
+  // バリデーション→当日の上限確認(事前チェック。最終判定はサーバー側)→
+  // 生画像を直接Storageへアップロード→圧縮APIを呼んで最終画像に差し替え→
+  // メッセージとして送信、という一連の流れをまとめて行う。
+  const handleDmImageSelected = useCallback(
+    async (file: File) => {
+      const myUserId = authUserIdRef.current;
+      if (!myUserId || !selectedPeerUserId || dmImageUploading) return;
+
+      const validationError = validateChatImageFile(file);
+      if (validationError) {
+        setDmError(validationError);
         return;
       }
-      dmForceScrollRef.current = true;
-      setDmThreads((prev) => ({
-        ...prev,
-        [peerUserId]: [
-          ...(prev[peerUserId] ?? []),
-          {
-            id: data.id,
-            senderUserId: myUserId,
-            isSelf: true,
-            message: trimmed,
-            createdAt: data.created_at,
-            editedAt: null,
-            deletedAt: null,
-          },
-        ],
-      }));
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "dm",
-        payload: {
-          id: data.id,
-          originId: selfId.current,
-          senderUserId: myUserId,
-          recipientUserId: peerUserId,
-          senderName,
-          message: trimmed,
-          createdAt: data.created_at,
-        },
-      });
-    } finally {
-      setDmSending(false);
-    }
-  }, [dmInput, dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken]);
+
+      setDmError(null);
+      setDmImageUploading(true);
+      try {
+        const { data: currentCount } = await supabase.rpc(
+          "get_daily_image_upload_count",
+        );
+        if ((currentCount ?? 0) >= DAILY_IMAGE_UPLOAD_LIMIT) {
+          setDmError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
+          return;
+        }
+
+        const rawPath = await uploadRawChatImage(file, myUserId);
+
+        const res = await fetch("/api/chat/compress-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rawPath,
+            roomId,
+            inviteToken: viewOnlyInviteToken ?? undefined,
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          setDmError(json.error ?? "画像のアップロードに失敗しました");
+          return;
+        }
+
+        await sendDmImageMessage(json.imagePath as string);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("画像添付メッセージの送信に失敗しました", err);
+        setDmError("画像のアップロードに失敗しました。時間をおいて再度お試しください。");
+      } finally {
+        setDmImageUploading(false);
+      }
+    },
+    [
+      dmImageUploading,
+      roomId,
+      selectedPeerUserId,
+      sendDmImageMessage,
+      supabase,
+      viewOnlyInviteToken,
+    ],
+  );
+
+  // 添付画像の署名付きURLを取得する(未取得のもののみ)。スレッドを
+  // 開いた/更新された際にまとめて呼ぶ。
+  useEffect(() => {
+    if (!selectedPeerUserId) return;
+    const thread = dmThreads[selectedPeerUserId] ?? [];
+    const targets = thread.filter((m) => m.imagePath && !dmImageUrls[m.id]);
+    if (targets.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        targets.map(async (m) => {
+          const params = new URLSearchParams({ messageId: m.id });
+          if (viewOnlyInviteToken) {
+            params.set("roomId", roomId);
+            params.set("peerUserId", selectedPeerUserId);
+            params.set("inviteToken", viewOnlyInviteToken);
+          }
+          try {
+            const res = await fetch(`/api/chat/image-url?${params.toString()}`);
+            const json = await res.json();
+            if (!res.ok) return null;
+            return [m.id, json.url as string] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const next = entries.filter((e): e is readonly [string, string] => e !== null);
+      if (next.length === 0) return;
+      setDmImageUrls((prev) => ({ ...prev, ...Object.fromEntries(next) }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPeerUserId, dmThreads, dmImageUrls, roomId, viewOnlyInviteToken]);
 
   // 編集モードに入る:メニューの「編集」から呼ばれ、入力欄に文面を読み込む。
   const startEditDmMessage = useCallback((m: DmMessage) => {
@@ -789,6 +924,19 @@ export default function AvatarSpace({
         console.error("メッセージの削除に失敗しました", error);
         setDmError("削除に失敗しました。時間をおいて再度お試しください。");
         return;
+      }
+      // 画像添付メッセージの場合、保管期間を待たず即座に実ファイルも削除する。
+      // 自分がアップロードした画像("chat-images: delete own"ポリシーの
+      // 対象パス)のみ削除できるため、削除に失敗しても致命的ではない
+      // (最終的には保管期間経過時の一括削除でも消える)。
+      if (m.imagePath) {
+        const { error: storageError } = await supabase.storage
+          .from("chat-images")
+          .remove([m.imagePath]);
+        if (storageError) {
+          // eslint-disable-next-line no-console
+          console.error("添付画像の削除に失敗しました", storageError);
+        }
       }
       setDmThreads((prev) => ({
         ...prev,
@@ -1636,6 +1784,7 @@ export default function AvatarSpace({
             senderName: string;
             message: string;
             createdAt: string;
+            imagePath: string | null;
           };
           const myUserId = authUserIdRef.current;
           // 送信元タブが「自分」かどうかは、認証ユーザーID(senderUserId)
@@ -1673,6 +1822,7 @@ export default function AvatarSpace({
                 createdAt: msg.createdAt,
                 editedAt: null,
                 deletedAt: null,
+                imagePath: msg.imagePath,
               },
             ],
           }));
@@ -3375,6 +3525,23 @@ export default function AvatarSpace({
                             Range.selectNodeContentsで選択するため、
                             <p>の中に入れるとコピー内容に混ざってしまう。
                           */}
+                          {/*
+                            <p>はテキストが空(画像のみのメッセージ)でも
+                            常にマウントする。dmBubbleRefsは右クリック
+                            メニューの位置計算(親要素=吹き出し全体のrect)に
+                            使われるため、条件付きでアンマウントすると
+                            画像のみのメッセージでメニュー位置が取れなくなる。
+                          */}
+                          {m.imagePath && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={dmImageUrls[m.id]}
+                              alt="添付画像"
+                              className={`block max-h-56 max-w-full rounded-md object-contain ${
+                                m.message ? "mb-1" : ""
+                              } ${dmImageUrls[m.id] ? "" : "min-h-16 min-w-16 animate-pulse bg-slate-600"}`}
+                            />
+                          )}
                           <p
                             ref={(el) => {
                               dmBubbleRefs.current[m.id] = el;
@@ -3429,6 +3596,27 @@ export default function AvatarSpace({
                     </div>
                   )}
                   <div className="flex gap-1.5 border-t border-slate-700 p-2">
+                    <input
+                      ref={dmImageInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file) handleDmImageSelected(file);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => dmImageInputRef.current?.click()}
+                      disabled={dmImageUploading || dmSending}
+                      title="画像を添付"
+                      aria-label="画像を添付"
+                      className="shrink-0 rounded-lg border border-slate-600 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {dmImageUploading ? "…" : "🖼️"}
+                    </button>
                     <input
                       value={dmInput}
                       onChange={(e) => setDmInput(e.target.value)}

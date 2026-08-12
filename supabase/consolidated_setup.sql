@@ -507,7 +507,11 @@ alter table public.daily_usage alter column kind set not null;
 
 alter table public.daily_usage drop constraint if exists daily_usage_kind_check;
 alter table public.daily_usage add constraint daily_usage_kind_check
-  check (kind in ('screen_share', 'video_call', 'voice_call'));
+  check (kind in ('screen_share', 'video_call', 'voice_call', 'image_upload'));
+
+-- image_upload(1日の画像アップロード枚数)は秒数ではなく回数で数えるため、
+-- used_secondsとは別に整数カウント用の列を持つ。
+alter table public.daily_usage add column if not exists used_count integer not null default 0;
 
 -- 主キーをリネーム前(user_id, day_key)から(user_id, day_key, kind)へ
 -- 付け替える(リネームされたテーブルの旧PK名・新規作成時のPK名の両方を
@@ -604,6 +608,64 @@ $$;
 
 grant execute on function public.get_daily_usage_used_seconds(text) to authenticated;
 
+-- 画像アップロード1日30枚(全プラン共通)の上限管理用。上記の秒数系関数と
+-- 同じ day_key(JST 4:00境界)・テーブルを使うが、加算対象がused_countの
+-- ため専用の関数にする(kindは常に'image_upload'固定でよいため引数化しない)。
+drop function if exists public.increment_daily_image_upload_count();
+
+create function public.increment_daily_image_upload_count()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_day_key date;
+  v_total integer;
+begin
+  if auth.uid() is null then
+    return 0;
+  end if;
+  v_day_key := (timezone('Asia/Tokyo', now()) - interval '4 hours')::date;
+
+  insert into public.daily_usage (user_id, day_key, kind, used_count)
+  values (auth.uid(), v_day_key, 'image_upload', 1)
+  on conflict (user_id, day_key, kind) do update
+    set used_count = daily_usage.used_count + 1,
+        updated_at = now()
+  returning used_count into v_total;
+
+  return v_total;
+end;
+$$;
+
+grant execute on function public.increment_daily_image_upload_count() to authenticated;
+
+drop function if exists public.get_daily_image_upload_count();
+
+create function public.get_daily_image_upload_count()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_day_key date;
+  v_total integer;
+begin
+  if auth.uid() is null then
+    return 0;
+  end if;
+  v_day_key := (timezone('Asia/Tokyo', now()) - interval '4 hours')::date;
+  select used_count into v_total
+  from public.daily_usage
+  where user_id = auth.uid() and day_key = v_day_key and kind = 'image_upload';
+  return coalesce(v_total, 0);
+end;
+$$;
+
+grant execute on function public.get_daily_image_upload_count() to authenticated;
+
 
 -- ------------------------------------------------------------
 -- 9f. chat_messages: 参加者ごとの1対1DM(旧仕様は「ルーム全体への
@@ -654,9 +716,16 @@ alter table public.chat_messages add column if not exists edited_at timestamptz;
 alter table public.chat_messages add column if not exists deleted_at timestamptz;
 
 -- 画像添付機能用。Supabase Storageの"chat-images"バケット内のパスを
--- 保持する(未添付メッセージはnull)。バケット・アップロードフロー・
--- 関連のRLS/CHECK制約は画像添付機能の導入時に別途追加する。
+-- 保持する(未添付メッセージはnull)。パスは常に
+-- "{room_id}/{sender_user_id}/{uuid}.webp"の形式(なりすまし防止の検証を
+-- 下のinsert own dmポリシーで行う)。
 alter table public.chat_messages add column if not exists image_path text;
+
+-- テキストも画像も無い空メッセージを禁止する(画像添付時はmessageが
+-- 空文字でも許容するため、画像添付機能の導入に合わせてこの制約を追加)。
+alter table public.chat_messages drop constraint if exists chat_messages_content_check;
+alter table public.chat_messages add constraint chat_messages_content_check
+  check (message <> '' or image_path is not null);
 
 create index if not exists chat_messages_room_id_created_at_idx
   on public.chat_messages (room_id, created_at);
@@ -686,6 +755,13 @@ create policy "chat_messages: insert own dm"
     sender_user_id = auth.uid()
     and recipient_user_id <> auth.uid()
     and char_length(message) <= 500
+    -- 画像添付時のなりすまし防止: image_pathは必ず自分の
+    -- "{room_id}/{sender_user_id}/"配下でなければならない
+    -- (他人がアップロードした画像パスを勝手に参照させない)。
+    and (
+      image_path is null
+      or image_path like (room_id::text || '/' || sender_user_id::text || '/%')
+    )
     and room_id in (
       select r.id from public.rooms r
       join public.profiles p on p.account_id = r.account_id
@@ -739,14 +815,15 @@ returns table (
   message text,
   created_at timestamptz,
   edited_at timestamptz,
-  deleted_at timestamptz
+  deleted_at timestamptz,
+  image_path text
 )
 language sql
 security definer
 set search_path = public
 as $$
   select m.id, m.sender_user_id, m.sender_name, m.message, m.created_at,
-    m.edited_at, m.deleted_at
+    m.edited_at, m.deleted_at, m.image_path
   from public.chat_messages m
   join public.rooms r on r.id = m.room_id
   join public.accounts a on a.id = r.account_id
@@ -762,17 +839,19 @@ $$;
 
 grant execute on function public.list_chat_messages_by_invite_token(text, uuid, uuid) to authenticated;
 
--- 引数を追加(recipient_user_id)して関数シグネチャが変わったため、
+-- 引数を追加(p_image_path)して関数シグネチャが変わったため、
 -- 旧シグネチャ・新シグネチャの両方をdropしてから作り直す。
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, text, text);
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text);
+drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text);
 
 create function public.send_chat_message_by_invite_token(
   token text,
   target_room_id uuid,
   recipient_user_id uuid,
   sender_name text,
-  message text
+  message text,
+  p_image_path text default null
 )
 returns table (id uuid, created_at timestamptz)
 language plpgsql
@@ -788,7 +867,10 @@ begin
   if recipient_user_id = auth.uid() then
     raise exception '自分自身には送信できません';
   end if;
-  if char_length(message) = 0 or char_length(message) > 500 then
+  if char_length(message) > 500 then
+    raise exception 'メッセージの長さが不正です';
+  end if;
+  if char_length(message) = 0 and p_image_path is null then
     raise exception 'メッセージの長さが不正です';
   end if;
 
@@ -802,15 +884,21 @@ begin
     raise exception 'このルームへのアクセス権がありません';
   end if;
 
+  -- 画像添付時のなりすまし防止(通常ルートのRLSと同じ検証)。
+  if p_image_path is not null
+     and p_image_path not like (v_room_id::text || '/' || auth.uid()::text || '/%') then
+    raise exception '不正な画像パスです';
+  end if;
+
   return query
     insert into public.chat_messages
-      (room_id, sender_user_id, recipient_user_id, sender_name, message)
-    values (v_room_id, auth.uid(), recipient_user_id, sender_name, message)
+      (room_id, sender_user_id, recipient_user_id, sender_name, message, image_path)
+    values (v_room_id, auth.uid(), recipient_user_id, sender_name, message, p_image_path)
     returning chat_messages.id, chat_messages.created_at;
 end;
 $$;
 
-grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text) to authenticated;
+grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text) to authenticated;
 
 -- viewOnly向けのメッセージ編集。通常ルートは上のRLS
 -- ("chat_messages: update own dm")で直接UPDATEできるが、viewOnlyは
@@ -962,6 +1050,45 @@ begin
 exception when others then
   raise notice 'delete-expired-chat-messagesジョブの解除に失敗しました(%)。', sqlerrm;
 end $$;
+
+
+-- ------------------------------------------------------------
+-- 9f-4. chat-images: チャットの画像添付機能用Storageバケット。
+--   非公開バケット(public: false)。DMの内容は本来sender/recipient以外に
+--   見えてはいけないため、template-imagesのような公開バケットにはしない。
+--   読み取りは公開URL/RLSでのSELECTを一切許可せず、認可チェック付きの
+--   署名付きURL発行エンドポイント(app/api/chat/image-url/route.ts、
+--   Service Role経由)からのみ行う。
+--
+--   パスは常に2階層目が自分のuser_idになるよう統一している:
+--     - アップロード直後の生画像: raw/{自分のuser_id}/{uuid}.{ext}
+--     - サーバーで圧縮済みの最終画像: {room_id}/{自分のuser_id}/{uuid}.webp
+--   そのためINSERT/DELETEどちらも
+--   "(storage.foldername(name))[2] = auth.uid()::text" という1つの条件で
+--   両パターンを共通にカバーできる。
+--   最終画像への書き込みはRoute Handler(compress-image)がService Role経由で
+--   行うためRLSをバイパスする(=INSERTポリシーはraw/向けのみで足りる)。
+-- ------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('chat-images', 'chat-images', false)
+on conflict (id) do nothing;
+
+drop policy if exists "chat-images: insert own raw" on storage.objects;
+create policy "chat-images: insert own raw"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'chat-images'
+    and (storage.foldername(name))[1] = 'raw'
+    and (storage.foldername(name))[2] = auth.uid()::text
+  );
+
+drop policy if exists "chat-images: delete own" on storage.objects;
+create policy "chat-images: delete own"
+  on storage.objects for delete
+  using (
+    bucket_id = 'chat-images'
+    and (storage.foldername(name))[2] = auth.uid()::text
+  );
 
 
 -- ------------------------------------------------------------
