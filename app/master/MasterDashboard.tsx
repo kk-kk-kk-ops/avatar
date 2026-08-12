@@ -6,6 +6,7 @@ import type { MapTemplate, PlanId, Room } from "@/lib/types";
 import { PLANS } from "@/lib/types";
 import LogoutButton from "@/components/auth/LogoutButton";
 import MasterOnlineStats from "./MasterOnlineStats";
+import ServerResourceTable from "./ServerResourceTable";
 import TemplateManager from "./TemplateManager";
 import AvatarSettingsPanel from "./AvatarSettingsPanel";
 
@@ -183,6 +184,10 @@ export default function MasterDashboard({
             </div>
 
             <MasterOnlineStats rooms={rooms} />
+
+            <div className="rounded-xl border border-slate-200 bg-white p-6">
+              <ServerResourceTable />
+            </div>
           </div>
         )}
 
