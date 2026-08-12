@@ -214,6 +214,18 @@ export const PLANS: Record<
 
 export const FREE_TRIAL_DAYS = 7;
 
+// チャットへの画像添付、1日あたりのアップロード上限枚数(全プラン共通)。
+export const DAILY_IMAGE_UPLOAD_LIMIT = 30;
+
+// チャット画像添付の制約(サーバー側compress-image route・クライアント側
+// バリデーションの両方で参照する単一の情報源)。
+export const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+export const CHAT_IMAGE_ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
 export const AVATAR_RADIUS = 8.5; // アバターの表示サイズ計算に使う半径(17px×17px表示。当たり判定には使わない)
