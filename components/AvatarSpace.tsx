@@ -296,17 +296,17 @@ export default function AvatarSpace({
   // メッセージごとの署名付き画像URL(取得済み分のキャッシュ)。有効期限
   // (5分)が近いことは気にせず、スレッドを開き直した際に再取得する簡易実装。
   const [dmImageUrls, setDmImageUrls] = useState<Record<string, string>>({});
-  // 送信前の添付画像(選択/ドロップ直後〜送信操作までの一時状態)。
-  // 実際のアップロード・圧縮は送信操作のタイミングまで行わない。
+  // 送信前の添付画像(選択/ドロップ/貼り付け直後〜送信操作までの一時状態)。
+  // 複数枚を溜められるよう配列で持つ。実際のアップロード・圧縮は
+  // 送信操作のタイミングまで行わない。
   type DmPendingImage = {
+    id: string;
     file: File;
     previewUrl: string;
     width?: number;
     height?: number;
   };
-  const [dmPendingImage, setDmPendingImage] = useState<DmPendingImage | null>(
-    null,
-  );
+  const [dmPendingImages, setDmPendingImages] = useState<DmPendingImage[]>([]);
   const [dmDragActive, setDmDragActive] = useState(false);
   // 画像の拡大プレビュー(送受信済み画像/送信前プレビューの両方で使う)。
   // messageIdがnullの場合は送信前プレビュー(保存ボタンは出さない)。
@@ -732,36 +732,40 @@ export default function AvatarSpace({
     [dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken],
   );
 
-  // 添付中の画像(あれば)を破棄する。プレビュー用のオブジェクトURLは
+  // 添付中の画像を1件、idを指定して取り消す。プレビュー用のオブジェクトURLは
   // 明示的に解放しないとリークするため、必ずこの関数経由でクリアする。
-  const cancelDmPendingImage = useCallback(() => {
-    setDmPendingImage((prev) => {
-      if (prev) URL.revokeObjectURL(prev.previewUrl);
-      return null;
+  const cancelDmPendingImage = useCallback((id: string) => {
+    setDmPendingImages((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.id !== id);
     });
   }, []);
 
-  // 画像ボタン/ドラッグ&ドロップの両方から呼ばれる。この時点では
-  // アップロードは行わず、バリデーションと当日の上限事前確認
-  // (最終判定は送信時のサーバー側で行う)だけ済ませ、送信前プレビューの
-  // 状態にする。実際のアップロード・圧縮はsendDmMessageが送信操作の
-  // タイミングで行う。
-  const stageDmImage = useCallback(
-    async (file: File) => {
-      if (dmImageUploading) return;
-      const validationError = validateChatImageFile(file);
-      if (validationError) {
-        setDmError(validationError);
-        return;
-      }
+  // 添付中の画像をすべて取り消す(相手切り替え時・送信成功時に使う)。
+  const cancelAllDmPendingImages = useCallback(() => {
+    setDmPendingImages((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      return [];
+    });
+  }, []);
+
+  // 画像ボタン/ドラッグ&ドロップ/クリップボード貼り付けのいずれからも
+  // 呼ばれる共通の添付処理。この時点ではアップロードは行わず、
+  // バリデーションと当日の上限事前確認(既に溜まっている枚数も含める。
+  // 最終判定は送信時のサーバー側で行う)だけ済ませ、送信前プレビューに
+  // 追加する。複数ファイルを渡した場合、上限に達した時点で以降は
+  // 追加せずエラー表示する。実際のアップロード・圧縮はsendDmMessageが
+  // 送信操作のタイミングでまとめて行う。
+  const stageDmImages = useCallback(
+    async (files: File[]) => {
+      if (dmImageUploading || files.length === 0) return;
 
       const { data: currentCount } = await supabase.rpc(
         "get_daily_image_upload_count",
       );
-      if ((currentCount ?? 0) >= DAILY_IMAGE_UPLOAD_LIMIT) {
-        setDmError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
-        return;
-      }
+      let remaining =
+        DAILY_IMAGE_UPLOAD_LIMIT - (currentCount ?? 0) - dmPendingImages.length;
 
       setDmError(null);
       // 画像を添付した時点で編集モードは抜ける(「更新」ボタンに送信操作が
@@ -771,61 +775,89 @@ export default function AvatarSpace({
         setDmInput("");
       }
 
-      const previewUrl = URL.createObjectURL(file);
-      const dims = await new Promise<
-        { width: number; height: number } | null
-      >((resolve) => {
-        const img = new window.Image();
-        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-        img.onerror = () => resolve(null);
-        img.src = previewUrl;
-      });
+      const staged: DmPendingImage[] = [];
+      for (const file of files) {
+        const validationError = validateChatImageFile(file);
+        if (validationError) {
+          setDmError(validationError);
+          break;
+        }
+        if (remaining <= 0) {
+          setDmError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
+          break;
+        }
+        const previewUrl = URL.createObjectURL(file);
+        const dims = await new Promise<
+          { width: number; height: number } | null
+        >((resolve) => {
+          const img = new window.Image();
+          img.onload = () =>
+            resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => resolve(null);
+          img.src = previewUrl;
+        });
+        staged.push({
+          id: crypto.randomUUID(),
+          file,
+          previewUrl,
+          width: dims?.width,
+          height: dims?.height,
+        });
+        remaining -= 1;
+      }
 
-      setDmPendingImage((prev) => {
-        if (prev) URL.revokeObjectURL(prev.previewUrl);
-        return { file, previewUrl, width: dims?.width, height: dims?.height };
-      });
+      if (staged.length > 0) {
+        setDmPendingImages((prev) => [...prev, ...staged]);
+      }
     },
-    [dmImageUploading, dmEditingMessageId, supabase],
+    [dmImageUploading, dmPendingImages.length, dmEditingMessageId, supabase],
   );
 
   // 相手を切り替えたら、添付中の画像は宛先違いの誤送信を避けるため破棄する。
   useEffect(() => {
-    cancelDmPendingImage();
+    cancelAllDmPendingImages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPeerUserId]);
 
   const sendDmMessage = useCallback(async () => {
     const trimmed = dmInput.trim();
-    const pending = dmPendingImage;
-    if ((!trimmed && !pending) || dmSending || dmImageUploading) return;
+    const pending = dmPendingImages;
+    if ((!trimmed && pending.length === 0) || dmSending || dmImageUploading) {
+      return;
+    }
 
     setDmInput("");
     setDmError(null);
 
-    let imagePath: string | null = null;
-    if (pending) {
+    // 複数画像は、chat_messagesのスキーマ上1メッセージにつき画像は1枚のため、
+    // 1枚ずつ順番にメッセージとして送る(=見た目には連続した吹き出しが
+    // まとめて届く形になる。1つの吹き出しに複数画像を並べる形にはしていない)。
+    // キャプション(入力欄のテキスト)は最後の画像のメッセージに付与する。
+    const imagePaths: string[] = [];
+    if (pending.length > 0) {
       const myUserId = authUserIdRef.current;
       if (!myUserId) return;
       setDmImageUploading(true);
       try {
-        const rawPath = await uploadRawChatImage(pending.file, myUserId);
-        const res = await fetch("/api/chat/compress-image", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            rawPath,
-            roomId,
-            inviteToken: viewOnlyInviteToken ?? undefined,
-          }),
-        });
-        const json = await res.json();
-        if (!res.ok) {
-          setDmError(json.error ?? "画像のアップロードに失敗しました");
-          setDmInput(trimmed);
-          return;
+        for (const p of pending) {
+          const rawPath = await uploadRawChatImage(p.file, myUserId);
+          const res = await fetch("/api/chat/compress-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              rawPath,
+              roomId,
+              inviteToken: viewOnlyInviteToken ?? undefined,
+            }),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            setDmError(json.error ?? "画像のアップロードに失敗しました");
+            setDmInput(trimmed);
+            return;
+          }
+          imagePaths.push(json.imagePath as string);
         }
-        imagePath = json.imagePath as string;
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error("画像添付メッセージの送信に失敗しました", err);
@@ -837,20 +869,35 @@ export default function AvatarSpace({
       }
     }
 
-    const ok = await postDmMessage(trimmed, imagePath);
-    if (ok) {
-      cancelDmPendingImage();
+    if (imagePaths.length === 0) {
+      const ok = await postDmMessage(trimmed, null);
+      if (!ok) setDmInput(trimmed);
+      return;
+    }
+
+    let allOk = true;
+    for (let i = 0; i < imagePaths.length; i++) {
+      const isLast = i === imagePaths.length - 1;
+      const ok = await postDmMessage(isLast ? trimmed : "", imagePaths[i]);
+      if (!ok) {
+        allOk = false;
+        break;
+      }
+    }
+    if (allOk) {
+      cancelAllDmPendingImages();
     } else {
       setDmInput(trimmed);
     }
   }, [
     dmInput,
-    dmPendingImage,
+    dmPendingImages,
     dmSending,
     dmImageUploading,
     postDmMessage,
     roomId,
     viewOnlyInviteToken,
+    cancelAllDmPendingImages,
     cancelDmPendingImage,
   ]);
 
@@ -3563,8 +3610,8 @@ export default function AvatarSpace({
               e.preventDefault();
               setDmDragActive(false);
               if (!selectedPeerUserId) return;
-              const file = e.dataTransfer.files?.[0];
-              if (file) stageDmImage(file);
+              const files = Array.from(e.dataTransfer.files ?? []);
+              if (files.length > 0) stageDmImages(files);
             }}
           >
             {(() => {
@@ -3714,56 +3761,59 @@ export default function AvatarSpace({
                       </button>
                     </div>
                   )}
-                  {dmPendingImage && (
-                    <div className="flex items-center gap-2 border-t border-slate-700 bg-slate-800/60 px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDmLightbox({
-                            messageId: null,
-                            url: dmPendingImage.previewUrl,
-                          })
-                        }
-                        className="shrink-0"
-                        aria-label="添付画像を拡大表示"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={dmPendingImage.previewUrl}
-                          alt=""
-                          className="h-10 w-10 rounded object-cover"
-                        />
-                      </button>
-                      <div className="min-w-0 flex-1 text-[11px] text-slate-300">
-                        <p className="truncate font-medium">
-                          {dmPendingImage.file.name}
-                        </p>
-                        {dmPendingImage.width && dmPendingImage.height && (
-                          <p className="text-slate-500">
-                            {dmPendingImage.width}×{dmPendingImage.height}
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={cancelDmPendingImage}
-                        aria-label="添付を取り消す"
-                        className="shrink-0 text-slate-400 hover:text-white"
-                      >
-                        ✕
-                      </button>
+                  {dmPendingImages.length > 0 && (
+                    <div className="flex gap-2 overflow-x-auto border-t border-slate-700 bg-slate-800/60 px-3 py-2">
+                      {dmPendingImages.map((p) => (
+                        <div
+                          key={p.id}
+                          className="flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-700/70 py-1 pl-1 pr-2"
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDmLightbox({ messageId: null, url: p.previewUrl })
+                            }
+                            className="shrink-0"
+                            aria-label="添付画像を拡大表示"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={p.previewUrl}
+                              alt=""
+                              className="h-8 w-8 rounded object-cover"
+                            />
+                          </button>
+                          <div className="min-w-0 max-w-[110px] text-[10px] text-slate-300">
+                            <p className="truncate font-medium">{p.file.name}</p>
+                            {p.width && p.height && (
+                              <p className="text-slate-500">
+                                {p.width}×{p.height}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => cancelDmPendingImage(p.id)}
+                            aria-label="添付を取り消す"
+                            className="shrink-0 text-slate-400 hover:text-white"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
-                  <div className="flex gap-1.5 border-t border-slate-700 p-2">
+                  <div className="flex items-center gap-1.5 border-t border-slate-700 p-2">
                     <input
                       ref={dmImageInputRef}
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
+                      multiple
                       className="hidden"
                       onChange={(e) => {
-                        const file = e.target.files?.[0];
+                        const files = Array.from(e.target.files ?? []);
                         e.target.value = "";
-                        if (file) stageDmImage(file);
+                        if (files.length > 0) stageDmImages(files);
                       }}
                     />
                     <button
@@ -3772,7 +3822,7 @@ export default function AvatarSpace({
                       disabled={dmImageUploading || dmSending}
                       title="画像を添付"
                       aria-label="画像を添付"
-                      className="shrink-0 rounded-lg border border-slate-600 px-2.5 py-1.5 text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-sm font-semibold leading-none text-slate-300 hover:bg-slate-800 disabled:opacity-50"
                     >
                       {dmImageUploading ? "…" : "+"}
                     </button>
@@ -3788,6 +3838,22 @@ export default function AvatarSpace({
                           }
                         }
                       }}
+                      onPaste={(e) => {
+                        const items = e.clipboardData?.items;
+                        if (!items) return;
+                        const imageFiles: File[] = [];
+                        for (let i = 0; i < items.length; i++) {
+                          const item = items[i];
+                          if (item.type.startsWith("image/")) {
+                            const file = item.getAsFile();
+                            if (file) imageFiles.push(file);
+                          }
+                        }
+                        if (imageFiles.length > 0) {
+                          e.preventDefault();
+                          stageDmImages(imageFiles);
+                        }
+                      }}
                       maxLength={500}
                       placeholder="メッセージを入力"
                       className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
@@ -3797,11 +3863,11 @@ export default function AvatarSpace({
                       disabled={
                         dmEditingMessageId
                           ? !dmInput.trim() || dmSending
-                          : (!dmInput.trim() && !dmPendingImage) ||
+                          : (!dmInput.trim() && dmPendingImages.length === 0) ||
                             dmSending ||
                             dmImageUploading
                       }
-                      className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                      className="flex h-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold leading-none text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
                       {dmEditingMessageId
                         ? "更新"
