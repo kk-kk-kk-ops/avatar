@@ -296,6 +296,25 @@ export default function AvatarSpace({
   // メッセージごとの署名付き画像URL(取得済み分のキャッシュ)。有効期限
   // (5分)が近いことは気にせず、スレッドを開き直した際に再取得する簡易実装。
   const [dmImageUrls, setDmImageUrls] = useState<Record<string, string>>({});
+  // 送信前の添付画像(選択/ドロップ直後〜送信操作までの一時状態)。
+  // 実際のアップロード・圧縮は送信操作のタイミングまで行わない。
+  type DmPendingImage = {
+    file: File;
+    previewUrl: string;
+    width?: number;
+    height?: number;
+  };
+  const [dmPendingImage, setDmPendingImage] = useState<DmPendingImage | null>(
+    null,
+  );
+  const [dmDragActive, setDmDragActive] = useState(false);
+  // 画像の拡大プレビュー(送受信済み画像/送信前プレビューの両方で使う)。
+  // messageIdがnullの場合は送信前プレビュー(保存ボタンは出さない)。
+  const [dmLightbox, setDmLightbox] = useState<{
+    messageId: string | null;
+    url: string;
+  } | null>(null);
+  const [dmLightboxDownloading, setDmLightboxDownloading] = useState(false);
   // 編集中のメッセージID。設定されている間、入力欄は送信ではなく更新用に
   // 動作する(dmInputにそのメッセージの文面を読み込んで使う)。
   const [dmEditingMessageId, setDmEditingMessageId] = useState<string | null>(
@@ -713,48 +732,84 @@ export default function AvatarSpace({
     [dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken],
   );
 
-  const sendDmMessage = useCallback(async () => {
-    const trimmed = dmInput.trim();
-    if (!trimmed) return;
-    setDmInput("");
-    const ok = await postDmMessage(trimmed, null);
-    if (!ok) setDmInput(trimmed);
-  }, [dmInput, postDmMessage]);
+  // 添付中の画像(あれば)を破棄する。プレビュー用のオブジェクトURLは
+  // 明示的に解放しないとリークするため、必ずこの関数経由でクリアする。
+  const cancelDmPendingImage = useCallback(() => {
+    setDmPendingImage((prev) => {
+      if (prev) URL.revokeObjectURL(prev.previewUrl);
+      return null;
+    });
+  }, []);
 
-  // 画像添付メッセージの送信(テキストは付けず、画像のみのメッセージにする)。
-  const sendDmImageMessage = useCallback(
-    (imagePath: string) => postDmMessage("", imagePath),
-    [postDmMessage],
-  );
-
-  // 画像選択ボタン(input[type=file])のonChangeから呼ばれる。
-  // バリデーション→当日の上限確認(事前チェック。最終判定はサーバー側)→
-  // 生画像を直接Storageへアップロード→圧縮APIを呼んで最終画像に差し替え→
-  // メッセージとして送信、という一連の流れをまとめて行う。
-  const handleDmImageSelected = useCallback(
+  // 画像ボタン/ドラッグ&ドロップの両方から呼ばれる。この時点では
+  // アップロードは行わず、バリデーションと当日の上限事前確認
+  // (最終判定は送信時のサーバー側で行う)だけ済ませ、送信前プレビューの
+  // 状態にする。実際のアップロード・圧縮はsendDmMessageが送信操作の
+  // タイミングで行う。
+  const stageDmImage = useCallback(
     async (file: File) => {
-      const myUserId = authUserIdRef.current;
-      if (!myUserId || !selectedPeerUserId || dmImageUploading) return;
-
+      if (dmImageUploading) return;
       const validationError = validateChatImageFile(file);
       if (validationError) {
         setDmError(validationError);
         return;
       }
 
+      const { data: currentCount } = await supabase.rpc(
+        "get_daily_image_upload_count",
+      );
+      if ((currentCount ?? 0) >= DAILY_IMAGE_UPLOAD_LIMIT) {
+        setDmError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
+        return;
+      }
+
       setDmError(null);
+      // 画像を添付した時点で編集モードは抜ける(「更新」ボタンに送信操作が
+      // 奪われ、添付画像がいつまでも送信されない状態になるのを避けるため)。
+      if (dmEditingMessageId) {
+        setDmEditingMessageId(null);
+        setDmInput("");
+      }
+
+      const previewUrl = URL.createObjectURL(file);
+      const dims = await new Promise<
+        { width: number; height: number } | null
+      >((resolve) => {
+        const img = new window.Image();
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        img.onerror = () => resolve(null);
+        img.src = previewUrl;
+      });
+
+      setDmPendingImage((prev) => {
+        if (prev) URL.revokeObjectURL(prev.previewUrl);
+        return { file, previewUrl, width: dims?.width, height: dims?.height };
+      });
+    },
+    [dmImageUploading, dmEditingMessageId, supabase],
+  );
+
+  // 相手を切り替えたら、添付中の画像は宛先違いの誤送信を避けるため破棄する。
+  useEffect(() => {
+    cancelDmPendingImage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPeerUserId]);
+
+  const sendDmMessage = useCallback(async () => {
+    const trimmed = dmInput.trim();
+    const pending = dmPendingImage;
+    if ((!trimmed && !pending) || dmSending || dmImageUploading) return;
+
+    setDmInput("");
+    setDmError(null);
+
+    let imagePath: string | null = null;
+    if (pending) {
+      const myUserId = authUserIdRef.current;
+      if (!myUserId) return;
       setDmImageUploading(true);
       try {
-        const { data: currentCount } = await supabase.rpc(
-          "get_daily_image_upload_count",
-        );
-        if ((currentCount ?? 0) >= DAILY_IMAGE_UPLOAD_LIMIT) {
-          setDmError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
-          return;
-        }
-
-        const rawPath = await uploadRawChatImage(file, myUserId);
-
+        const rawPath = await uploadRawChatImage(pending.file, myUserId);
         const res = await fetch("/api/chat/compress-image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -767,27 +822,66 @@ export default function AvatarSpace({
         const json = await res.json();
         if (!res.ok) {
           setDmError(json.error ?? "画像のアップロードに失敗しました");
+          setDmInput(trimmed);
           return;
         }
-
-        await sendDmImageMessage(json.imagePath as string);
+        imagePath = json.imagePath as string;
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error("画像添付メッセージの送信に失敗しました", err);
         setDmError("画像のアップロードに失敗しました。時間をおいて再度お試しください。");
+        setDmInput(trimmed);
+        return;
       } finally {
         setDmImageUploading(false);
       }
-    },
-    [
-      dmImageUploading,
-      roomId,
-      selectedPeerUserId,
-      sendDmImageMessage,
-      supabase,
-      viewOnlyInviteToken,
-    ],
-  );
+    }
+
+    const ok = await postDmMessage(trimmed, imagePath);
+    if (ok) {
+      cancelDmPendingImage();
+    } else {
+      setDmInput(trimmed);
+    }
+  }, [
+    dmInput,
+    dmPendingImage,
+    dmSending,
+    dmImageUploading,
+    postDmMessage,
+    roomId,
+    viewOnlyInviteToken,
+    cancelDmPendingImage,
+  ]);
+
+  // 画像を保存(ダウンロード)する。Content-Dispositionによる強制ダウンロード
+  // 付きの署名付きURLをその場で発行し直す(表示用URLとは別発行にすることで、
+  // 通常表示時にダウンロードダイアログが出てしまうのを避ける)。
+  const downloadDmLightboxImage = useCallback(async () => {
+    if (!dmLightbox?.messageId || !selectedPeerUserId) return;
+    setDmLightboxDownloading(true);
+    try {
+      const params = new URLSearchParams({
+        messageId: dmLightbox.messageId,
+        download: "1",
+      });
+      if (viewOnlyInviteToken) {
+        params.set("roomId", roomId);
+        params.set("peerUserId", selectedPeerUserId);
+        params.set("inviteToken", viewOnlyInviteToken);
+      }
+      const res = await fetch(`/api/chat/image-url?${params.toString()}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "画像の保存に失敗しました");
+      window.location.href = json.url;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("画像の保存に失敗しました", err);
+      setDmError("画像の保存に失敗しました。時間をおいて再度お試しください。");
+    } finally {
+      setDmLightboxDownloading(false);
+    }
+  }, [dmLightbox, roomId, selectedPeerUserId, viewOnlyInviteToken]);
 
   // 添付画像の署名付きURLを取得する(未取得のもののみ)。スレッドを
   // 開いた/更新された際にまとめて呼ぶ。
@@ -3455,7 +3549,24 @@ export default function AvatarSpace({
           </div>
 
           {/* 下半分:選択中の相手とのDM。サイドバー全体の50%の高さを占める */}
-          <div className="flex h-1/2 shrink-0 flex-col border-t border-slate-700">
+          <div
+            className={`flex h-1/2 shrink-0 flex-col border-t border-slate-700 ${
+              dmDragActive ? "ring-2 ring-inset ring-emerald-400" : ""
+            }`}
+            onDragOver={(e) => {
+              if (!selectedPeerUserId) return;
+              e.preventDefault();
+              setDmDragActive(true);
+            }}
+            onDragLeave={() => setDmDragActive(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDmDragActive(false);
+              if (!selectedPeerUserId) return;
+              const file = e.dataTransfer.files?.[0];
+              if (file) stageDmImage(file);
+            }}
+          >
             {(() => {
               const peer = selectedPeerUserId
                 ? playerList.find((p) => p.userId === selectedPeerUserId)
@@ -3537,9 +3648,17 @@ export default function AvatarSpace({
                             <img
                               src={dmImageUrls[m.id]}
                               alt="添付画像"
+                              onClick={() => {
+                                const url = dmImageUrls[m.id];
+                                if (url) setDmLightbox({ messageId: m.id, url });
+                              }}
                               className={`block max-h-56 max-w-full rounded-md object-contain ${
                                 m.message ? "mb-1" : ""
-                              } ${dmImageUrls[m.id] ? "" : "min-h-16 min-w-16 animate-pulse bg-slate-600"}`}
+                              } ${
+                                dmImageUrls[m.id]
+                                  ? "cursor-pointer"
+                                  : "min-h-16 min-w-16 animate-pulse bg-slate-600"
+                              }`}
                             />
                           )}
                           <p
@@ -3595,6 +3714,46 @@ export default function AvatarSpace({
                       </button>
                     </div>
                   )}
+                  {dmPendingImage && (
+                    <div className="flex items-center gap-2 border-t border-slate-700 bg-slate-800/60 px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDmLightbox({
+                            messageId: null,
+                            url: dmPendingImage.previewUrl,
+                          })
+                        }
+                        className="shrink-0"
+                        aria-label="添付画像を拡大表示"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={dmPendingImage.previewUrl}
+                          alt=""
+                          className="h-10 w-10 rounded object-cover"
+                        />
+                      </button>
+                      <div className="min-w-0 flex-1 text-[11px] text-slate-300">
+                        <p className="truncate font-medium">
+                          {dmPendingImage.file.name}
+                        </p>
+                        {dmPendingImage.width && dmPendingImage.height && (
+                          <p className="text-slate-500">
+                            {dmPendingImage.width}×{dmPendingImage.height}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={cancelDmPendingImage}
+                        aria-label="添付を取り消す"
+                        className="shrink-0 text-slate-400 hover:text-white"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
                   <div className="flex gap-1.5 border-t border-slate-700 p-2">
                     <input
                       ref={dmImageInputRef}
@@ -3604,7 +3763,7 @@ export default function AvatarSpace({
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         e.target.value = "";
-                        if (file) handleDmImageSelected(file);
+                        if (file) stageDmImage(file);
                       }}
                     />
                     <button
@@ -3613,9 +3772,9 @@ export default function AvatarSpace({
                       disabled={dmImageUploading || dmSending}
                       title="画像を添付"
                       aria-label="画像を添付"
-                      className="shrink-0 rounded-lg border border-slate-600 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                      className="shrink-0 rounded-lg border border-slate-600 px-2.5 py-1.5 text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
                     >
-                      {dmImageUploading ? "…" : "🖼️"}
+                      {dmImageUploading ? "…" : "+"}
                     </button>
                     <input
                       value={dmInput}
@@ -3635,10 +3794,20 @@ export default function AvatarSpace({
                     />
                     <button
                       onClick={dmEditingMessageId ? updateDmMessage : sendDmMessage}
-                      disabled={!dmInput.trim() || dmSending}
+                      disabled={
+                        dmEditingMessageId
+                          ? !dmInput.trim() || dmSending
+                          : (!dmInput.trim() && !dmPendingImage) ||
+                            dmSending ||
+                            dmImageUploading
+                      }
                       className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
-                      {dmEditingMessageId ? "更新" : "送信"}
+                      {dmEditingMessageId
+                        ? "更新"
+                        : dmImageUploading
+                          ? "送信中..."
+                          : "送信"}
                     </button>
                   </div>
                 </>
@@ -3647,6 +3816,46 @@ export default function AvatarSpace({
           </div>
         </div>
       </div>
+
+      {/* チャット添付画像の拡大プレビュー。送受信済み画像はmessageIdありで
+          保存ボタンを表示し、送信前プレビュー(dmPendingImage由来)は
+          messageIdがnullのため保存ボタンを出さない(手元のファイルを
+          そのまま保存できても意味が無いため)。 */}
+      {dmLightbox && (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-black/90 p-4"
+          onClick={() => setDmLightbox(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setDmLightbox(null)}
+            aria-label="閉じる"
+            className="absolute right-4 top-4 text-2xl text-white hover:text-slate-300"
+          >
+            ✕
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={dmLightbox.url}
+            alt="添付画像"
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[80vh] max-w-full rounded-lg object-contain"
+          />
+          {dmLightbox.messageId && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                downloadDmLightboxImage();
+              }}
+              disabled={dmLightboxDownloading}
+              className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+            >
+              {dmLightboxDownloading ? "保存中..." : "画像を保存"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* DMメッセージのコピーメニュー用の背景(外側タップで閉じる)。
           部分コピーモード中は選択ハンドルのドラッグ操作を妨げてしまう

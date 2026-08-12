@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
   const roomId = searchParams.get("roomId");
   const peerUserId = searchParams.get("peerUserId");
   const inviteToken = searchParams.get("inviteToken");
+  const download = searchParams.get("download") === "1";
 
   if (!messageId) {
     return NextResponse.json({ error: "messageIdが必要です" }, { status: 400 });
@@ -71,9 +72,16 @@ export async function GET(request: NextRequest) {
     auth: { persistSession: false },
   });
 
+  // download=1のときはContent-Dispositionを付けた署名付きURLを発行し、
+  // ブラウザが開く/表示するのではなく保存ダイアログを出すようにする
+  // (通常表示用のURLとは別発行にし、<img>表示時に保存扱いにならないようにする)。
   const { data: signed, error } = await serviceClient.storage
     .from("chat-images")
-    .createSignedUrl(imagePath, SIGNED_URL_EXPIRES_IN);
+    .createSignedUrl(
+      imagePath,
+      SIGNED_URL_EXPIRES_IN,
+      download ? { download: true } : undefined,
+    );
   if (error || !signed) {
     console.error("署名付きURLの発行に失敗しました", error);
     return NextResponse.json({ error: "画像URLの発行に失敗しました" }, { status: 500 });
