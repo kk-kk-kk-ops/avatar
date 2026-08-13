@@ -1074,9 +1074,16 @@ end $$;
 --   最終画像への書き込みはRoute Handler(compress-image)がService Role経由で
 --   行うためRLSをバイパスする(=INSERTポリシーはraw/向けのみで足りる)。
 -- ------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('chat-images', 'chat-images', false)
-on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'chat-images', 'chat-images', false,
+  15728640, -- 15MB (lib/types.tsのCHAT_IMAGE_MAX_BYTESと同じ値。アプリ側の
+            -- バリデーションに加えて、Storage自体でも上限を強制する)
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "chat-images: insert own raw" on storage.objects;
 create policy "chat-images: insert own raw"
