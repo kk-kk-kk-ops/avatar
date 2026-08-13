@@ -310,6 +310,13 @@ export default function AvatarSpace({
   // メッセージごとの署名付き画像URL(取得済み分のキャッシュ)。有効期限
   // (5分)が近いことは気にせず、スレッドを開き直した際に再取得する簡易実装。
   const [dmImageUrls, setDmImageUrls] = useState<Record<string, string>>({});
+  // 署名付きURLの取得(fetch自体)、または実際の画像読み込み(<img>の
+  // onerror)のどちらかに失敗したメッセージID。取得失敗を無限リトライ
+  // させないためのマーカーであり、かつ「読み込めませんでした・タップで
+  // 再試行」というUIを出す判定にも使う。
+  const [dmImageLoadFailed, setDmImageLoadFailed] = useState<
+    Record<string, true>
+  >({});
   // 送信前の添付画像(選択/ドロップ/貼り付け直後〜送信操作までの一時状態)。
   // 複数枚を溜められるよう配列で持つ。実際のアップロード・圧縮は
   // 送信操作のタイミングまで行わない。
@@ -968,16 +975,22 @@ export default function AvatarSpace({
     }
   }, [dmLightbox, roomId, selectedPeerUserId, viewOnlyInviteToken]);
 
-  // 添付画像の署名付きURLを取得する(未取得のもののみ)。スレッドを
-  // 開いた/更新された際にまとめて呼ぶ。
+  // 添付画像の署名付きURLを取得する(未取得・未失敗のもののみ)。
+  // スレッドを開いた/更新された際にまとめて呼ぶ。失敗した場合は
+  // dmImageLoadFailedに記録し、以後は自動リトライしない(理由不明の
+  // 恒久的な失敗を毎レンダー無限リトライしないため)。ユーザーが
+  // 「タップして再試行」を押した場合はretryDmImageUrl経由で
+  // dmImageLoadFailedから外れ、この effect が再度対象に含める。
   useEffect(() => {
     if (!selectedPeerUserId) return;
     const thread = dmThreads[selectedPeerUserId] ?? [];
-    const targets = thread.filter((m) => m.imagePath && !dmImageUrls[m.id]);
+    const targets = thread.filter(
+      (m) => m.imagePath && !dmImageUrls[m.id] && !dmImageLoadFailed[m.id],
+    );
     if (targets.length === 0) return;
     let cancelled = false;
     (async () => {
-      const entries = await Promise.all(
+      const results = await Promise.all(
         targets.map(async (m) => {
           const params = new URLSearchParams({ messageId: m.id });
           if (viewOnlyInviteToken) {
@@ -988,22 +1001,70 @@ export default function AvatarSpace({
           try {
             const res = await fetch(`/api/chat/image-url?${params.toString()}`);
             const json = await res.json();
-            if (!res.ok) return null;
-            return [m.id, json.url as string] as const;
-          } catch {
-            return null;
+            if (!res.ok) {
+              // eslint-disable-next-line no-console
+              console.error(
+                "添付画像URLの取得に失敗しました",
+                m.id,
+                res.status,
+                json,
+              );
+              return { id: m.id, ok: false as const };
+            }
+            return { id: m.id, ok: true as const, url: json.url as string };
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error("添付画像URLの取得に失敗しました", m.id, err);
+            return { id: m.id, ok: false as const };
           }
         }),
       );
       if (cancelled) return;
-      const next = entries.filter((e): e is readonly [string, string] => e !== null);
-      if (next.length === 0) return;
-      setDmImageUrls((prev) => ({ ...prev, ...Object.fromEntries(next) }));
+      const succeeded = results.filter(
+        (r): r is { id: string; ok: true; url: string } => r.ok,
+      );
+      const failed = results.filter((r) => !r.ok);
+      if (succeeded.length > 0) {
+        setDmImageUrls((prev) => ({
+          ...prev,
+          ...Object.fromEntries(succeeded.map((r) => [r.id, r.url])),
+        }));
+      }
+      if (failed.length > 0) {
+        setDmImageLoadFailed((prev) => ({
+          ...prev,
+          ...Object.fromEntries(failed.map((r) => [r.id, true as const])),
+        }));
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [selectedPeerUserId, dmThreads, dmImageUrls, roomId, viewOnlyInviteToken]);
+  }, [
+    selectedPeerUserId,
+    dmThreads,
+    dmImageUrls,
+    dmImageLoadFailed,
+    roomId,
+    viewOnlyInviteToken,
+  ]);
+
+  // 画像の読み込みに失敗した状態(署名付きURL取得失敗、または実際の
+  // <img>読み込み失敗)を解除して再試行させる。
+  const retryDmImageUrl = useCallback((messageId: string) => {
+    setDmImageLoadFailed((prev) => {
+      if (!prev[messageId]) return prev;
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+    setDmImageUrls((prev) => {
+      if (!prev[messageId]) return prev;
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+  }, []);
 
   // 編集モードに入る:メニューの「編集」から呼ばれ、入力欄に文面を読み込む。
   const startEditDmMessage = useCallback((m: DmMessage) => {
@@ -3728,7 +3789,19 @@ export default function AvatarSpace({
                             使われるため、条件付きでアンマウントすると
                             画像のみのメッセージでメニュー位置が取れなくなる。
                           */}
-                          {m.imagePath && (
+                          {m.imagePath && dmImageLoadFailed[m.id] && (
+                            <button
+                              type="button"
+                              onClick={() => retryDmImageUrl(m.id)}
+                              className={`flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded-md bg-slate-600/60 text-[9px] text-slate-300 hover:bg-slate-600 ${
+                                m.message ? "mb-1" : ""
+                              }`}
+                            >
+                              <span>読み込めません</span>
+                              <span className="underline">タップで再試行</span>
+                            </button>
+                          )}
+                          {m.imagePath && !dmImageLoadFailed[m.id] && (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={dmImageUrls[m.id]}
@@ -3736,6 +3809,23 @@ export default function AvatarSpace({
                               onClick={() => {
                                 const url = dmImageUrls[m.id];
                                 if (url) setDmLightbox({ messageId: m.id, url });
+                              }}
+                              onError={() => {
+                                // 署名付きURLの取得自体は成功したが、実際の画像
+                                // 読み込み(ブラウザ側のGET)が失敗したケース
+                                // (期限切れ・ネットワーク不調等)。
+                                if (dmImageUrls[m.id]) {
+                                  // eslint-disable-next-line no-console
+                                  console.error(
+                                    "添付画像の読み込みに失敗しました",
+                                    m.id,
+                                    dmImageUrls[m.id],
+                                  );
+                                  setDmImageLoadFailed((prev) => ({
+                                    ...prev,
+                                    [m.id]: true,
+                                  }));
+                                }
                               }}
                               className={`block max-h-56 max-w-full rounded-md object-contain ${
                                 m.message ? "mb-1" : ""
