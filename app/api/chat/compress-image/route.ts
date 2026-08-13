@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const TARGET_BYTES = 500 * 1024;
+const CHAT_IMAGE_MAX_MB = Math.round(CHAT_IMAGE_MAX_BYTES / 1024 / 1024);
 
 // クライアントが"raw/{myUserId}/{uuid}.ext"へ直接アップロードした生画像を、
 // 1920px以下・WebP・quality80(オーバーサイズならquality60で再試行)に
@@ -95,7 +96,7 @@ export async function POST(request: Request) {
   if (inputBuffer.byteLength > CHAT_IMAGE_MAX_BYTES) {
     await serviceClient.storage.from("chat-images").remove([rawPath]);
     return NextResponse.json(
-      { error: "画像サイズが上限(5MB)を超えています" },
+      { error: `画像サイズが上限(${CHAT_IMAGE_MAX_MB}MB)を超えています` },
       { status: 400 },
     );
   }
@@ -128,6 +129,36 @@ export async function POST(request: Request) {
   if (uploadError) {
     console.error("圧縮画像のアップロードに失敗しました", uploadError);
     return NextResponse.json({ error: "画像の保存に失敗しました" }, { status: 500 });
+  }
+
+  // upload()がエラーを返さないにもかかわらず、実際には署名付きURL経由で
+  // 404になり読み出せない(=実体が保存されていない)事象が確認されたため、
+  // 保存直後に実際にdownloadできるかを確認する。読み出せない場合は
+  // 1回だけ再アップロードを試みてから、それでもダメならエラーを返す
+  // (imagePathをメッセージに使わせて「読み込めない画像」を作らないための
+  // 最終防波堤)。
+  const canReadFinalPath = async () => {
+    const { data, error } = await serviceClient.storage
+      .from("chat-images")
+      .download(finalPath);
+    return !error && !!data;
+  };
+
+  if (!(await canReadFinalPath())) {
+    console.error(
+      "アップロード直後に画像を読み出せなかったため再アップロードします",
+      finalPath,
+    );
+    const { error: retryError } = await serviceClient.storage
+      .from("chat-images")
+      .upload(finalPath, outputBuffer, {
+        contentType: "image/webp",
+        upsert: true,
+      });
+    if (retryError || !(await canReadFinalPath())) {
+      console.error("画像の再アップロードに失敗しました", finalPath, retryError);
+      return NextResponse.json({ error: "画像の保存に失敗しました" }, { status: 500 });
+    }
   }
 
   await serviceClient.storage.from("chat-images").remove([rawPath]);
