@@ -219,7 +219,13 @@ export const DAILY_IMAGE_UPLOAD_LIMIT = 30;
 
 // チャット画像添付の制約(サーバー側compress-image route・クライアント側
 // バリデーションの両方で参照する単一の情報源)。
-export const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+// 15MB: iPhoneの高解像度写真(HEIC/JPEG書き出し)を実用上ほぼカバーできる
+// 目安として設定。サーバー側の圧縮(sharp)は元ファイルサイズに対して
+// 十分高速(23MBのノイズ画像でも約0.4秒)なため、この程度の引き上げでは
+// 処理負荷上の懸念はない。生画像はブラウザから直接Supabase Storageへ
+// アップロードするため(Vercelサーバーレス関数のボディサイズ上限は
+// 経由しない)、Vercel側の制約も受けない。
+export const CHAT_IMAGE_MAX_BYTES = 15 * 1024 * 1024; // 15MB
 export const CHAT_IMAGE_ALLOWED_MIME_TYPES = [
   "image/jpeg",
   "image/png",

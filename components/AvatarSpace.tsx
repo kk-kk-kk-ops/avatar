@@ -45,7 +45,10 @@ import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
 import LogoutButton from "./auth/LogoutButton";
-import { uploadRawChatImage, validateChatImageFile } from "./uploadChatImage";
+import {
+  uploadRawChatImageWithProgress,
+  validateChatImageFile,
+} from "./uploadChatImage";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
 
 const COLORS = [
@@ -292,6 +295,17 @@ export default function AvatarSpace({
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
   const [dmImageUploading, setDmImageUploading] = useState(false);
+  // 送信中の画像アップロード進捗。複数枚をまとめて送る場合、何枚目を
+  // 処理中か(index/total)と、そのアップロードの進捗%を持つ。
+  // phase: "uploading"はxhr.upload.onprogressによる実際のバイト進捗、
+  // "compressing"はサーバー側の圧縮APIレスポンス待ち(進捗は取得できない
+  // ため見た目上のインジケーターのみ)。
+  const [dmUploadProgress, setDmUploadProgress] = useState<{
+    index: number;
+    total: number;
+    percent: number;
+    phase: "uploading" | "compressing";
+  } | null>(null);
   const dmImageInputRef = useRef<HTMLInputElement | null>(null);
   // メッセージごとの署名付き画像URL(取得済み分のキャッシュ)。有効期限
   // (5分)が近いことは気にせず、スレッドを開き直した際に再取得する簡易実装。
@@ -839,8 +853,31 @@ export default function AvatarSpace({
       if (!myUserId) return;
       setDmImageUploading(true);
       try {
-        for (const p of pending) {
-          const rawPath = await uploadRawChatImage(p.file, myUserId);
+        for (let i = 0; i < pending.length; i++) {
+          const p = pending[i];
+          setDmUploadProgress({
+            index: i,
+            total: pending.length,
+            percent: 0,
+            phase: "uploading",
+          });
+          const rawPath = await uploadRawChatImageWithProgress(
+            p.file,
+            myUserId,
+            (percent) =>
+              setDmUploadProgress({
+                index: i,
+                total: pending.length,
+                percent,
+                phase: "uploading",
+              }),
+          );
+          setDmUploadProgress({
+            index: i,
+            total: pending.length,
+            percent: 100,
+            phase: "compressing",
+          });
           const res = await fetch("/api/chat/compress-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -866,6 +903,7 @@ export default function AvatarSpace({
         return;
       } finally {
         setDmImageUploading(false);
+        setDmUploadProgress(null);
       }
     }
 
@@ -3794,13 +3832,40 @@ export default function AvatarSpace({
                           <button
                             type="button"
                             onClick={() => cancelDmPendingImage(p.id)}
+                            disabled={dmImageUploading}
                             aria-label="添付を取り消す"
-                            className="shrink-0 text-slate-400 hover:text-white"
+                            className="shrink-0 text-slate-400 hover:text-white disabled:opacity-30"
                           >
                             ✕
                           </button>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {dmUploadProgress && (
+                    <div className="border-t border-slate-700 bg-slate-800/60 px-3 py-2">
+                      <div className="mb-1 flex items-center justify-between text-[10px] text-slate-300">
+                        <span>
+                          {dmUploadProgress.phase === "uploading"
+                            ? `アップロード中 (${dmUploadProgress.index + 1}/${dmUploadProgress.total}) ${dmUploadProgress.percent}%`
+                            : `圧縮中… (${dmUploadProgress.index + 1}/${dmUploadProgress.total})`}
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
+                        <div
+                          className={`h-full rounded-full bg-emerald-500 ${
+                            dmUploadProgress.phase === "uploading"
+                              ? "transition-all"
+                              : "animate-pulse"
+                          }`}
+                          style={{
+                            width:
+                              dmUploadProgress.phase === "uploading"
+                                ? `${dmUploadProgress.percent}%`
+                                : "100%",
+                          }}
+                        />
+                      </div>
                     </div>
                   )}
                   <div className="flex items-center gap-1.5 border-t border-slate-700 p-2">
