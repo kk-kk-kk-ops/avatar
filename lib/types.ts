@@ -47,6 +47,7 @@ export const AVATAR_IMAGES = [
   "/avatar/men",
   "/avatar/rabi",
   "/avatar/woman",
+  "/avatar/woman2",
 ];
 
 // 向き(dir)ごとのファイル名
