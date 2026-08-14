@@ -6,7 +6,7 @@ import ScreenShareButton from "@/components/ScreenShareButton";
 import VideoCallButton from "@/components/VideoCallButton";
 import LeaveRoomButton from "@/components/LeaveRoomButton";
 
-const AVATAR_FRONT_IMAGE = "/avatar/goo/front.png";
+const AVATAR_FRONT_IMAGE = "/avatar/goo/front.webp";
 
 // 実際に入室した際にどう見えるか(ヘッダー・サイドバー込み)を確認する
 // ための静止画プレビュー。実際のAvatarSpace.tsxと同じく、マップは画面上

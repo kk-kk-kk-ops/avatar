@@ -36,7 +36,7 @@ export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
 
 // public/avatar 内の選択可能なアバター画像一覧。
 // 拡張子なしのパス(例: "/avatar/goo")は「向きごとの画像を持つフォルダ」を
-// 表し、front/back/left/right.pngを向きに応じて出し分ける
+// 表し、front/back/left/right.webpを向きに応じて出し分ける
 // (getAvatarSpritePath参照)。拡張子ありのパスは従来通り1枚絵のアバター。
 export const AVATAR_IMAGES = [
   "/avatar/goo",
@@ -58,11 +58,11 @@ const AVATAR_DIR_FILENAMES: Record<PlayerState["dir"], string> = {
   right: "right",
 };
 
-// アバター選択一覧やプレビューで使う「代表画像」。フォルダ形式ならfront.png、
+// アバター選択一覧やプレビューで使う「代表画像」。フォルダ形式ならfront.webp、
 // 1枚絵ならそのままの画像を返す。
 export function getAvatarThumbnail(avatarImage: string): string {
   return isAvatarFolder(avatarImage)
-    ? `${avatarImage}/front.png`
+    ? `${avatarImage}/front.webp`
     : avatarImage;
 }
 
@@ -78,7 +78,7 @@ export function getAvatarSpritePath(
   dir: PlayerState["dir"],
 ): string {
   if (!isAvatarFolder(avatarImage)) return avatarImage;
-  return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.png`;
+  return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.webp`;
 }
 
 // ルーム(バーチャル空間)。Supabaseのroomsテーブルの行に対応する
