@@ -19,12 +19,14 @@ export default function TemplateRoomPreview({
   mapHeight,
   backgroundImageUrl,
   avatarSizePx,
+  spawnPoint,
   onClose,
 }: {
   mapWidth: number;
   mapHeight: number;
   backgroundImageUrl: string;
   avatarSizePx: number;
+  spawnPoint: { x: number; y: number } | null;
   onClose: () => void;
 }) {
   const mapAreaRef = useRef<HTMLDivElement>(null);
@@ -47,8 +49,8 @@ export default function TemplateRoomPreview({
   // 張り付いて見えてしまう(=アバターが画面中央より上に見えるバグの原因)。
   const viewportWidth = areaSize.width;
   const viewportHeight = areaSize.height;
-  const spawnX = mapWidth / 2;
-  const spawnY = mapHeight / 2;
+  const spawnX = spawnPoint?.x ?? mapWidth / 2;
+  const spawnY = spawnPoint?.y ?? mapHeight / 2;
   // マップが画面より小さい場合はcameraを負の値にしてマップ自体を画面中央へ
   // 寄せ、大きい場合は従来通り画面端で止める。どちらの場合も
   // 「アバターは常に画面の中央」になる。

@@ -64,6 +64,11 @@ export default function TemplateEditor({
   const [meetingZones, setMeetingZones] = useState<MeetingZone[]>(
     template.meetingZones,
   );
+  // 入室時のアバター初期位置(中心座標)。1点のみ持てる。未設定ならnull
+  // (=マップ中心にスポーンする従来の挙動のまま)。
+  const [spawnPoint, setSpawnPoint] = useState<{ x: number; y: number } | null>(
+    template.spawnPoint,
+  );
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     template.backgroundImageUrl,
   );
@@ -111,6 +116,15 @@ export default function TemplateEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const dragState = useRef<DragState | null>(null);
+  // アバター初期位置は配列アイテムではなく単一の点なので、障害物/エリアの
+  // 汎用ドラッグ(dragState/applyDrag)には乗せず、専用の最小限のドラッグ
+  // 状態で扱う。
+  const spawnDragState = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(MAX_DISPLAY_WIDTH);
@@ -218,6 +232,17 @@ export default function TemplateEditor({
     });
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    const spawnDrag = spawnDragState.current;
+    if (spawnDrag) {
+      const dx = (e.clientX - spawnDrag.startX) / scale;
+      const dy = (e.clientY - spawnDrag.startY) / scale;
+      const half = avatarSizePx / 2;
+      setSpawnPoint({
+        x: Math.min(Math.max(spawnDrag.originX + dx, half), mapWidth - half),
+        y: Math.min(Math.max(spawnDrag.originY + dy, half), mapHeight - half),
+      });
+      return;
+    }
     const drag = dragState.current;
     if (!drag) return;
     const dx = (e.clientX - drag.startX) / scale;
@@ -231,6 +256,30 @@ export default function TemplateEditor({
 
   const handlePointerUp = () => {
     dragState.current = null;
+    spawnDragState.current = null;
+  };
+
+  const handleSpawnPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    if (!spawnPoint) return;
+    spawnDragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: spawnPoint.x,
+      originY: spawnPoint.y,
+    };
+  };
+
+  // 「＋アバター初期位置」ボタン: 今見えている範囲の中心へ(既に置いてい
+  // れば移動、未設置なら新規設置)。1点しか持たないstateなので、これだけで
+  // 「もう一度押すと元の位置を消して再設置」を満たす。
+  const setSpawnToVisibleCenter = () => {
+    const center = getVisibleCenterMapPoint();
+    const half = avatarSizePx / 2;
+    setSpawnPoint({
+      x: Math.min(Math.max(center.x, half), mapWidth - half),
+      y: Math.min(Math.max(center.y, half), mapHeight - half),
+    });
   };
 
   // 新規アイテムを追加する位置。固定座標(旧: 常に100,100=マップ左上)だと
@@ -332,6 +381,7 @@ export default function TemplateEditor({
         meetingZones,
         mapWidth,
         mapHeight,
+        spawnPoint,
       );
       if (!result.ok) {
         setError(result.error);
@@ -456,6 +506,12 @@ export default function TemplateEditor({
           >
             ＋会議室
           </button>
+          <button
+            onClick={setSpawnToVisibleCenter}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            ＋アバター初期位置
+          </button>
           <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
             {uploading ? "アップロード中..." : "背景画像を変更"}
             <input
@@ -579,6 +635,7 @@ export default function TemplateEditor({
           mapHeight={mapHeight}
           backgroundImageUrl={backgroundImageUrl}
           avatarSizePx={avatarSizePx}
+          spawnPoint={spawnPoint}
           onClose={() => setPreviewOpen(false)}
         />
       )}
@@ -670,6 +727,33 @@ export default function TemplateEditor({
                 />
               </div>
             ))}
+
+            {spawnPoint && (
+              <div
+                onPointerDown={handleSpawnPointerDown}
+                className="absolute cursor-move rounded-full ring-2 ring-emerald-400"
+                style={{
+                  left: (spawnPoint.x - avatarSizePx / 2) * scale,
+                  top: (spawnPoint.y - avatarSizePx / 2) * scale,
+                  width: avatarSizePx * scale,
+                  height: avatarSizePx * scale,
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/avatar/goo/front.webp"
+                  alt="アバター初期位置"
+                  className="pointer-events-none h-full w-full object-contain"
+                />
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => setSpawnPoint(null)}
+                  className="absolute -right-1 -top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                >
+                  ×
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
