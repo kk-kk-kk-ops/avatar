@@ -102,6 +102,10 @@ export type MapTemplate = {
   meetingZones: MeetingZone[];
   width: number;
   height: number;
+  // 入室時のアバター初期位置(当たり判定ボックスの中心座標。障害物・
+  // エリアの左上座標とは座標系が異なるので注意)。未設定ならマップ中心
+  // にスポーンする。
+  spawnPoint: { x: number; y: number } | null;
 };
 
 // 契約単位の組織。Supabaseのaccountsテーブルの行に対応する。

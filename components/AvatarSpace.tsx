@@ -1700,7 +1700,9 @@ export default function AvatarSpace({
     (async () => {
       const { data } = await supabase
         .from("templates")
-        .select("background_image_url, obstacles, meeting_area, map_width, map_height")
+        .select(
+          "background_image_url, obstacles, meeting_area, map_width, map_height, spawn_x, spawn_y",
+        )
         .eq("id", room.templateId)
         .maybeSingle();
       if (!data) return;
@@ -1713,8 +1715,9 @@ export default function AvatarSpace({
         setMapSize({ width: data.map_width, height: data.map_height });
       }
 
+      let loadedObstacles: Obstacle[] | null = null;
       if (Array.isArray(data.obstacles)) {
-        const loaded = (data.obstacles as Array<Partial<Obstacle>>).map(
+        loadedObstacles = (data.obstacles as Array<Partial<Obstacle>>).map(
           (o, i) => ({
             id: o.id ?? `obstacle-${i}`,
             x: o.x ?? 0,
@@ -1724,25 +1727,29 @@ export default function AvatarSpace({
             label: o.label ?? "🧱 障害物",
           }),
         );
-        setObstacles(loaded);
+        setObstacles(loadedObstacles);
+      }
 
-        // 保存済みの障害物と自分の初期位置が重なっていたら、上端のすぐ上へ押し出す
-        if (selfState.current) {
-          const resolved = resolveSpawnPosition(
-            selfState.current.x,
-            selfState.current.y,
-            loaded,
-          );
-          if (
-            resolved.x !== selfState.current.x ||
-            resolved.y !== selfState.current.y
-          ) {
-            selfState.current.x = resolved.x;
-            selfState.current.y = resolved.y;
-            const updated = selfState.current;
-            setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
-            channelRef.current?.track(updated);
-          }
+      // 初期位置の反映:テンプレートにアバター初期位置(spawn_x/y)が設定
+      // されていればそちらを、なければ現在位置(handleJoin時点のマップ中心)
+      // を基準にし、障害物と重なっていれば上端のすぐ上へ押し出す。
+      if (selfState.current) {
+        const baseX = data.spawn_x ?? selfState.current.x;
+        const baseY = data.spawn_y ?? selfState.current.y;
+        const resolved = resolveSpawnPosition(
+          baseX,
+          baseY,
+          loadedObstacles ?? obstaclesRef.current,
+        );
+        if (
+          resolved.x !== selfState.current.x ||
+          resolved.y !== selfState.current.y
+        ) {
+          selfState.current.x = resolved.x;
+          selfState.current.y = resolved.y;
+          const updated = selfState.current;
+          setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
+          channelRef.current?.track(updated);
         }
       }
 

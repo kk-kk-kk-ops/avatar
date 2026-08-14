@@ -79,7 +79,7 @@ export default async function MasterPage() {
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
-      "id, name, background_image_url, obstacles, meeting_area, map_width, map_height",
+      "id, name, background_image_url, obstacles, meeting_area, map_width, map_height, spawn_x, spawn_y",
     )
     .order("created_at", { ascending: true });
 
@@ -117,6 +117,10 @@ export default async function MasterPage() {
       meetingZones,
       width: t.map_width ?? MAP_WIDTH,
       height: t.map_height ?? MAP_HEIGHT,
+      spawnPoint:
+        t.spawn_x != null && t.spawn_y != null
+          ? { x: t.spawn_x, y: t.spawn_y }
+          : null,
     };
   });
 

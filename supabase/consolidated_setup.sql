@@ -153,6 +153,8 @@ create table if not exists public.templates (
   meeting_area jsonb not null default '[]'::jsonb,
   map_width integer not null default 1900,
   map_height integer not null default 1900,
+  spawn_x double precision,
+  spawn_y double precision,
   created_at timestamptz not null default now()
 );
 
@@ -160,6 +162,11 @@ alter table public.templates
   add column if not exists map_width integer not null default 1900;
 alter table public.templates
   add column if not exists map_height integer not null default 1900;
+-- 入室時のアバター初期位置(未設定=null の場合はマップ中心にスポーンする)
+alter table public.templates
+  add column if not exists spawn_x double precision;
+alter table public.templates
+  add column if not exists spawn_y double precision;
 
 alter table public.templates enable row level security;
 

@@ -77,6 +77,7 @@ export async function updateTemplateLayout(
   meetingZones: MeetingZone[],
   mapWidth: number,
   mapHeight: number,
+  spawnPoint: { x: number; y: number } | null,
 ): Promise<ActionResult> {
   const { supabase } = await requireMaster();
   const { error } = await supabase
@@ -86,6 +87,8 @@ export async function updateTemplateLayout(
       meeting_area: meetingZones,
       map_width: mapWidth,
       map_height: mapHeight,
+      spawn_x: spawnPoint?.x ?? null,
+      spawn_y: spawnPoint?.y ?? null,
     })
     .eq("id", templateId);
   if (error) return { ok: false, error: "レイアウトの保存に失敗しました" };
