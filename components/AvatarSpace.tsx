@@ -171,6 +171,29 @@ export default function AvatarSpace({
   // auth.uid()がRLS側で常にnullになっていた)。useStateの遅延初期化で
   // マウント時に一度だけ生成する。
   const [supabase] = useState(() => createClient());
+
+  // 一時的なモバイルデバッグ用。URLに?debugConsole=1が付いている場合のみ、
+  // erudaという軽量なオンページデバッグコンソール(コンソールログ・
+  // ネットワークタブを画面上に表示するツール)を読み込む。Macを使った
+  // リモートデバッグ環境が無いスマホ実機でも、その場でログを直接
+  // 確認できるようにするための一時的な調査用コードで、通常利用には
+  // 一切影響しない(パラメータが無ければ何もしない)。原因調査が終わり
+  // 次第この節ごと削除する想定。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!new URLSearchParams(window.location.search).has("debugConsole")) {
+      return;
+    }
+    if (document.getElementById("eruda-debug-script")) return;
+    const script = document.createElement("script");
+    script.id = "eruda-debug-script";
+    script.src = "https://cdn.jsdelivr.net/npm/eruda";
+    script.onload = () => {
+      (window as unknown as { eruda?: { init: () => void } }).eruda?.init();
+    };
+    document.body.appendChild(script);
+  }, []);
+
   // ---- ルーム選択(Googleログイン後、最初に必ずここへ遷移する) ----
   const [roomSelected, setRoomSelected] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
