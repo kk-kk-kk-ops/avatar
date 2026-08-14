@@ -34,6 +34,7 @@ import {
   DEFAULT_MEETING_ZONES,
   AVATAR_IMAGES,
   Room,
+  getAvatarSpritePath,
 } from "@/lib/types";
 import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
@@ -208,6 +209,9 @@ export default function AvatarSpace({
     Record<string, number>
   >({});
   const [joined, setJoined] = useState(false);
+  // 入室直後のアバター向き別スプライトのプリロードが完了したかどうか。
+  // 完了するまでローディング画面を表示し、移動・向き変更操作をロックする。
+  const [assetsReady, setAssetsReady] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -476,6 +480,8 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const keysDown = useRef<Set<string>>(new Set());
+  // assetsReady stateの最新値をRAFループ(effect外)から読むためのref。
+  const assetsReadyRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const proximityCircleRef = useRef<HTMLDivElement>(null);
@@ -1622,10 +1628,56 @@ export default function AvatarSpace({
     setPlayers((prev) => ({ ...prev, [initial.id]: initial }));
     setSettingsNameInput(name);
     setSettingsAvatar(selectedAvatar);
+    setAssetsReady(false);
     setJoined(true);
   }, [nameInput, selectedAvatar, obstacles]);
 
+  // ---- 入室直後:自分のアバターの向き別スプライトをプリロードし、完了する
+  // まで移動・向き変更操作をロックする(向き変更時に初めて画像取得が走り、
+  // 数秒ラグって見える問題への対策)。対象は自分のアバター画像のみで、
+  // 背景画像やLiveKit接続などは対象にしない。 ----
+  useEffect(() => {
+    if (!joined) return;
+    const avatarImage = selfState.current?.avatarImage;
+    if (!avatarImage) {
+      setAssetsReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    const dirs: PlayerState["dir"][] = ["up", "down", "left", "right"];
+    const paths = Array.from(
+      new Set(dirs.map((dir) => getAvatarSpritePath(avatarImage, dir))),
+    );
+
+    const preload = (src: string) =>
+      new Promise<void>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve();
+        // 向きごとの画像を持たないアバターがあり、その分は404になる。
+        // 失敗してもロードをブロックしたくないので成功と同様に完了扱いする。
+        img.onerror = () => resolve();
+        img.src = src;
+      });
+
+    const ASSET_LOAD_TIMEOUT_MS = 5000; // 何らかの理由で完了しない場合の保険
+    const timeout = new Promise<void>((resolve) =>
+      setTimeout(resolve, ASSET_LOAD_TIMEOUT_MS),
+    );
+
+    Promise.race([Promise.all(paths.map(preload)), timeout]).then(() => {
+      if (!cancelled) setAssetsReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [joined]);
+
   // ---- マップレイアウト:refをstateと同期(移動ループなど、effect外から常に最新値を読むため) ----
+  useEffect(() => {
+    assetsReadyRef.current = assetsReady;
+  }, [assetsReady]);
   useEffect(() => {
     obstaclesRef.current = obstacles;
   }, [obstacles]);
@@ -2365,11 +2417,15 @@ export default function AvatarSpace({
       if (self) {
         let dx = 0;
         let dy = 0;
-        const keys = keysDown.current;
-        if (keys.has("arrowup") || keys.has("w")) dy -= 1;
-        if (keys.has("arrowdown") || keys.has("s")) dy += 1;
-        if (keys.has("arrowleft") || keys.has("a")) dx -= 1;
-        if (keys.has("arrowright") || keys.has("d")) dx += 1;
+        // アバターの向き別スプライトのプリロードが終わるまでは、キー/タッチ
+        // 操作による移動・向き変更を受け付けない(ローディング画面表示中)。
+        if (assetsReadyRef.current) {
+          const keys = keysDown.current;
+          if (keys.has("arrowup") || keys.has("w")) dy -= 1;
+          if (keys.has("arrowdown") || keys.has("s")) dy += 1;
+          if (keys.has("arrowleft") || keys.has("a")) dx -= 1;
+          if (keys.has("arrowright") || keys.has("d")) dx += 1;
+        }
 
         const moving = dx !== 0 || dy !== 0;
 
@@ -3266,6 +3322,15 @@ export default function AvatarSpace({
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-slate-800">
+      {/* 入室直後のアバタースプライト読み込み中はこのオーバーレイで画面全体を
+          覆い、下の移動ボタン等へのタップも吸収する(キーボード操作は
+          移動ループ側のassetsReadyRefチェックでロックしている)。 */}
+      {!assetsReady && (
+        <div className="pointer-events-auto absolute inset-0 z-[9999] flex flex-col items-center justify-center gap-3 bg-slate-900/90 text-white">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+          <p className="text-sm">読み込み中…</p>
+        </div>
+      )}
       {/* ヘッダー */}
       <div className="flex h-16 min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 text-white">
         <div className="flex shrink-0 items-center gap-2">
