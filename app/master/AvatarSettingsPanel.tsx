@@ -61,7 +61,7 @@ export default function AvatarSettingsPanel({
         <div className="mb-4 flex h-40 items-center justify-center rounded-lg bg-slate-700">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/avatar/goo/front.png"
+            src="/avatar/goo/front.webp"
             alt="アバタープレビュー"
             className="object-contain"
             style={{ width: previewSize, height: previewSize }}

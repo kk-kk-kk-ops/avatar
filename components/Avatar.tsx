@@ -58,8 +58,8 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   const avatarImage = player.avatarImage || AVATAR_IMAGES[0];
   const spriteSrc = getAvatarSpritePath(avatarImage, player.dir);
 
-  // 向きごとの画像(back/front/left/right.png)が用意されていないアバターも
-  // あるため、読み込みに失敗した場合はfront.png(1枚絵のアバターはそのまま
+  // 向きごとの画像(back/front/left/right.webp)が用意されていないアバターも
+  // あるため、読み込みに失敗した場合はfront.webp(1枚絵のアバターはそのまま
   // 同じ画像)にフォールバックする。向きが変わった際は改めて読み込みを
   // 試したいので、spriteSrcが変わるたびにエラー状態をリセットする。
   const [spriteLoadFailed, setSpriteLoadFailed] = useState(false);
