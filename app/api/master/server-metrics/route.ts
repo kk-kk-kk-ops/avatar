@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { connect } from "net";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
-import { parsePrometheusText, sumMetric } from "@/lib/prometheusMetrics";
+import { parsePrometheusText, sumMetric, type MetricSample } from "@/lib/prometheusMetrics";
 import { SERVER_ROWS, type ServerRowConfig } from "@/lib/serverMetricsConfig";
 
 export const dynamic = "force-dynamic";
@@ -22,20 +21,28 @@ type RedisTcpResult = { id: string; kind: "redis-tcp"; reachable: boolean };
 
 type ServerResult = NodeExporterResult | RedisTcpResult;
 
-// grovina-livekit-prod上のnode_exporterから生のカウンタ値を取得して返すだけの
-// エンドポイント。CPU%・帯域(Mbps)はカウンタの差分(レート)でしか出せないが、
-// このRoute Handlerはリクエストごとに状態を持たない(Vercelのサーバーレス
-// 関数)ため、ここでは前回値との差分計算はしない。差分計算はクライアント側
+// grovina-livekit-prod上のnode_exporterから生のメトリクスをまとめて取得する。
+// CPU%・帯域(Mbps)はカウンタの差分(レート)でしか出せないが、このRoute
+// Handlerはリクエストごとに状態を持たない(Vercelのサーバーレス関数)ため、
+// ここでは前回値との差分計算はしない。差分計算はクライアント側
 // (app/master/ServerResourceTable.tsx)で、30秒ごとのポーリング間隔を使って行う。
-async function fetchNodeExporter(id: string): Promise<NodeExporterResult> {
+//
+// Redis(redis-tcp行)の稼働状況もこの同じレスポンスから読み取る
+// (redis_upというtextfile collectorメトリクス。grovina-livekit-prod上の
+// cron(check-redis.sh)が1分おきに書き出している)。Vercelから
+// Redisへ直接TCP接続する方式は、WebARENA Indigo側のネットワークで外部
+// からの到達がブロックされており常に「停止中」に誤表示されていたため、
+// 実際にRedisへ到達できているgrovina-livekit-prod経由に切り替えた。
+async function fetchNodeExporterMetrics(): Promise<
+  Map<string, MetricSample[]> | { error: string }
+> {
   const url = process.env.METRICS_URL;
   const authUser = process.env.METRICS_BASIC_AUTH_USER;
   const authPass = process.env.METRICS_BASIC_AUTH_PASSWORD;
   if (!url || !authUser || !authPass) {
-    return { id, kind: "node-exporter", error: "メトリクスの設定が不足しています" };
+    return { error: "メトリクスの設定が不足しています" };
   }
 
-  let text: string;
   try {
     const res = await fetch(url, {
       headers: {
@@ -46,20 +53,20 @@ async function fetchNodeExporter(id: string): Promise<NodeExporterResult> {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {
-      return {
-        id,
-        kind: "node-exporter",
-        error: `node_exporterからの応答が異常です(${res.status})`,
-      };
+      return { error: `node_exporterからの応答が異常です(${res.status})` };
     }
-    text = await res.text();
+    const text = await res.text();
+    return parsePrometheusText(text);
   } catch (err) {
     console.error("node_exporterへの接続に失敗しました", err);
-    return { id, kind: "node-exporter", error: "node_exporterに接続できません" };
+    return { error: "node_exporterに接続できません" };
   }
+}
 
-  const metrics = parsePrometheusText(text);
-
+function buildNodeExporterResult(
+  id: string,
+  metrics: Map<string, MetricSample[]>,
+): NodeExporterResult {
   // guest/guest_niceはuser/nice内に既に含まれているため二重計上を避ける
   const cpuIdle = sumMetric(metrics, "node_cpu_seconds_total", (l) => l.mode === "idle");
   const cpuTotal = sumMetric(
@@ -83,31 +90,6 @@ async function fetchNodeExporter(id: string): Promise<NodeExporterResult> {
   };
 }
 
-// Redisへの生TCP接続確認のみ行う(PING等のアプリケーションレベルの
-// ヘルスチェックは行わない)。ポートが開いていて接続が確立できれば
-// 「稼働中」とみなす。パスワード認証は不要なため、Vercel側に新たな
-// Secretを追加せずに実装できる(詳細は導入時のPLANを参照)。
-function checkRedisTcp(host: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = connect({ host, port, timeout: 3000 });
-    const finish = (reachable: boolean) => {
-      socket.destroy();
-      resolve(reachable);
-    };
-    socket.once("connect", () => finish(true));
-    socket.once("timeout", () => finish(false));
-    socket.once("error", () => finish(false));
-  });
-}
-
-async function fetchServerResult(row: ServerRowConfig): Promise<ServerResult> {
-  if (row.kind === "redis-tcp") {
-    const reachable = await checkRedisTcp(row.host, row.port);
-    return { id: row.id, kind: "redis-tcp", reachable };
-  }
-  return fetchNodeExporter(row.id);
-}
-
 export async function GET() {
   const supabase = createClient();
   const {
@@ -122,7 +104,23 @@ export async function GET() {
     return NextResponse.json({ error: "権限がありません" }, { status: 403 });
   }
 
-  const servers = await Promise.all(SERVER_ROWS.map(fetchServerResult));
+  // node_exporterの取得は1回だけ行い、node-exporter行・redis-tcp行の両方の
+  // 結果をそこから導出する(redis-tcp行の詳細は上のfetchNodeExporterMetrics
+  // のコメント参照)。
+  const metricsResult = await fetchNodeExporterMetrics();
+
+  const servers: ServerResult[] = SERVER_ROWS.map((row: ServerRowConfig) => {
+    if ("error" in metricsResult) {
+      return row.kind === "redis-tcp"
+        ? { id: row.id, kind: "redis-tcp", reachable: false }
+        : { id: row.id, kind: "node-exporter", error: metricsResult.error };
+    }
+    if (row.kind === "redis-tcp") {
+      const reachable = sumMetric(metricsResult, "redis_up", () => true) === 1;
+      return { id: row.id, kind: "redis-tcp", reachable };
+    }
+    return buildNodeExporterResult(row.id, metricsResult);
+  });
 
   return NextResponse.json({ timestampMs: Date.now(), servers });
 }
