@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { FREE_TRIAL_DAYS } from "@/lib/types";
+import { LIVEKIT_SERVERS } from "@/lib/livekitServers";
 
 // β版の運用制限:全顧客合計の同時接続数がこれに達したら新規契約を停止する。
 const BETA_ONLINE_CAP = 1000;
@@ -44,6 +45,25 @@ export async function startFreeTrial(): Promise<ActionResult> {
     Date.now() + FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
 
+  // 新規契約に、最もアカウント数が少ない物理LiveKitサーバーをラウンドロビンで
+  // 割り当てる(契約時点で固定し、以後は変わらない。単一送信元からの
+  // 同時接続50人規模でWebARENA Indigo側の遮断が発生することが判明したため。
+  // lib/livekitServers.ts参照。マスター画面から手動で変更することも可能)。
+  const { data: serverCounts } = await supabase.rpc(
+    "count_accounts_by_livekit_server",
+  );
+  const countByServerId = new Map(
+    (serverCounts as Array<{ livekit_server_id: string; account_count: number }> | null ?? []).map(
+      (row) => [row.livekit_server_id, row.account_count],
+    ),
+  );
+  const assignedServerId = LIVEKIT_SERVERS.reduce((leastLoaded, server) =>
+    (countByServerId.get(server.id) ?? 0) <
+    (countByServerId.get(leastLoaded.id) ?? 0)
+      ? server
+      : leastLoaded,
+  ).id;
+
   const { data: account, error: accountError } = await supabase
     .from("accounts")
     .insert({
@@ -51,6 +71,7 @@ export async function startFreeTrial(): Promise<ActionResult> {
       plan: "free",
       trial_ends_at: trialEndsAt,
       owner_user_id: user.id,
+      livekit_server_id: assignedServerId,
     })
     .select("id")
     .single();

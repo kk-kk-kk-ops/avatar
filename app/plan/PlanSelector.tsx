@@ -6,7 +6,7 @@ import { PLANS, type PlanId } from "@/lib/types";
 import { startFreeTrial } from "./actions";
 import LogoutButton from "@/components/auth/LogoutButton";
 
-const PLAN_ORDER: PlanId[] = ["free", "light", "standard", "pro", "business"];
+const PLAN_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
 
 export default function PlanSelector() {
   const [selected, setSelected] = useState<PlanId>("free");

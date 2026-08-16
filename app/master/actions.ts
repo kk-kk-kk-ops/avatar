@@ -131,6 +131,27 @@ export async function updateAvatarSize(sizePx: number): Promise<ActionResult> {
   return { ok: true };
 }
 
+// 契約(アカウント)に固定で割り当てる物理LiveKitサーバーを、マスターが
+// 手動で変更する。同一会社が複数契約する場合に、それぞれを別サーバーへ
+// 固定する目的(単一送信元からの同時接続が1サーバーに集中しないようにする)
+// で使う。serverIdにnullを渡すと「未割り当て(デフォルトサーバーを使う)」
+// に戻せる。
+export async function updateAccountLivekitServer(
+  accountId: string,
+  serverId: string | null,
+): Promise<ActionResult> {
+  const { supabase } = await requireMaster();
+
+  const { error } = await supabase
+    .from("accounts")
+    .update({ livekit_server_id: serverId })
+    .eq("id", accountId);
+  if (error) return { ok: false, error: "サーバー割り当ての変更に失敗しました" };
+
+  revalidatePath("/master");
+  return { ok: true };
+}
+
 export async function deleteTemplate(templateId: string): Promise<ActionResult> {
   const { supabase } = await requireMaster();
 
