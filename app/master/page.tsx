@@ -11,6 +11,7 @@ import {
   type MapTemplate,
   type Obstacle,
   type MeetingZone,
+  type AccountSummary,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
 
@@ -38,13 +39,13 @@ export default async function MasterPage() {
 
   const { data: accountRows } = await supabase
     .from("accounts")
-    .select("plan, owner_user_id");
+    .select("id, name, plan, owner_user_id, livekit_server_id, created_at")
+    .order("created_at", { ascending: false });
   const planCounts: Record<PlanId, number> = {
     free: 0,
     light: 0,
     standard: 0,
     pro: 0,
-    business: 0,
   };
   let subscriptionTotalYen = 0;
   (accountRows ?? []).forEach((a) => {
@@ -58,6 +59,25 @@ export default async function MasterPage() {
   const { count: totalProfiles } = await supabase
     .from("profiles")
     .select("id", { count: "exact", head: true });
+
+  // アカウント一覧(サーバー割り当て変更UI用)。ownerのメールアドレスは
+  // profiles側にしかないため、accounts.owner_user_id経由で別途取得して
+  // JS側で突き合わせる(accounts→profilesの向きにFKが無くPostgRESTの
+  // ネストselectが使えないため)。
+  const { data: ownerProfileRows } = await supabase
+    .from("profiles")
+    .select("user_id, email");
+  const ownerEmailByUserId = new Map(
+    (ownerProfileRows ?? []).map((p) => [p.user_id, p.email ?? ""]),
+  );
+  const accounts: AccountSummary[] = (accountRows ?? []).map((a) => ({
+    id: a.id,
+    name: a.name,
+    plan: a.plan as PlanId,
+    ownerEmail: ownerEmailByUserId.get(a.owner_user_id) ?? "",
+    livekitServerId: a.livekit_server_id,
+    createdAt: a.created_at,
+  }));
 
   const { data: roomRows } = await supabase
     .from("rooms")
@@ -131,6 +151,7 @@ export default async function MasterPage() {
       subscriptionTotalYen={subscriptionTotalYen}
       rooms={rooms}
       templates={templates}
+      accounts={accounts}
       showAdminLink={state.type === "admin"}
       showRoomsLink={state.type !== "no-account"}
       userEmail={user.email ?? ""}

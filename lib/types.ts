@@ -91,6 +91,16 @@ export type Room = {
   previewImage: string;
 };
 
+// マスター画面「アカウント」タブに表示する、契約(アカウント)の要約情報。
+export type AccountSummary = {
+  id: string;
+  name: string;
+  plan: PlanId;
+  ownerEmail: string;
+  livekitServerId: string | null;
+  createdAt: string;
+};
+
 // マップのひな形。Supabaseのtemplatesテーブルの行に対応する。
 // マップ編集はマスターがテンプレートに対して行い、個々のルームは常に
 // 紐づくテンプレートのレイアウトを参照する(ルーム自身は編集不可)。
@@ -120,7 +130,7 @@ export type Account = {
 
 export type ProfileRole = "admin" | "guest";
 
-export type PlanId = "free" | "light" | "standard" | "pro" | "business";
+export type PlanId = "free" | "light" | "standard" | "pro";
 
 // 各プランの上限(ルーム数、ルームごとの同時接続人数、画面共有・ビデオ通話・
 // 音声通話の1日あたり利用可能時間)と表示用ラベル。
@@ -196,19 +206,6 @@ export const PLANS: Record<
     priceYen: 9800,
     maxRooms: 1,
     maxPeoplePerRoom: 30,
-    screenShareDailyMinutes: null,
-    videoCallDailyMinutes: null,
-    voiceCallDailyMinutes: null,
-    roomCreation: "template-or-original",
-    historyRetentionLabel: "3ヶ月",
-  },
-  business: {
-    label: "ビジネス",
-    subLabel: "（ミーティングルーム1つ　人数上限：50名／画面共有・ビデオ通話：無制限）",
-    priceLabel: "19,800円/月",
-    priceYen: 19800,
-    maxRooms: 1,
-    maxPeoplePerRoom: 50,
     screenShareDailyMinutes: null,
     videoCallDailyMinutes: null,
     voiceCallDailyMinutes: null,

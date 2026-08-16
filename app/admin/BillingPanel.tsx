@@ -4,13 +4,7 @@ import { useState, useTransition } from "react";
 import { PLANS, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
 
-const PLAN_DISPLAY_ORDER: PlanId[] = [
-  "free",
-  "light",
-  "standard",
-  "pro",
-  "business",
-];
+const PLAN_DISPLAY_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
 
 // 「1人あたり1日◯分」/「無制限」の表示テキストをPLANSの値から生成する
 // (プラン名・価格・機能項目の重複記述を避け、PLANSを唯一の情報源にする)。

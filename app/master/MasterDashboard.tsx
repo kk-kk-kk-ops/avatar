@@ -2,15 +2,16 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { MapTemplate, PlanId, Room } from "@/lib/types";
+import type { AccountSummary, MapTemplate, PlanId, Room } from "@/lib/types";
 import { PLANS } from "@/lib/types";
 import LogoutButton from "@/components/auth/LogoutButton";
 import MasterOnlineStats from "./MasterOnlineStats";
 import ServerResourceTable from "./ServerResourceTable";
 import TemplateManager from "./TemplateManager";
 import AvatarSettingsPanel from "./AvatarSettingsPanel";
+import AccountServerAssignment from "./AccountServerAssignment";
 
-type Tab = "dashboard" | "templates" | "avatar";
+type Tab = "dashboard" | "templates" | "avatar" | "accounts";
 
 export default function MasterDashboard({
   planCounts,
@@ -18,6 +19,7 @@ export default function MasterDashboard({
   subscriptionTotalYen,
   rooms,
   templates,
+  accounts,
   showAdminLink,
   showRoomsLink,
   userEmail,
@@ -28,6 +30,7 @@ export default function MasterDashboard({
   subscriptionTotalYen: number;
   rooms: Room[];
   templates: MapTemplate[];
+  accounts: AccountSummary[];
   showAdminLink: boolean;
   showRoomsLink: boolean;
   userEmail: string;
@@ -124,6 +127,16 @@ export default function MasterDashboard({
           >
             アバター
           </button>
+          <button
+            onClick={() => selectTab("accounts")}
+            className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
+              tab === "accounts"
+                ? "bg-red-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            アカウント
+          </button>
         </nav>
 
         <div className="space-y-2 border-t border-slate-800 p-3">
@@ -197,6 +210,10 @@ export default function MasterDashboard({
 
         {tab === "avatar" && (
           <AvatarSettingsPanel initialSizePx={avatarSizePx} />
+        )}
+
+        {tab === "accounts" && (
+          <AccountServerAssignment accounts={accounts} />
         )}
       </main>
     </div>

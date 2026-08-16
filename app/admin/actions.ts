@@ -13,14 +13,8 @@ type ActionResult =
   | { ok: true; warning?: string }
   | { ok: false; error: string };
 
-// デバッグ用プラン切り替えで選べる5プラン(masterは対象外)。
-const DEBUG_SWITCHABLE_PLANS: PlanId[] = [
-  "free",
-  "light",
-  "standard",
-  "pro",
-  "business",
-];
+// デバッグ用プラン切り替えで選べる4プラン(masterは対象外)。
+const DEBUG_SWITCHABLE_PLANS: PlanId[] = ["free", "light", "standard", "pro"];
 
 async function requireAdminAccount() {
   const supabase = createClient();

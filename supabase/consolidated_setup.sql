@@ -25,6 +25,7 @@ create table if not exists public.accounts (
   stripe_customer_id text,
   stripe_subscription_id text,
   invite_inviter_name text,
+  livekit_server_id text,
   created_at timestamptz not null default now()
 );
 
@@ -33,17 +34,29 @@ alter table public.accounts enable row level security;
 -- plan列のCHECK制約。マスタープランは廃止したため、既存にplan='master'の
 -- 行が残っていれば先に'free'へ移行してから(そうしないと制約違反になる)、
 -- 'master'を含まない制約を作り直す。マスター権限アカウントは今後、
--- 通常の5プランのいずれかを持ち、DEBUG_PLAN_SWITCH_EMAILの仕組みで
+-- 通常の4プランのいずれかを持ち、DEBUG_PLAN_SWITCH_EMAILの仕組みで
 -- 自由に切り替える(マスター画面へのアクセス権はis_masterフラグで別途
 -- 管理しており、これとは無関係)。
 update public.accounts set plan = 'free' where plan = 'master';
 
+-- ビジネスプラン(50人上限)は、単一送信元からの同時接続50人規模で
+-- WebARENA Indigo側のネットワーク遮断が発生することが負荷テストで
+-- 判明したため廃止し、30人上限のプロプランに一本化した(2026-08)。
+-- 契約時点でビジネスプラン利用者はゼロだったため移行処理は行っていない。
 alter table public.accounts drop constraint if exists accounts_plan_check;
 alter table public.accounts add constraint accounts_plan_check
-  check (plan in ('free', 'light', 'standard', 'pro', 'business'));
+  check (plan in ('free', 'light', 'standard', 'pro'));
 
 alter table public.accounts
   add column if not exists invite_inviter_name text;
+
+-- 契約(アカウント)ごとに固定で割り当てる物理LiveKitサーバーのID
+-- (lib/livekitServers.tsのLIVEKIT_SERVERSに対応するid文字列。未設定(null)は
+-- デフォルトサーバーを使う)。動的な人数監視による振り分けではなく、契約時点で
+-- 固定することで「同じ部屋の利用者がサーバー違いで音声だけ分断される」事態を
+-- 避ける設計(詳細はdeploy/livekit/LOAD_TEST_PLAN.md参照)。
+alter table public.accounts
+  add column if not exists livekit_server_id text;
 
 drop policy if exists "accounts: insert own" on public.accounts;
 create policy "accounts: insert own"
@@ -1003,7 +1016,7 @@ $$;
 grant execute on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) to authenticated;
 
 -- 9f-3. チャット履歴の削除ポリシー。
---   ・保管期間はプラン別(free:7日/light,standard:1ヶ月/pro,business:3ヶ月)。
+--   ・保管期間はプラン別(free:7日/light,standard:1ヶ月/pro:3ヶ月)。
 --     判定は「削除処理実行時点でのそのルームが属するアカウントの現在の
 --     プラン」を使う(chat_messages.room_id → rooms.account_id → accounts.plan)。
 --   ・ルーム自体が削除された場合は、chat_messages.room_idの
@@ -1040,7 +1053,6 @@ as $$
       when 'light' then interval '1 month'
       when 'standard' then interval '1 month'
       when 'pro' then interval '3 months'
-      when 'business' then interval '3 months'
       else interval '1 month'
     end
   );
@@ -1149,12 +1161,34 @@ $$;
 
 grant execute on function public.get_online_session_count() to authenticated;
 
+-- 契約(アカウント)作成時に、どの物理LiveKitサーバーへ割り当てるかを
+-- ラウンドロビンで決めるための集計関数。individual accountの中身は返さず
+-- livekit_server_idごとの件数のみを返すため、認証済みユーザー全員に実行を
+-- 許可してよい(RLSの「accounts: select own」では他アカウントの件数すら
+-- 見えないため、新規契約時点ではこの関数経由でしか集計できない)。
+drop function if exists public.count_accounts_by_livekit_server();
+
+create function public.count_accounts_by_livekit_server()
+returns table (livekit_server_id text, account_count bigint)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select livekit_server_id, count(*) as account_count
+  from public.accounts
+  where livekit_server_id is not null
+  group by livekit_server_id;
+$$;
+
+grant execute on function public.count_accounts_by_livekit_server() to authenticated;
+
 
 -- ------------------------------------------------------------
 -- 10. (廃止) 以前はここでマスター権限アカウントの契約プランを強制的に
 --     'master'へ揃えていたが、マスタープランは廃止した。既存行の移行と
 --     CHECK制約からの'master'除外は、上の「1. accounts」内で一度きり
---     実施済み。マスター権限アカウントも今後は通常の5プランのいずれかを
+--     実施済み。マスター権限アカウントも今後は通常の4プランのいずれかを
 --     持ち、DEBUG_PLAN_SWITCH_EMAILの仕組みで自由に切り替える
 --     (マスター画面へのアクセス権はis_masterフラグで別途管理しており、
 --     プランとは無関係のため、この節の削除による影響はない)。

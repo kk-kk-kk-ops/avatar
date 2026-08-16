@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AccessToken } from "livekit-server-sdk";
 import { createClient } from "@/lib/supabase/server";
+import { resolveLivekitServerCredentials } from "@/lib/livekitServers";
 
 // LiveKit移行 Phase1: Token発行のみ。まだAvatarSpace側からは呼ばれない
 // (既存のMetered/自前WebRTCメッシュとは無関係に並行稼働させる)。
@@ -29,35 +30,46 @@ export async function POST(request: Request) {
   // 通常ルート: 自分の所属アカウントのルームか(RLS経由でそのまま判定できる)
   const { data: ownRoom } = await supabase
     .from("rooms")
-    .select("id")
+    .select("id, account_id")
     .eq("id", roomId)
     .maybeSingle();
 
-  let authorized = !!ownRoom;
+  let accountId: string | undefined = ownRoom?.account_id;
 
   // viewOnlyルート: 既に自分のアカウントを持つ人が他人の招待URLを一時閲覧している
   // 場合、profiles.account_idは書き換えていないためRLS経由のSELECTでは見えない。
   // 招待トークンの一致をSECURITY DEFINER関数で検証する(/rooms?invite=と同じ考え方)。
-  if (!authorized && inviteToken) {
+  if (!accountId && inviteToken) {
     const { data: viewRooms } = await supabase.rpc(
       "list_rooms_by_invite_token",
       { token: inviteToken },
     );
-    authorized = !!(viewRooms as Array<{ id: string }> | null)?.some(
-      (r) => r.id === roomId,
-    );
+    const matched = (
+      viewRooms as Array<{ id: string; account_id: string }> | null
+    )?.find((r) => r.id === roomId);
+    accountId = matched?.account_id;
   }
 
-  if (!authorized) {
+  if (!accountId) {
     return NextResponse.json(
       { error: "このルームへのアクセス権がありません" },
       { status: 403 },
     );
   }
 
-  const apiKey = process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
-  const url = process.env.LIVEKIT_URL;
+  // このルームが属するアカウントに固定で割り当てられたLiveKitサーバーを使う
+  // (単一送信元からの同時接続50人規模でWebARENA Indigo側の遮断が発生する
+  // ことが判明したため、契約時点でサーバーを固定する方式にした。
+  // lib/livekitServers.ts参照)。
+  const { data: account } = await supabase
+    .from("accounts")
+    .select("livekit_server_id")
+    .eq("id", accountId)
+    .maybeSingle();
+
+  const { url, apiKey, apiSecret } = resolveLivekitServerCredentials(
+    account?.livekit_server_id ?? null,
+  );
   if (!apiKey || !apiSecret || !url) {
     return NextResponse.json(
       { error: "LiveKitの設定が不足しています" },
@@ -77,7 +89,7 @@ export async function POST(request: Request) {
   });
 
   const token = await at.toJwt();
-  // LIVEKIT_URLは接続先エンドポイントであり秘密情報ではないため、
+  // urlは接続先エンドポイントであり秘密情報ではないため、
   // クライアントがroom.connect()に使えるようここで一緒に返す
   // (NEXT_PUBLIC_環境変数を別途増やさずに済む)。
   return NextResponse.json({ token, url });
