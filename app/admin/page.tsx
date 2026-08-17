@@ -67,12 +67,16 @@ export default async function AdminPage() {
   const maxRooms = PLANS[plan].maxRooms;
 
   // デバッグ用プラン切り替え機能(app/admin/BillingPanel.tsx)は、
-  // 環境変数DEBUG_PLAN_SWITCH_EMAILに一致するメールアドレスのアカウント
-  // だけに表示する。ここで判定してクライアントへ渡すことで、対象外の
-  // ユーザーにはUI自体がHTMLに含まれない(actions.ts側でも別途再検証する)。
+  // 環境変数DEBUG_PLAN_SWITCH_EMAIL(カンマ区切りで複数指定可)に含まれる
+  // メールアドレスのアカウントだけに表示する。ここで判定してクライアントへ
+  // 渡すことで、対象外のユーザーにはUI自体がHTMLに含まれない
+  // (actions.ts側でも別途再検証する)。
+  const debugPlanSwitchEmails = (process.env.DEBUG_PLAN_SWITCH_EMAIL ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
   const isDebugPlanSwitcherAllowed =
-    !!process.env.DEBUG_PLAN_SWITCH_EMAIL &&
-    user.email === process.env.DEBUG_PLAN_SWITCH_EMAIL;
+    !!user.email && debugPlanSwitchEmails.includes(user.email);
 
   return (
     <AdminDashboard
