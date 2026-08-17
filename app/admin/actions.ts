@@ -256,11 +256,12 @@ export async function unbanParticipant(userId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-// デバッグ用: 環境変数DEBUG_PLAN_SWITCH_EMAILに一致するアカウントだけが、
-// 自分のプランを5プランの中から自由に切り替えられる(動作確認用)。
-// クライアント側の表示制御(app/admin/page.tsxのisDebugPlanSwitcherAllowed)
-// とは別に、ここでも必ずメールアドレスを再検証する
-// (Server Actionは表示上のUIに関わらず直接呼び出せるため)。
+// デバッグ用: 環境変数DEBUG_PLAN_SWITCH_EMAIL(カンマ区切りで複数指定可)に
+// 含まれるアカウントだけが、自分のプランを4プランの中から自由に切り替え
+// られる(動作確認用)。クライアント側の表示制御
+// (app/admin/page.tsxのisDebugPlanSwitcherAllowed)とは別に、ここでも
+// 必ずメールアドレスを再検証する(Server Actionは表示上のUIに関わらず
+// 直接呼び出せるため)。
 export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
   const supabase = createClient();
   const {
@@ -268,8 +269,11 @@ export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "ログインが必要です" };
 
-  const allowedEmail = process.env.DEBUG_PLAN_SWITCH_EMAIL;
-  if (!allowedEmail || user.email !== allowedEmail) {
+  const allowedEmails = (process.env.DEBUG_PLAN_SWITCH_EMAIL ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
+  if (!user.email || !allowedEmails.includes(user.email)) {
     return { ok: false, error: "この機能を利用する権限がありません" };
   }
 
