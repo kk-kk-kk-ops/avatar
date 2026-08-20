@@ -4,9 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
 import {
   NEW_ITEM_SIZE,
+  AVATAR_HITBOX_WIDTH,
+  AVATAR_HITBOX_HEIGHT,
   clampPosition,
   clampSize,
   randomItemId,
+  rectIntersectsRect,
 } from "@/lib/types";
 import {
   updateTemplateLayout,
@@ -231,16 +234,32 @@ export default function TemplateEditor({
       return { ...item, ...size };
     });
 
+  // アバター初期位置が、障害物・ミーティングエリア(種類問わず)と重なって
+  // いないかを判定する。実際のゲーム内の当たり判定サイズ(AVATAR_HITBOX_*)
+  // で判定する(編集画面上の表示サイズavatarSizePxは見た目用の別値のため)。
+  const spawnOverlapsAnyZone = (x: number, y: number) => {
+    const halfW = AVATAR_HITBOX_WIDTH / 2;
+    const halfH = AVATAR_HITBOX_HEIGHT / 2;
+    return (
+      obstacles.some((o) => rectIntersectsRect(x, y, halfW, halfH, o)) ||
+      meetingZones.some((z) => rectIntersectsRect(x, y, halfW, halfH, z))
+    );
+  };
+
   const handlePointerMove = (e: React.PointerEvent) => {
     const spawnDrag = spawnDragState.current;
     if (spawnDrag) {
       const dx = (e.clientX - spawnDrag.startX) / scale;
       const dy = (e.clientY - spawnDrag.startY) / scale;
       const half = avatarSizePx / 2;
-      setSpawnPoint({
-        x: Math.min(Math.max(spawnDrag.originX + dx, half), mapWidth - half),
-        y: Math.min(Math.max(spawnDrag.originY + dy, half), mapHeight - half),
-      });
+      const x = Math.min(Math.max(spawnDrag.originX + dx, half), mapWidth - half);
+      const y = Math.min(Math.max(spawnDrag.originY + dy, half), mapHeight - half);
+      // 障害物・ミーティングエリアと重なる位置へはドラッグできないように
+      // する(重ならない位置に来るまで、現在位置に留まる)。
+      if (!spawnOverlapsAnyZone(x, y)) {
+        setError(null);
+        setSpawnPoint({ x, y });
+      }
       return;
     }
     const drag = dragState.current;
@@ -276,10 +295,16 @@ export default function TemplateEditor({
   const setSpawnToVisibleCenter = () => {
     const center = getVisibleCenterMapPoint();
     const half = avatarSizePx / 2;
-    setSpawnPoint({
-      x: Math.min(Math.max(center.x, half), mapWidth - half),
-      y: Math.min(Math.max(center.y, half), mapHeight - half),
-    });
+    const x = Math.min(Math.max(center.x, half), mapWidth - half);
+    const y = Math.min(Math.max(center.y, half), mapHeight - half);
+    if (spawnOverlapsAnyZone(x, y)) {
+      setError(
+        "表示中の中心が障害物・ミーティングエリアと重なっているため、アバター初期位置を設置できませんでした。別の位置にスクロールしてからもう一度お試しください。",
+      );
+      return;
+    }
+    setError(null);
+    setSpawnPoint({ x, y });
   };
 
   // 新規アイテムを追加する位置。固定座標(旧: 常に100,100=マップ左上)だと
