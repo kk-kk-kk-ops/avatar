@@ -443,6 +443,34 @@ export default function AvatarSpace({
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const lastTrackedZoneId = useRef<string | null>(null);
+
+  // ---- 会議室(conference)ゾーンの入室確認・施錠機能 ----
+  // 「いいえ」を選んだ相手は、当たり判定から完全に外れるまで再表示しない
+  // ようにするための記録(ゾーンIDの集合)。
+  const dismissedConferenceZonesRef = useRef<Set<string>>(new Set());
+  // 入室確認ポップアップの表示状態。rAFループ(refのみ参照)からも
+  // 「既に表示中か」を判定できるよう、state本体とは別にrefでも持つ。
+  const [pendingMeetingEntry, setPendingMeetingEntry] = useState<{
+    zoneId: string;
+  } | null>(null);
+  const pendingMeetingEntryRef = useRef<{ zoneId: string } | null>(null);
+  useEffect(() => {
+    pendingMeetingEntryRef.current = pendingMeetingEntry;
+  }, [pendingMeetingEntry]);
+  // 施錠/解錠の確認ポップアップ("鍵を閉めますか?"/"鍵を開けますか?")
+  const [lockActionConfirm, setLockActionConfirm] = useState<{
+    zoneId: string;
+    mode: "lock" | "unlock";
+  } | null>(null);
+  // 施錠者以外が鍵アイコンを押した際のエラーポップアップ(3秒で自動的に消す)
+  const [lockPermissionError, setLockPermissionError] = useState<{
+    zoneId: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!lockPermissionError) return;
+    const timer = setTimeout(() => setLockPermissionError(null), 3000);
+    return () => clearTimeout(timer);
+  }, [lockPermissionError]);
   // 定期同期(下記)で「前回同期した時の値」を覚えておくための記録。
   // selfState.currentとplayers[自分のID]が同じオブジェクト参照になって
   // いることがあり(入室直後など)、その場合next[self.id]とself自体を
@@ -2455,12 +2483,52 @@ export default function AvatarSpace({
 
           // 障害物との当たり判定(矩形どうし)。X軸・Y軸を別々に判定することで、
           // 障害物に斜めから近づいても壁沿いに滑るように移動できる。
-          const blockedX = obstaclesRef.current.some((o) =>
+          let blockedX = obstaclesRef.current.some((o) =>
             rectIntersectsRect(nextX, self.y, halfW, halfH, o),
           );
-          const blockedY = obstaclesRef.current.some((o) =>
+          let blockedY = obstaclesRef.current.some((o) =>
             rectIntersectsRect(self.x, nextY, halfW, halfH, o),
           );
+
+          // 会議室(conference)ゾーンの入室確認・施錠判定。既に中にいる
+          // 相手(self.meetingZoneId === zone.id)は自由に出入りできるが、
+          // まだ外にいる相手が新たに触れた場合だけ判定する。
+          meetingZonesRef.current.forEach((zone) => {
+            if (zone.kind !== "conference") return;
+            if (self.meetingZoneId === zone.id) return;
+
+            const touchX = rectIntersectsRect(nextX, self.y, halfW, halfH, zone);
+            const touchY = rectIntersectsRect(self.x, nextY, halfW, halfH, zone);
+            if (!touchX && !touchY) {
+              // 当たり判定が完全に外れたら、次に触れた時に再度ポップアップ
+              // できるようリセットする。
+              dismissedConferenceZonesRef.current.delete(zone.id);
+              if (pendingMeetingEntryRef.current?.zoneId === zone.id) {
+                pendingMeetingEntryRef.current = null;
+                setPendingMeetingEntry(null);
+              }
+              return;
+            }
+
+            const locker = Object.values(playersRef.current).find(
+              (p) => p.lockedMeetingZoneId === zone.id,
+            );
+            const lockedByOther = !!locker && locker.id !== selfId.current;
+            const dismissed = dismissedConferenceZonesRef.current.has(zone.id);
+            const alreadyPending =
+              pendingMeetingEntryRef.current?.zoneId === zone.id;
+
+            // 施錠中・「いいえ」選択済み・確認待ちのいずれでもなければ、
+            // 新規の接触として入室確認ポップアップを出す。
+            if (!lockedByOther && !dismissed && !alreadyPending) {
+              pendingMeetingEntryRef.current = { zoneId: zone.id };
+              setPendingMeetingEntry({ zoneId: zone.id });
+            }
+            // 施錠中・確認待ち・拒否済みのいずれの場合も、答えが出るまでは
+            // 壁と同様にそれ以上先へは進めないようにする。
+            if (touchX) blockedX = true;
+            if (touchY) blockedY = true;
+          });
 
           if (!blockedX) self.x = nextX;
           if (!blockedY) self.y = nextY;
@@ -2491,7 +2559,17 @@ export default function AvatarSpace({
         );
         self.meetingZoneId = zoneId;
         if (zoneId !== lastTrackedZoneId.current) {
+          const previousZoneId = lastTrackedZoneId.current;
           lastTrackedZoneId.current = zoneId;
+          // 施錠していた会議室から退室したら自動的に解錠する(異常切断時は
+          // presenceのleave検知で自動解錠されるので、ここでは正常な移動での
+          // 退室だけを扱えばよい)。
+          if (
+            previousZoneId &&
+            self.lockedMeetingZoneId === previousZoneId
+          ) {
+            self.lockedMeetingZoneId = null;
+          }
           // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
           channelRef.current?.track(self);
         }
@@ -2587,6 +2665,63 @@ export default function AvatarSpace({
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, [joined]);
+
+  // ---- 会議室(conference)ゾーンの入室確認・施錠操作 ----
+  // 「はい」:ゾーン中央へ瞬間移動し、そのまま入室状態にする。
+  const confirmMeetingEntry = useCallback((zoneId: string) => {
+    const zone = meetingZonesRef.current.find((z) => z.id === zoneId);
+    const self = selfState.current;
+    dismissedConferenceZonesRef.current.delete(zoneId);
+    pendingMeetingEntryRef.current = null;
+    setPendingMeetingEntry(null);
+    if (!zone || !self) return;
+    self.x = zone.x + zone.width / 2;
+    self.y = zone.y + zone.height / 2;
+    self.meetingZoneId = zoneId;
+    lastTrackedZoneId.current = zoneId;
+    channelRef.current?.track(self);
+    channelRef.current?.send({
+      type: "broadcast",
+      event: "move",
+      payload: self,
+    });
+  }, []);
+
+  // 「いいえ」:このまま当たり判定が外れるまでは再度ポップアップしない。
+  const declineMeetingEntry = useCallback((zoneId: string) => {
+    dismissedConferenceZonesRef.current.add(zoneId);
+    pendingMeetingEntryRef.current = null;
+    setPendingMeetingEntry(null);
+  }, []);
+
+  // 鍵アイコン押下:現在の施錠状態に応じて、施錠/解錠の確認、または
+  // 「施錠者以外は操作できない」エラーを出し分ける。
+  const handleLockIconClick = useCallback((zoneId: string) => {
+    const locker = Object.values(playersRef.current).find(
+      (p) => p.lockedMeetingZoneId === zoneId,
+    );
+    if (locker) {
+      if (locker.id === selfId.current) {
+        setLockActionConfirm({ zoneId, mode: "unlock" });
+      } else {
+        setLockPermissionError({ zoneId });
+      }
+    } else {
+      setLockActionConfirm({ zoneId, mode: "lock" });
+    }
+  }, []);
+
+  const confirmLockAction = useCallback(() => {
+    setLockActionConfirm((action) => {
+      const self = selfState.current;
+      if (action && self) {
+        self.lockedMeetingZoneId =
+          action.mode === "lock" ? action.zoneId : null;
+        channelRef.current?.track(self);
+      }
+      return null;
+    });
+  }, []);
 
   // ---- 位置情報をロジック用に低頻度でReactのstateへ同期する ----
   // 見た目の描画はDOM操作で毎フレーム行っているが、近接判定(eligiblePeerIds)
@@ -3606,7 +3741,27 @@ export default function AvatarSpace({
                     width: zone.width,
                     height: zone.height,
                   }}
-                />
+                >
+                  {/* 施錠アイコン:このゾーンに現在いる人にだけ操作させる
+                      (入室していない相手には見せない=押せない)。 */}
+                  {selfPlayer?.meetingZoneId === zone.id &&
+                    (() => {
+                      const locker = Object.values(players).find(
+                        (p) => p.lockedMeetingZoneId === zone.id,
+                      );
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => handleLockIconClick(zone.id)}
+                          className="absolute left-1 top-1 z-20 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-xs text-white shadow hover:bg-black/80"
+                          aria-label={locker ? "施錠を解除する" : "施錠する"}
+                          title={locker ? "施錠を解除する" : "施錠する"}
+                        >
+                          {locker ? "🔒" : "🔓"}
+                        </button>
+                      );
+                    })()}
+                </div>
               ) : (
                 <div
                   key={zone.id}
@@ -4316,6 +4471,71 @@ export default function AvatarSpace({
             </div>
           );
         })()}
+
+      {/* 会議室の入室確認ポップアップ */}
+      {pendingMeetingEntry && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-xs rounded-xl bg-white p-6 text-center shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              会議室に入室しますか?
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => declineMeetingEntry(pendingMeetingEntry.zoneId)}
+                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                いいえ
+              </button>
+              <button
+                type="button"
+                onClick={() => confirmMeetingEntry(pendingMeetingEntry.zoneId)}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              >
+                はい
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 会議室の施錠/解錠 確認ポップアップ */}
+      {lockActionConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-xs rounded-xl bg-white p-6 text-center shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              {lockActionConfirm.mode === "lock"
+                ? "鍵を閉めますか?"
+                : "鍵を開けますか?"}
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setLockActionConfirm(null)}
+                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                いいえ
+              </button>
+              <button
+                type="button"
+                onClick={confirmLockAction}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              >
+                はい
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 施錠者以外が鍵を操作しようとした際のエラー(3秒で自動的に消える) */}
+      {lockPermissionError && (
+        <div className="pointer-events-none fixed inset-x-0 top-6 z-[60] flex justify-center px-4">
+          <div className="rounded-lg bg-black/80 px-4 py-2 text-center text-sm text-white shadow-xl">
+            鍵を閉めた人しか開けることはできません
+          </div>
+        </div>
+      )}
 
       {/* プラン変更による強制退出の通知(最前面に表示し、少ししてから
           window.location.reload()で新プランの制限を反映し直す) */}

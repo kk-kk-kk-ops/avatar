@@ -93,6 +93,7 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
               backgroundColor: PRESENCE_STATUS_COLORS[player.status ?? "available"],
             }}
           />
+          {player.lockedMeetingZoneId && <span aria-hidden="true">🔒</span>}
           {player.name}
         </span>
       </div>

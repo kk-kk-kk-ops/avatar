@@ -14,6 +14,9 @@ export type PlayerState = {
   message?: string; // 吹き出しの内容(最大20文字)
   showMessage?: boolean; // 吹き出しを常時表示するかどうか(設定画面のチェックボックスで切り替え)
   meetingZoneId?: string | null; // 現在いるミーティングエリアのID(いなければnull)
+  lockedMeetingZoneId?: string | null; // 施錠中の会議室(conference)ゾーンID。
+  // このフィールドをpresence上に持たせることで、施錠者が異常切断した際も
+  // presenceのleave検知だけで自動的に解錠扱いになる(専用の後始末処理が不要)。
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
   inCall?: boolean; // ビデオ通話中かどうか(相手にも表示する)
