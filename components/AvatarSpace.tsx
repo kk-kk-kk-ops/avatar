@@ -540,6 +540,11 @@ export default function AvatarSpace({
       { currentX: number; currentY: number; targetX: number; targetY: number }
     >
   >(new Map());
+  // 相手ごとに「直近で位置broadcastを受信した時刻」を記録する。在室状況の
+  // 自己修復(下のsuspectedGoneRef)が、実際には動いていて頻繁にbroadcastを
+  // 送ってきている相手をpresenceスナップショットの瞬間的な欠落だけで
+  // 誤って「不在」と判定しないようにするための参照。
+  const lastMoveAtRef = useRef<Map<string, number>>(new Map());
   const viewportRef = useRef({ width: 0, height: 0 });
 
   // 画面共有・ビデオ通話のエラーメッセージは5秒で自動的に消す
@@ -2038,6 +2043,11 @@ export default function AvatarSpace({
           const p = payload as PlayerState;
           if (p.id === selfId.current) return;
 
+          // 直近で位置broadcastを受信した相手は「実在する」ことの強い証拠
+          // なので、下の在室状況の自己修復(2回連続不在で削除)の対象から
+          // 外すために記録しておく。
+          lastMoveAtRef.current.set(p.id, Date.now());
+
           // 位置(見た目)はReactのstateを介さず、補間(interpolation)用の
           // target座標だけを更新する。実際の描画は毎フレームのrAFループで行う。
           const posEntry = peerPositionsRef.current.get(p.id);
@@ -2280,6 +2290,13 @@ export default function AvatarSpace({
   // 追加する。既存の位置情報(broadcastで得た最新の座標)は上書きしない。
   // 「いない」判定は瞬間的な取得タイミングのズレで誤検知することがあるため、
   // 2回連続で確認できてから削除する(1回だけの不在は様子見)。
+  //
+  // 5人以上が同時に動いているような高負荷時、presenceのスナップショットが
+  // 瞬間的に一部欠けることがあり、実際には位置broadcastが届き続けている
+  // (=確実に在室している)相手までこの仕組みで誤って消してしまい、
+  // 「走行中に相手が一瞬消える」症状の主因と判明した。直近で位置broadcastを
+  // 受信している相手は、presence側の欠落に関わらず不在判定から除外する。
+  const RECENT_MOVE_GRACE_MS = 4000;
   const suspectedGoneRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!joined) return;
@@ -2297,13 +2314,21 @@ export default function AvatarSpace({
         let changed = false;
         const next = { ...prev };
         const stillSuspected = new Set<string>();
+        const now = Date.now();
 
         Object.keys(next).forEach((id) => {
           if (id === selfId.current || presentIds.has(id)) return;
+          const lastMoveAt = lastMoveAtRef.current.get(id) ?? 0;
+          if (now - lastMoveAt < RECENT_MOVE_GRACE_MS) {
+            // つい先ほどまで位置broadcastを受信していた = 実際には在室して
+            // いるはずなので、presence側の一時的な欠落は無視する。
+            return;
+          }
           if (suspectedGoneRef.current.has(id)) {
             // 前回に続き2回連続で不在を確認できたので削除する
             delete next[id];
             peerPositionsRef.current.delete(id);
+            lastMoveAtRef.current.delete(id);
             changed = true;
           } else {
             // 今回が初めての不在確認。次回も不在なら削除する
@@ -2367,6 +2392,11 @@ export default function AvatarSpace({
           payload: selfState.current,
         });
       }
+      // 非アクティブの間、上の在室状況の自己修復(setInterval)は動き続けて
+      // いるが、rAFの停止で自分からの送信も止まっているため、この間に
+      // 積み上がった「不在疑い」は根拠が薄い。復帰時にリセットし、直後の
+      // 新しいpresence/broadcastで正しく判定し直させる。
+      suspectedGoneRef.current = new Set();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () =>
