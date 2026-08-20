@@ -2853,6 +2853,9 @@ export default function AvatarSpace({
     dismissedConferenceZonesRef.current.delete(zoneId);
     pendingMeetingEntryRef.current = null;
     setPendingMeetingEntry(null);
+    // ダブルクリック移動中にこのポップアップへ辿り着いた場合、テレポート後も
+    // 元の(クリック時点の)目的地へ向かって余計に動き続けてしまうのを防ぐ。
+    autoMoveTargetRef.current = null;
     if (!zone || !self) return;
     insideConferenceZoneIdsRef.current.add(zoneId);
     self.x = zone.x + zone.width / 2;
@@ -2872,6 +2875,10 @@ export default function AvatarSpace({
     dismissedConferenceZonesRef.current.add(zoneId);
     pendingMeetingEntryRef.current = null;
     setPendingMeetingEntry(null);
+    // ダブルクリック移動でここへ辿り着いた場合、拒否した後もその場所へ
+    // 向かい続けようとして境界に張り付いたままにならないよう、自動移動も
+    // 打ち切る。
+    autoMoveTargetRef.current = null;
   }, []);
 
   // 鍵アイコン押下:現在の施錠状態に応じて、施錠/解錠の確認、または
