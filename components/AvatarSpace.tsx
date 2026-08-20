@@ -463,6 +463,10 @@ export default function AvatarSpace({
   // 「いいえ」を選んだ相手は、当たり判定から完全に外れるまで再表示しない
   // ようにするための記録(ゾーンIDの集合)。
   const dismissedConferenceZonesRef = useRef<Set<string>>(new Set());
+  // 「入室確認済み(はいを選んだ)」ゾーンIDの集合。当たり判定(矩形の重なり)
+  // が完全に外れた時点で退室確定としてここから削除する(詳細は移動ループ内の
+  // コメント参照)。
+  const insideConferenceZoneIdsRef = useRef<Set<string>>(new Set());
   // 入室確認ポップアップの表示状態。rAFループ(refのみ参照)からも
   // 「既に表示中か」を判定できるよう、state本体とは別にrefでも持つ。
   const [pendingMeetingEntry, setPendingMeetingEntry] = useState<{
@@ -2636,16 +2640,40 @@ export default function AvatarSpace({
             rectIntersectsRect(self.x, nextY, halfW, halfH, o),
           );
 
-          // 会議室(conference)ゾーンの入室確認・施錠判定。既に中にいる
-          // 相手(self.meetingZoneId === zone.id)は自由に出入りできるが、
-          // まだ外にいる相手が新たに触れた場合だけ判定する。
+          // 会議室(conference)ゾーンの入室確認・施錠判定。
+          // 「入室済みかどうか」は、当たり判定(ゾーンとの矩形の重なり)が
+          // 一度でも外れたかどうかで管理する(insideConferenceZoneIdsRef)。
+          // 以前はself.meetingZoneId(アバター中心点がゾーン内かどうかの
+          // 点判定、出入り判定effect側で別途計算)を流用していたが、中心点の
+          // 境界とアバターの当たり判定(矩形)の境界は一致しないため、退室の
+          // 過程で「中心点は外に出たが当たり判定はまだ触れている」という
+          // 一瞬の状態が生じ、そこで「未入室なのに接触した」と誤判定されて
+          // 入室確認ポップアップが再度出てその場で動けなくなるバグがあった。
+          // 当たり判定という単一の基準に統一することでこれを解消する。
           meetingZonesRef.current.forEach((zone) => {
             if (zone.kind !== "conference") return;
-            if (self.meetingZoneId === zone.id) return;
 
             const touchX = rectIntersectsRect(nextX, self.y, halfW, halfH, zone);
             const touchY = rectIntersectsRect(self.x, nextY, halfW, halfH, zone);
-            if (!touchX && !touchY) {
+            const touching = touchX || touchY;
+            const wasInside = insideConferenceZoneIdsRef.current.has(zone.id);
+
+            if (wasInside) {
+              // 入室済み:出る方向には一切制限をかけず、ポップアップも出さない。
+              // 当たり判定が完全に外れた時点で退室確定とする。
+              if (!touching) {
+                insideConferenceZoneIdsRef.current.delete(zone.id);
+                // 施錠者本人が退室した場合は自動解錠する。相手にも伝わる
+                // よう、下の出入り判定effectのtrack()を待たずここで送る。
+                if (self.lockedMeetingZoneId === zone.id) {
+                  self.lockedMeetingZoneId = null;
+                  channelRef.current?.track(self);
+                }
+              }
+              return;
+            }
+
+            if (!touching) {
               // 当たり判定が完全に外れたら、次に触れた時に再度ポップアップ
               // できるようリセットする。
               dismissedConferenceZonesRef.current.delete(zone.id);
@@ -2665,13 +2693,13 @@ export default function AvatarSpace({
               pendingMeetingEntryRef.current?.zoneId === zone.id;
 
             // 施錠中・「いいえ」選択済み・確認待ちのいずれでもなければ、
-            // 新規の接触として入室確認ポップアップを出す。
+            // 新規の接触(未入室→接触)として入室確認ポップアップを出す。
             if (!lockedByOther && !dismissed && !alreadyPending) {
               pendingMeetingEntryRef.current = { zoneId: zone.id };
               setPendingMeetingEntry({ zoneId: zone.id });
             }
             // 施錠中・確認待ち・拒否済みのいずれの場合も、答えが出るまでは
-            // 壁と同様にそれ以上先へは進めないようにする。
+            // 壁と同様にそれ以上先へは進めないようにする(接触した軸のみ)。
             if (touchX) blockedX = true;
             if (touchY) blockedY = true;
           });
@@ -2716,17 +2744,11 @@ export default function AvatarSpace({
         );
         self.meetingZoneId = zoneId;
         if (zoneId !== lastTrackedZoneId.current) {
-          const previousZoneId = lastTrackedZoneId.current;
           lastTrackedZoneId.current = zoneId;
-          // 施錠していた会議室から退室したら自動的に解錠する(異常切断時は
-          // presenceのleave検知で自動解錠されるので、ここでは正常な移動での
-          // 退室だけを扱えばよい)。
-          if (
-            previousZoneId &&
-            self.lockedMeetingZoneId === previousZoneId
-          ) {
-            self.lockedMeetingZoneId = null;
-          }
+          // 施錠中の会議室からの自動解錠は、当たり判定(矩形の重なり)基準の
+          // 退室検知(上のconferenceゾーンのforEach内)で行っている。ここは
+          // 中心点ベースの判定で境界の基準が異なるため、解錠処理は持たせない
+          // (異常切断時はpresenceのleave検知で自動解錠される)。
           // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
           channelRef.current?.track(self);
         }
@@ -2832,6 +2854,7 @@ export default function AvatarSpace({
     pendingMeetingEntryRef.current = null;
     setPendingMeetingEntry(null);
     if (!zone || !self) return;
+    insideConferenceZoneIdsRef.current.add(zoneId);
     self.x = zone.x + zone.width / 2;
     self.y = zone.y + zone.height / 2;
     self.meetingZoneId = zoneId;
