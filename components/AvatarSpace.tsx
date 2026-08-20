@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import {
+  DisconnectReason,
   Room as LiveKitRoom,
   RoomEvent,
   Track,
@@ -231,6 +232,12 @@ export default function AvatarSpace({
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  // LiveKitの意図しない切断→自力再接続時に、ミュート状態を復元するための
+  // 参照(RoomEventハンドラのクロージャから常に最新値を読みたいため)。
+  const micEnabledRef = useRef(false);
+  useEffect(() => {
+    micEnabledRef.current = micEnabled;
+  }, [micEnabled]);
   // 音声通話の「今日の残り利用可能時間(秒)」。画面共有・ビデオ通話と全く
   // 同じ考え方(null = 未取得中 or プランが無制限)。daily_usageテーブルの
   // kind='voice_call'を使う。
@@ -244,6 +251,10 @@ export default function AvatarSpace({
     Record<string, MediaStream>
   >({});
   const [screenSharing, setScreenSharing] = useState(false);
+  const screenSharingRef = useRef(false);
+  useEffect(() => {
+    screenSharingRef.current = screenSharing;
+  }, [screenSharing]);
   const [shareError, setShareError] = useState<string | null>(null);
   // 画面共有の「今日の残り利用可能時間(秒)」。nullは「未取得(初回ロード中)」
   // または「プランが無制限」のどちらか(どちらの場合も制限しない、という
@@ -280,6 +291,10 @@ export default function AvatarSpace({
     Record<string, string>
   >({});
   const [inCall, setInCall] = useState(false);
+  const inCallRef = useRef(false);
+  useEffect(() => {
+    inCallRef.current = inCall;
+  }, [inCall]);
   const [callError, setCallError] = useState<string | null>(null);
   // ビデオ通話の「今日の残り利用可能時間(秒)」。画面共有と全く同じ考え方
   // (null = 未取得中 or プランが無制限)。daily_usageテーブルのkind='video_call'を使う。
@@ -1524,9 +1539,51 @@ export default function AvatarSpace({
           },
         );
         clearScreenShare(participant.identity);
+      })
+      // タブ非アクティブ化やスリープ等でLiveKit SDK自身の自動再接続
+      // (バックオフ最大10回・合計約44秒)が尽きた場合のフォールバック。
+      // ただし自分でroom.disconnect()した場合(CLIENT_INITIATED)や、
+      // サーバー側の意図的な切断(重複ID・強制退室・ルーム削除)では
+      // 再接続を試みない。
+      .on(RoomEvent.Reconnecting, () => {
+        console.info("[livekit] reconnecting...");
+      })
+      .on(RoomEvent.Reconnected, () => {
+        console.info("[livekit] reconnected (SDK auto-recovery)");
+      })
+      .on(RoomEvent.Disconnected, (reason) => {
+        if (cancelled) return;
+        if (
+          reason === DisconnectReason.CLIENT_INITIATED ||
+          reason === DisconnectReason.DUPLICATE_IDENTITY ||
+          reason === DisconnectReason.PARTICIPANT_REMOVED ||
+          reason === DisconnectReason.ROOM_DELETED
+        ) {
+          return;
+        }
+        console.warn("[livekit] disconnected, attempting manual reconnect", {
+          reason,
+        });
+        // 画面共有はブラウザの仕様上、ユーザー操作なしでのgetDisplayMedia
+        // 再取得が許可されないため自動復元できない。切れたことが伝わるよう
+        // 状態だけ倒し、再開はユーザーの再操作に委ねる。
+        if (screenSharingRef.current) {
+          screenStreamRef.current = null;
+          setScreenSharing(false);
+          if (selfState.current) {
+            selfState.current.sharingScreen = false;
+            channelRef.current?.track(selfState.current);
+          }
+          setShareError(
+            "画面共有が切断されました。お手数ですが再度共有を開始してください。",
+          );
+        }
+        connect();
       });
 
-    (async () => {
+    // トークン取得→接続。タブ復帰時のRoomEvent.Disconnectedハンドラからも
+    // 同じ手順で再接続できるよう、名前付き関数として括り出す。
+    const connect = async () => {
       try {
         const res = await fetch("/api/livekit-token", {
           method: "POST",
@@ -1541,6 +1598,29 @@ export default function AvatarSpace({
         const { token, url } = await res.json();
         if (cancelled) return;
         await room.connect(url, token, { autoSubscribe: false });
+        // 意図しない切断からの再接続の場合、マイク/カメラのON/OFFトグルは
+        // ONのままトラックだけが失われているので、現在の状態に合わせて
+        // 再パブリッシュする(既に許可済みのgetUserMediaなので通常は
+        // ユーザー操作なしで復帰できる)。
+        if (micEnabledRef.current) {
+          room.localParticipant
+            .setMicrophoneEnabled(true)
+            .catch((err) => console.warn("[livekit] mic再パブリッシュ失敗", err));
+        }
+        if (inCallRef.current) {
+          room.localParticipant
+            .setCameraEnabled(
+              true,
+              { resolution: { width: 160, height: 120, frameRate: 15 } },
+              {
+                videoEncoding: { maxBitrate: 150_000, maxFramerate: 15 },
+                simulcast: false,
+              },
+            )
+            .catch((err) =>
+              console.warn("[livekit] カメラ再パブリッシュ失敗", err),
+            );
+        }
       } catch {
         if (!cancelled) {
           setMicError(
@@ -1548,7 +1628,8 @@ export default function AvatarSpace({
           );
         }
       }
-    })();
+    };
+    connect();
 
     return () => {
       cancelled = true;
