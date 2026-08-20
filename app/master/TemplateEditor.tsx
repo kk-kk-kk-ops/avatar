@@ -366,6 +366,33 @@ export default function TemplateEditor({
     ]);
   };
 
+  // 「全体アナウンスエリア」: 同エリア内の自動音声接続に加えて、このエリア内で
+  // マイクONの人の音声はルーム内全員に一方的に届く(受信専用の人には届かない)。
+  // 見た目はミーティングエリアと同様に枠・ラベルを表示する(編集画面では
+  // 区別しやすいよう琥珀色で表示)。
+  const addAnnouncementZone = () => {
+    const center = getVisibleCenterMapPoint();
+    const pos = clampPosition(
+      center.x - NEW_ITEM_SIZE,
+      center.y - NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE * 2,
+      NEW_ITEM_SIZE * 2,
+      mapWidth,
+      mapHeight,
+    );
+    setMeetingZones((prev) => [
+      ...prev,
+      {
+        id: randomItemId("announcement"),
+        ...pos,
+        width: NEW_ITEM_SIZE * 2,
+        height: NEW_ITEM_SIZE * 2,
+        label: "全体アナウンスエリア",
+        kind: "announcement",
+      },
+    ]);
+  };
+
   const removeObstacle = (id: string) =>
     setObstacles((prev) => prev.filter((o) => o.id !== id));
   const removeMeetingZone = (id: string) =>
@@ -505,6 +532,12 @@ export default function TemplateEditor({
             className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
           >
             ＋会議室
+          </button>
+          <button
+            onClick={addAnnouncementZone}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            ＋全体アナウンスエリア
           </button>
           <button
             onClick={setSpawnToVisibleCenter}
@@ -667,7 +700,9 @@ export default function TemplateEditor({
                 className={`absolute cursor-move rounded-xl border p-2 ${
                   zone.kind === "conference"
                     ? "border-emerald-300 bg-emerald-200/60"
-                    : "border-slate-300 bg-slate-500/50"
+                    : zone.kind === "announcement"
+                      ? "border-amber-300 bg-amber-200/60"
+                      : "border-slate-300 bg-slate-500/50"
                 }`}
                 style={{
                   left: zone.x * scale,
@@ -678,7 +713,11 @@ export default function TemplateEditor({
               >
                 <span
                   className={`text-xs ${
-                    zone.kind === "conference" ? "text-emerald-900" : "text-white"
+                    zone.kind === "conference"
+                      ? "text-emerald-900"
+                      : zone.kind === "announcement"
+                        ? "text-amber-900"
+                        : "text-white"
                   }`}
                 >
                   {zone.label}

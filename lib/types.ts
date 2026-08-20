@@ -257,10 +257,13 @@ export type Obstacle = Rect & { id: string; label: string };
 // 機能(同エリア内での自動音声接続)は全く同じだが、バーチャル空間内では
 // 背景透明・枠なし・ラベル非表示にして、見た目には存在が分からない
 // エリアとして使う(テンプレート編集画面でだけ薄緑色+「会議室」と表示される)。
+// "announcement"(全体アナウンスエリア)は同エリア内の自動音声接続に加えて、
+// このエリア内でマイクONの人の音声だけを、距離・エリアに関わらずルーム内
+// 全員に一方的に届ける(詳細はAvatarSpace.tsxのaudioEligiblePeerIds参照)。
 export type MeetingZone = Rect & {
   id: string;
   label: string;
-  kind?: "meeting" | "conference";
+  kind?: "meeting" | "conference" | "announcement";
 };
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
