@@ -11,17 +11,23 @@ export default function TouchControls({ onPress, onRelease }: Props) {
   const btnClass =
     "flex h-14 w-14 items-center justify-center rounded-full bg-white/25 text-xl font-bold text-white backdrop-blur-sm select-none active:bg-white/50";
 
-  // どのpointerIdがどのキーを押しているかを記録しておく。ボタン自体の
-  // onPointerUp/onPointerCancelがモバイル端末(特にiOS Safari)で
-  // 確実に発火しないことがあり、それが起きるとキーが押しっぱなしの
-  // まま残ってアバターが操作不能なまま動き続けてしまう(SP版で「何も
-  // 押していないのに勝手に左上へ動き続ける」不具合の原因)。
-  // window全体のpointerup/pointercancelを保険として監視し、ボタン側の
-  // イベントが漏れても必ずキーを解放できるようにする。
-  const activePointers = useRef<Map<number, string>>(new Map());
+  const containerRef = useRef<HTMLDivElement>(null);
 
+  // どのpointerIdがどのキーを押しているかを記録しておく(ボタンをまたいで
+  // スライドした際、直前のキーだけを解放して新しいキーを押すために使う)。
+  const activePointers = useRef<Map<number, string>>(new Map());
+  // どのpointerIdがこのパッド上でpointerdownしたかを記録する。パッド全体で
+  // pointerCaptureしているため、ボタンをまたいでスライドしても
+  // onPointerMoveはこのコンポーネントに届き続ける。
+  const trackedPointers = useRef<Set<number>>(new Set());
+
+  // window全体のpointerup/pointercancelを保険として監視し、ボタン側の
+  // イベントが漏れても必ずキーを解放できるようにする(iOS Safari等で
+  // pointerup/cancelが確実に発火しないことがあり、それが起きるとキーが
+  // 押しっぱなしのままアバターが操作不能なまま動き続けてしまうため)。
   useEffect(() => {
     const releaseByPointerId = (e: PointerEvent) => {
+      trackedPointers.current.delete(e.pointerId);
       const key = activePointers.current.get(e.pointerId);
       if (key) {
         activePointers.current.delete(e.pointerId);
@@ -33,6 +39,7 @@ export default function TouchControls({ onPress, onRelease }: Props) {
     const releaseAll = () => {
       activePointers.current.forEach((key) => onRelease(key));
       activePointers.current.clear();
+      trackedPointers.current.clear();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState !== "visible") releaseAll();
@@ -49,50 +56,106 @@ export default function TouchControls({ onPress, onRelease }: Props) {
     };
   }, [onRelease]);
 
-  // ボタンごとに対応するキーをkeysDownに追加/削除するイベントをまとめて生成
-  const bind = (key: string) => ({
-    onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
-      e.preventDefault();
-      (e.target as HTMLButtonElement).setPointerCapture(e.pointerId);
-      activePointers.current.set(e.pointerId, key);
+  // 指定座標が矢印ボタンの上にあればそのキーを、パッド内だが隙間・中央に
+  // あればnullを、パッド自体の外であればnullを返す(どちらもnullで区別しない
+  // ことで「ボタン間の隙間を通過中」と「パッド外に出た」の両方で移動が
+  // 一旦止まり、新しいボタンに触れた瞬間だけ再度押下扱いになる)。
+  const keyAtPoint = (x: number, y: number): string | null => {
+    const container = containerRef.current;
+    if (!container) return null;
+    const el = document.elementFromPoint(x, y);
+    if (!el || !container.contains(el)) return null;
+    const btn = el.closest<HTMLElement>("[data-touch-key]");
+    return btn?.dataset.touchKey ?? null;
+  };
+
+  const updateDirection = (pointerId: number, x: number, y: number) => {
+    const key = keyAtPoint(x, y);
+    const prevKey = activePointers.current.get(pointerId) ?? null;
+    if (key === prevKey) return;
+    if (prevKey) {
+      activePointers.current.delete(pointerId);
+      onRelease(prevKey);
+    }
+    if (key) {
+      activePointers.current.set(pointerId, key);
       onPress(key);
-    },
-    onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => {
-      e.preventDefault();
-      activePointers.current.delete(e.pointerId);
+    }
+  };
+
+  const releaseTracked = (pointerId: number) => {
+    trackedPointers.current.delete(pointerId);
+    const key = activePointers.current.get(pointerId);
+    if (key) {
+      activePointers.current.delete(pointerId);
       onRelease(key);
-    },
-    onPointerCancel: (e: React.PointerEvent<HTMLButtonElement>) => {
-      activePointers.current.delete(e.pointerId);
-      onRelease(key);
-    },
-    onPointerLeave: (e: React.PointerEvent<HTMLButtonElement>) => {
-      activePointers.current.delete(e.pointerId);
-      onRelease(key);
-    },
-  });
+    }
+  };
+
+  // pointerdown/move/up/cancelをパッド全体(親要素)でまとめて処理する。
+  // ボタン個別にpointerCaptureすると、そのボタンの領域に指が固定されて
+  // しまい隣のボタンへスライドしても検知できないため、パッド全体で
+  // captureしてelementFromPointで現在触れているボタンを毎回判定し直す
+  // 方式に変更した(長押し中に指を離さず方向転換できるようにするため)。
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    trackedPointers.current.add(e.pointerId);
+    updateDirection(e.pointerId, e.clientX, e.clientY);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!trackedPointers.current.has(e.pointerId)) return;
+    updateDirection(e.pointerId, e.clientX, e.clientY);
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    releaseTracked(e.pointerId);
+  };
+
+  const onPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    releaseTracked(e.pointerId);
+  };
 
   return (
     <div
+      ref={containerRef}
       className="fixed bottom-8 right-8 z-50 grid grid-cols-3 grid-rows-3 gap-0 sm:hidden"
       style={{ touchAction: "none" }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
     >
       <div />
-      <button {...bind("arrowup")} className={`${btnClass} col-start-2 row-start-1`}>
+      <button
+        data-touch-key="arrowup"
+        className={`${btnClass} col-start-2 row-start-1`}
+      >
         ↑
       </button>
       <div />
 
-      <button {...bind("arrowleft")} className={`${btnClass} col-start-1 row-start-2`}>
+      <button
+        data-touch-key="arrowleft"
+        className={`${btnClass} col-start-1 row-start-2`}
+      >
         ←
       </button>
       <div className="col-start-2 row-start-2" />
-      <button {...bind("arrowright")} className={`${btnClass} col-start-3 row-start-2`}>
+      <button
+        data-touch-key="arrowright"
+        className={`${btnClass} col-start-3 row-start-2`}
+      >
         →
       </button>
 
       <div />
-      <button {...bind("arrowdown")} className={`${btnClass} col-start-2 row-start-3`}>
+      <button
+        data-touch-key="arrowdown"
+        className={`${btnClass} col-start-2 row-start-3`}
+      >
         ↓
       </button>
       <div />
