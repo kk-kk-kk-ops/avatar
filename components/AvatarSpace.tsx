@@ -1441,19 +1441,21 @@ export default function AvatarSpace({
       publication.source === Track.Source.Camera ||
       publication.source === Track.Source.ScreenShare;
 
-    // Audio(近接音声通話)・Camera(ビデオ通話)はこれまで通りeligiblePeerIds
-    // (近接判定)に応じて自動購読する。ScreenShareだけは対象外とし、
-    // 「選択視聴」effect(selectedScreenSharerId)側で個別に制御する。
+    // Camera(ビデオ通話)は近接判定(eligiblePeerIds)に応じて自動購読する。
+    // Audio(近接音声通話)は全体アナウンスエリアの相手も含むaudioEligiblePeerIds
+    // を使う。ScreenShareだけは対象外とし、「選択視聴」effect
+    // (selectedScreenSharerId)側で個別に制御する。
     const applySubscription = (
       publication: RemoteTrackPublication,
       participant: RemoteParticipant,
     ) => {
-      if (
-        publication.kind !== Track.Kind.Audio &&
-        publication.source !== Track.Source.Camera
-      ) {
+      if (publication.kind === Track.Kind.Audio) {
+        publication.setSubscribed(
+          audioEligiblePeerIdsRef.current.includes(participant.identity),
+        );
         return;
       }
+      if (publication.source !== Track.Source.Camera) return;
       publication.setSubscribed(
         eligiblePeerIdsRef.current.includes(participant.identity),
       );
@@ -2771,6 +2773,36 @@ export default function AvatarSpace({
     eligiblePeerIdsRef.current = eligiblePeerIds;
   }, [eligiblePeerIds]);
 
+  // ---- 全体アナウンスエリア:音声だけの購読対象を追加で計算 ----
+  // 全体アナウンスエリア(kind: "announcement")内でマイクONの相手は、
+  // 距離・エリアに関わらずルーム内全員が音声だけ強制購読する(映像は
+  // 対象外、通常の近接判定のまま)。カメラ用のeligiblePeerIdsとは別に
+  // 音声専用のリストを持つのはこのため。
+  const audioEligiblePeerIds = useMemo(() => {
+    const announcementZoneIds = new Set(
+      meetingZones
+        .filter((z) => z.kind === "announcement")
+        .map((z) => z.id),
+    );
+    if (announcementZoneIds.size === 0) return eligiblePeerIds;
+    const announcers = Object.values(players)
+      .filter(
+        (p) =>
+          p.id !== selfId.current &&
+          !!p.micOn &&
+          !!p.meetingZoneId &&
+          announcementZoneIds.has(p.meetingZoneId),
+      )
+      .map((p) => p.id);
+    if (announcers.length === 0) return eligiblePeerIds;
+    return Array.from(new Set([...eligiblePeerIds, ...announcers])).sort();
+  }, [eligiblePeerIds, meetingZones, players]);
+  const audioEligibleKey = audioEligiblePeerIds.join(",");
+  const audioEligiblePeerIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    audioEligiblePeerIdsRef.current = audioEligiblePeerIds;
+  }, [audioEligiblePeerIds]);
+
   // ---- LiveKit(音声・カメラ・画面共有):近接方式に合わせて購読を切り替える ----
   // 接続そのものはLiveKitのRoom(SFU)へ1本だけなので、ここでは相手ごとの
   // トラック購読(setSubscribed)をオン/オフするだけで済む
@@ -2780,24 +2812,26 @@ export default function AvatarSpace({
     const room = livekitRoomRef.current;
     if (!room) return;
     const eligibleSet = new Set(eligiblePeerIds);
+    const audioEligibleSet = new Set(audioEligiblePeerIds);
     room.remoteParticipants.forEach((participant) => {
-      const shouldSubscribe = eligibleSet.has(participant.identity);
+      const shouldSubscribeAudio = audioEligibleSet.has(participant.identity);
+      const shouldSubscribeCamera = eligibleSet.has(participant.identity);
       participant.audioTrackPublications.forEach((pub) => {
-        if (pub.isSubscribed !== shouldSubscribe) {
-          pub.setSubscribed(shouldSubscribe);
+        if (pub.isSubscribed !== shouldSubscribeAudio) {
+          pub.setSubscribed(shouldSubscribeAudio);
         }
       });
       participant.videoTrackPublications.forEach((pub) => {
         // ScreenShareは近接判定ではなく「選択視聴」effectが個別に制御する
         // ため、ここでは対象外とする。
         if (pub.source !== Track.Source.Camera) return;
-        if (pub.isSubscribed !== shouldSubscribe) {
-          pub.setSubscribed(shouldSubscribe);
+        if (pub.isSubscribed !== shouldSubscribeCamera) {
+          pub.setSubscribed(shouldSubscribeCamera);
         }
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligibleKey, joined]);
+  }, [eligibleKey, audioEligibleKey, joined]);
 
   // 選択中の相手が画面共有をやめた・近接範囲外に出た場合は選択を解除する
   useEffect(() => {
@@ -3610,7 +3644,11 @@ export default function AvatarSpace({
               ) : (
                 <div
                   key={zone.id}
-                  className="absolute flex items-start rounded-xl border border-slate-500 bg-slate-600/60 p-2"
+                  className={`absolute flex items-start rounded-xl border p-2 ${
+                    zone.kind === "announcement"
+                      ? "border-amber-400 bg-amber-500/20"
+                      : "border-slate-500 bg-slate-600/60"
+                  }`}
                   style={{
                     left: zone.x,
                     top: zone.y,
@@ -3618,7 +3656,16 @@ export default function AvatarSpace({
                     height: zone.height,
                   }}
                 >
-                  <span className="text-[11px] text-slate-300">{zone.label}</span>
+                  <span
+                    className={`text-[11px] ${
+                      zone.kind === "announcement"
+                        ? "text-amber-200"
+                        : "text-slate-300"
+                    }`}
+                  >
+                    {zone.kind === "announcement" ? "📢 " : ""}
+                    {zone.label}
+                  </span>
                 </div>
               ),
             )}
