@@ -523,6 +523,10 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const keysDown = useRef<Set<string>>(new Set());
+  // ダブルクリック移動の目的地(マップ座標)。表示に使わないためReactの
+  // stateではなくrefだけで持つ。矢印キー/タッチ操作(=keysDownに何か
+  // 入っている状態)が入力されたら即座にnullへ戻し、通常操作を優先する。
+  const autoMoveTargetRef = useRef<{ x: number; y: number } | null>(null);
   // assetsReady stateの最新値をRAFループ(effect外)から読むためのref。
   const assetsReadyRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2569,10 +2573,29 @@ export default function AvatarSpace({
         // 操作による移動・向き変更を受け付けない(ローディング画面表示中)。
         if (assetsReadyRef.current) {
           const keys = keysDown.current;
-          if (keys.has("arrowup") || keys.has("w")) dy -= 1;
-          if (keys.has("arrowdown") || keys.has("s")) dy += 1;
-          if (keys.has("arrowleft") || keys.has("a")) dx -= 1;
-          if (keys.has("arrowright") || keys.has("d")) dx += 1;
+          if (keys.size > 0) {
+            // 矢印キー/タッチ操作が入力されたら、ダブルクリック移動中でも
+            // 即座にキャンセルして通常操作へ切り替える。
+            if (autoMoveTargetRef.current) autoMoveTargetRef.current = null;
+            if (keys.has("arrowup") || keys.has("w")) dy -= 1;
+            if (keys.has("arrowdown") || keys.has("s")) dy += 1;
+            if (keys.has("arrowleft") || keys.has("a")) dx -= 1;
+            if (keys.has("arrowright") || keys.has("d")) dx += 1;
+          } else if (autoMoveTargetRef.current) {
+            // ダブルクリック移動中:目的地への方向ベクトルを求める。
+            const target = autoMoveTargetRef.current;
+            const toX = target.x - self.x;
+            const toY = target.y - self.y;
+            const dist = Math.hypot(toX, toY);
+            if (dist < 0.5) {
+              // 既に目的地とみなせるほど近い(通常はここに来る前に到着処理
+              // 済みだが、念のための保険)。
+              autoMoveTargetRef.current = null;
+            } else {
+              dx = toX / dist;
+              dy = toY / dist;
+            }
+          }
         }
 
         const moving = dx !== 0 || dy !== 0;
@@ -2585,14 +2608,24 @@ export default function AvatarSpace({
           const halfW = AVATAR_HITBOX_WIDTH / 2;
           const halfH = AVATAR_HITBOX_HEIGHT / 2;
 
-          const nextX = Math.min(
+          let nextX = Math.min(
             Math.max(self.x + dx, halfW),
             mapSizeRef.current.width - halfW,
           );
-          const nextY = Math.min(
+          let nextY = Math.min(
             Math.max(self.y + dy, halfH),
             mapSizeRef.current.height - halfH,
           );
+
+          // ダブルクリック移動中は、1フレームの移動量が残り距離より大きい
+          // 場合に目的地を通り過ぎてしまわないよう、目的地でクランプする。
+          const autoTarget = autoMoveTargetRef.current;
+          if (autoTarget) {
+            if (dx > 0) nextX = Math.min(nextX, autoTarget.x);
+            else if (dx < 0) nextX = Math.max(nextX, autoTarget.x);
+            if (dy > 0) nextY = Math.min(nextY, autoTarget.y);
+            else if (dy < 0) nextY = Math.max(nextY, autoTarget.y);
+          }
 
           // 障害物との当たり判定(矩形どうし)。X軸・Y軸を別々に判定することで、
           // 障害物に斜めから近づいても壁沿いに滑るように移動できる。
@@ -2645,6 +2678,17 @@ export default function AvatarSpace({
 
           if (!blockedX) self.x = nextX;
           if (!blockedY) self.y = nextY;
+
+          if (autoTarget) {
+            if (self.x === autoTarget.x && self.y === autoTarget.y) {
+              // 目的地に到着
+              autoMoveTargetRef.current = null;
+            } else if (blockedX && blockedY) {
+              // 障害物に阻まれてこれ以上進めない場合は、その場で自動移動を
+              // 打ち切る(手前で停止したままにする)。
+              autoMoveTargetRef.current = null;
+            }
+          }
 
           if (Math.abs(dx) > Math.abs(dy)) {
             self.dir = dx > 0 ? "right" : "left";
@@ -2835,6 +2879,31 @@ export default function AvatarSpace({
       return null;
     });
   }, []);
+
+  // ---- ダブルクリックでのアバター移動 ----
+  // クリック位置(画面座標)を、worldRef自身の実測サイズ(mapWidthに対する
+  // 拡大率)からマップ座標へ逆算する。worldRefにはscale/カメラ移動の
+  // transformが既にかかっているため、getBoundingClientRect()は変換後の
+  // 見た目のサイズ・位置をそのまま返してくれる(camera位置を別途持たなくて
+  // 済む)。実際の移動処理(経路上の障害物で手前停止・手動操作での
+  // キャンセル)はrAFループ側で行う。
+  const handleWorldDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      // 鍵アイコンなどのボタンをダブルクリックした場合は、その場所への
+      // 移動としては扱わない。
+      if ((e.target as HTMLElement).closest("button")) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const scale = rect.width / mapSizeRef.current.width;
+      if (!scale) return;
+      const mapX = (e.clientX - rect.left) / scale;
+      const mapY = (e.clientY - rect.top) / scale;
+      autoMoveTargetRef.current = {
+        x: Math.min(Math.max(mapX, 0), mapSizeRef.current.width),
+        y: Math.min(Math.max(mapY, 0), mapSizeRef.current.height),
+      };
+    },
+    [],
+  );
 
   // ---- 位置情報をロジック用に低頻度でReactのstateへ同期する ----
   // 見た目の描画はDOM操作で毎フレーム行っているが、近接判定(eligiblePeerIds)
@@ -3859,6 +3928,7 @@ export default function AvatarSpace({
           <div
             ref={worldRef}
             className="absolute left-0 top-0"
+            onDoubleClick={handleWorldDoubleClick}
             style={{
               width: mapSize.width,
               height: mapSize.height,
