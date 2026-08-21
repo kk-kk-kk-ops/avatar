@@ -36,11 +36,6 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
   const displaySize = sizePx ?? DEFAULT_DISPLAY_SIZE;
-  // 画像自体の上下に含まれる透明な余白を補正する値。
-  // 数値を大きくするほど、見た目の足元が当たり判定ラインに近づく(=障害物との隙間が減る)。
-  // 画像内の透明な余白の割合は表示サイズが変わっても一定なので、
-  // 元のサイズ(90px)で調整した比率(20/90)を維持して表示サイズに応じて算出する。
-  const footOffset = displaySize * (20 / 90);
 
   useImperativeHandle(
     ref,
@@ -48,16 +43,17 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
       updatePosition: (x: number, y: number) => {
         const el = rootRef.current;
         if (!el) return;
+        // (x, y)は当たり判定(AVATAR_HITBOX_WIDTH/HEIGHT)の中心座標。
+        // 画像・当たり判定は互いに独立したサイズのまま、当たり判定の下端が
+        // 画像の下端(足元)に一致するように画像の描画位置を決める
+        // (当たり判定は画像の下半分に重なる形になる)。横方向は中心を
+        // 揃えるだけでよい(当たり判定・画像とも同じxを中心とするため)。
         const left = x - displaySize / 2;
-        // footOffsetは「引く」のが正しい(コメント通り、大きいほど見た目の
-        // 足元が当たり判定ラインに近づく必要がある)。以前は符号が逆になって
-        // おり、当たり判定の下端より画像の下端がfootOffset分だけ余分に
-        // はみ出して見えていた(E-4で修正)。
-        const top = y + AVATAR_HITBOX_HEIGHT / 2 - displaySize - footOffset;
+        const top = y + AVATAR_HITBOX_HEIGHT / 2 - displaySize;
         el.style.transform = `translate(${left}px, ${top}px)`;
       },
     }),
-    [displaySize, footOffset],
+    [displaySize],
   );
 
   // 吹き出しは設定画面のチェックボックスで表示/非表示が切り替わる常時
