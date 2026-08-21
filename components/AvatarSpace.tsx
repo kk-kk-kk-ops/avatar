@@ -1544,6 +1544,24 @@ export default function AvatarSpace({
           ...prev,
           [participant.identity]: stream,
         }));
+
+        // 画面共有は、相手が入室前(またはタブ非アクティブ中)から配信して
+        // いたトラックへ後から購読(後乗り)した場合、SFU側のキーフレーム
+        // 要求が配信側のエンコード遅延と絡んで届かず、映像が黒いまま固まる
+        // ことがある(D-1)。カメラは近接判定で購読が繰り返し再評価される
+        // ため自然に復旧するが、画面共有は選択時の一度きりの購読しか
+        // 行わないため取りこぼすと直らない。購読が確立した直後に一度だけ
+        // 購読をOFF→ONへ切り替え、新しいネゴシエーションでキーフレームを
+        // 改めて要求させることで復旧を試みる。
+        if (pub.source === Track.Source.ScreenShare) {
+          setTimeout(() => {
+            if (!pub.isSubscribed) return;
+            pub.setSubscribed(false);
+            setTimeout(() => {
+              if (livekitRoomRef.current === room) pub.setSubscribed(true);
+            }, 300);
+          }, 1500);
+        }
       })
       .on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
         setterFor(track.kind, pub.source)((prev) => {
