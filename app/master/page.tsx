@@ -27,6 +27,20 @@ export default async function MasterPage() {
   const state = await resolveUserRouteState(supabase, user.id);
   if (!state.isMaster) redirect("/");
 
+  // 「ルームへ」リンク用。通常の"/"はログイン済みマスターを/masterへ
+  // 戻してしまうため、自分自身の招待URL経由でルーム入室画面へ進む
+  // (F-3で、自分自身の招待URLは常にルーム入室画面へ遷移するようになった
+  // ことを利用している)。
+  let ownInviteToken: string | null = null;
+  if (state.type !== "no-account") {
+    const { data: ownAccount } = await supabase
+      .from("accounts")
+      .select("invite_token")
+      .eq("id", state.accountId)
+      .maybeSingle();
+    ownInviteToken = ownAccount?.invite_token ?? null;
+  }
+
   // マスター権限を持つユーザーが所有するアカウントは、集計上は課金対象の
   // 一般テナントとして扱わない(運用担当者自身のアカウントのため)。
   const { data: masterProfileRows } = await supabase
@@ -154,6 +168,7 @@ export default async function MasterPage() {
       accounts={accounts}
       showAdminLink={state.type === "admin"}
       showRoomsLink={state.type !== "no-account"}
+      ownInviteToken={ownInviteToken}
       userEmail={user.email ?? ""}
       avatarSizePx={appSettings?.avatar_size_px ?? 17}
     />

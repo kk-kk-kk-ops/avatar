@@ -138,7 +138,11 @@ export default function AdminDashboard({
             </Link>
           )}
           <Link
-            href="/rooms"
+            // 通常の"/"はログイン済み管理者を/adminへ戻してしまうため、
+            // 自分自身の招待URL経由でルーム入室画面へ進む
+            // (F-3で、自分自身の招待URLは常にルーム入室画面へ遷移する
+            // ようになったことを利用している)。
+            href={`/?invite=${inviteToken}`}
             className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
           >
             ルームへ

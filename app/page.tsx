@@ -1,12 +1,231 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { resolveUserRouteState } from "@/lib/authRouting";
+import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
 import { AUTH_ERROR_MESSAGES } from "@/lib/authErrorMessages";
+import { PLANS, type PlanId, type Room } from "@/lib/types";
 import GoogleLoginButton from "@/components/auth/GoogleLoginButton";
+import AvatarSpaceLoader from "@/components/AvatarSpaceLoader";
+import LogoutButton from "@/components/auth/LogoutButton";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 
-// TOPページ(公開)。ログイン済みならプラン選択/管理画面/ルーム選択の
-// いずれかへ自動的に進む(何度再訪してもここが入り口になる)。
+// 管理画面ダッシュボードの「強制退出」でBANされたユーザーに表示する画面。
+// 管理者が解除するまで入室させない。
+function BannedNotice({ logoutRedirectTo }: { logoutRedirectTo: string }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
+      <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
+        <h1 className="mb-2 text-lg font-bold text-slate-800">
+          入室できません
+        </h1>
+        <p className="mb-6 text-sm text-slate-500">
+          管理者によってこのルームへの入室が制限されています。
+          心当たりがない場合は、招待した管理者にお問い合わせください。
+        </p>
+        <LogoutButton
+          className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+          redirectTo={logoutRedirectTo}
+        />
+      </div>
+    </div>
+  );
+}
+
+// アカウント所有者(admin)またはゲスト(guest)として、自分の所属する
+// アカウントのルームへのアバター選択・入室画面を描画する。通常のログイン後
+// フロー(招待なし)、および招待URL経由(自分自身の招待URL・ゲスト参加の
+// 両方)から共通で呼ばれる。
+async function renderRoomJoin(
+  supabase: SupabaseClient,
+  user: User,
+  state: UserRouteState & { type: "admin" | "guest" },
+) {
+  const [
+    { data: profile },
+    { data: account },
+    { data: roomRows },
+    { data: appSettings },
+  ] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("display_name")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("accounts")
+      .select("plan, invite_token")
+      .eq("id", state.accountId)
+      .single(),
+    supabase
+      .from("rooms")
+      .select("id, account_id, template_id, name, preview_image")
+      .eq("account_id", state.accountId)
+      .order("created_at", { ascending: true })
+      // 全プラン共通でルーム数の上限は1つのため、常に1件のみ表示する
+      // (過去のプラン仕様で複数ルームを持つアカウントが残っていても、
+      // ここで1件に絞る)。
+      .limit(1),
+    supabase
+      .from("app_settings")
+      .select("avatar_size_px")
+      .eq("id", "default")
+      .maybeSingle(),
+  ]);
+
+  const rooms: Room[] = (roomRows ?? []).map((r) => ({
+    id: r.id,
+    accountId: r.account_id,
+    templateId: r.template_id,
+    name: r.name,
+    previewImage: r.preview_image,
+  }));
+
+  const plan = (account?.plan as PlanId) ?? "free";
+
+  // このルームの中では、今いるアカウントの管理者(admin)である場合だけ
+  // 「管理画面へ」「マスター画面へ」を表示する。他人の招待URL経由で
+  // ゲスト参加している場合、たとえ自分自身がマスター権限を持っていても
+  // このルーム内では常にゲストとしてのみ振る舞う(自分の管理画面/
+  // マスター画面には行けないようにする)。
+  const isAccountAdmin = state.type === "admin";
+
+  // ゲストの場合、ログアウト後は管理者用ログイン画面ではなく、この
+  // アカウントの招待URL(ゲスト用ログイン画面)に戻れるようにする。
+  const guestInviteToken =
+    state.type === "guest" ? account?.invite_token ?? null : null;
+
+  // 管理画面ダッシュボードから強制退出させられたゲストは、管理者が
+  // 解除するまでこのアカウントのルームへ再入室できない。
+  if (state.type === "guest") {
+    const { data: banRow } = await supabase
+      .from("banned_participants")
+      .select("user_id")
+      .eq("account_id", state.accountId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (banRow) {
+      return (
+        <BannedNotice
+          logoutRedirectTo={
+            guestInviteToken ? `/?invite=${guestInviteToken}` : "/"
+          }
+        />
+      );
+    }
+  }
+
+  return (
+    <AvatarSpaceLoader
+      initialName={profile?.display_name ?? undefined}
+      rooms={rooms}
+      maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
+      screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
+      videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
+      voiceCallDailyMinutes={PLANS[plan].voiceCallDailyMinutes}
+      isAccountAdmin={isAccountAdmin}
+      isMaster={isAccountAdmin && state.isMaster}
+      guestInviteToken={guestInviteToken}
+      avatarSizePx={appSettings?.avatar_size_px ?? undefined}
+    />
+  );
+}
+
+// 既に自分自身の別アカウントを持っている人(admin/masterなど)が、他人の
+// 招待URLを一時的に閲覧しているケース(viewOnly)。プロフィールは一切
+// 書き換えていないため、URLのトークンから毎回対象アカウントを解決する。
+async function renderViewOnlyRoomJoin(
+  supabase: SupabaseClient,
+  user: User,
+  inviteToken: string,
+) {
+  const { data: viewAccountRows } = await supabase.rpc(
+    "lookup_account_by_invite_token",
+    { token: inviteToken },
+  );
+  const viewAccount = viewAccountRows?.[0];
+  if (!viewAccount) return null; // トークンが無効 → 呼び出し元でフォールバック
+
+  const { data: banRow } = await supabase
+    .from("banned_participants")
+    .select("user_id")
+    .eq("account_id", viewAccount.id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (banRow) {
+    return (
+      <BannedNotice
+        logoutRedirectTo={`/?invite=${encodeURIComponent(inviteToken)}`}
+      />
+    );
+  }
+
+  // rooms/accountsともに「自分自身が所属するアカウントのみ閲覧可」という
+  // RLSがかかっているため、素のテーブルSELECTでは対象アカウント(自分の
+  // 所属先とは別のアカウント)のルームが常に0件になってしまう。トークンの
+  // 一致を検証したうえでRLSを迂回するSECURITY DEFINER関数からルーム一覧を
+  // 取得する。
+  const [{ data: profile }, { data: roomRows }, { data: appSettings }] =
+    await Promise.all([
+      supabase
+        .from("profiles")
+        .select("display_name")
+        .eq("user_id", user.id)
+        .maybeSingle(),
+      supabase
+        .rpc("list_rooms_by_invite_token", { token: inviteToken })
+        .limit(1),
+      supabase
+        .from("app_settings")
+        .select("avatar_size_px")
+        .eq("id", "default")
+        .maybeSingle(),
+    ]);
+
+  const rooms: Room[] = (roomRows ?? []).map(
+    (r: {
+      id: string;
+      account_id: string;
+      template_id: string | null;
+      name: string;
+      preview_image: string;
+    }) => ({
+      id: r.id,
+      accountId: r.account_id,
+      templateId: r.template_id,
+      name: r.name,
+      previewImage: r.preview_image,
+    }),
+  );
+
+  const plan = (viewAccount.plan as PlanId) ?? "free";
+
+  return (
+    <AvatarSpaceLoader
+      initialName={profile?.display_name ?? undefined}
+      rooms={rooms}
+      maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
+      screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
+      videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
+      voiceCallDailyMinutes={PLANS[plan].voiceCallDailyMinutes}
+      isAccountAdmin={false}
+      isMaster={false}
+      // 自分自身は管理者用アカウントを持っているので、ログアウト後は
+      // ゲスト用ログインではなく管理者用ログイン(TOPページ)に戻す。
+      guestInviteToken={null}
+      avatarSizePx={appSettings?.avatar_size_px ?? undefined}
+      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
+      // であることをLiveKitのToken発行APIに伝えるためのトークン。
+      // profiles.account_idを書き換えていないため、通常のRLS経由では
+      // ルームアクセスを証明できず、これが無いと音声/映像に参加できない。
+      viewOnlyInviteToken={inviteToken}
+    />
+  );
+}
+
+// TOPページ(公開)。ログイン済みなら、招待URL経由・通常ログインの
+// どちらでも、プラン選択/管理画面/ルーム入室画面のいずれかへ進む
+// (F-2でルーム選択画面を廃止し、ここが唯一の入り口になった)。
 export default async function Home({
   searchParams,
 }: {
@@ -20,11 +239,13 @@ export default async function Home({
   const inviteToken = searchParams.invite;
 
   if (user) {
-    // 既にログイン済みのブラウザで他人の招待URL(?invite=トークン)を
-    // 開いた場合もゲストとして参加させる(Googleログインの
-    // /auth/callbackはセッションが無い初回ログイン時にしか通らないため、
-    // ここでも同じ処理をしないと、既に自分のアカウントを持つ管理者が
-    // 招待URLを踏んでも自分の管理画面に戻ってしまっていた)。
+    // 招待URL(?invite=トークン)を開いた場合、それが自分自身の招待URLで
+    // あっても他人の招待URLであっても、必ずその招待先ルームへの入室画面へ
+    // 進む(F-3: 以前は自分自身の招待URLの場合だけ/masterや/adminに
+    // 飛んでしまっていた不具合を修正)。既に別のルームに入室中だった場合も、
+    // この画面への遷移(=AvatarSpaceの再マウント)によって古いルームの
+    // LiveKit接続・presence購読は自然にクリーンアップされ、招待先の
+    // ルームへ切り替わる(ログアウトはしない)。
     if (inviteToken) {
       const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
       if (!result.ok) {
@@ -37,12 +258,21 @@ export default async function Home({
         );
       }
       if (result.viewOnly) {
-        redirect(`/rooms?invite=${encodeURIComponent(inviteToken)}`);
-      }
-      // 他人の招待URL経由でゲスト参加した場合は、isMaster/管理者であっても
-      // 必ずルーム選択画面へ進む(自分の管理画面/マスター画面には戻さない)。
-      if (!result.isOwnAccount) {
-        redirect("/rooms");
+        const rendered = await renderViewOnlyRoomJoin(
+          supabase,
+          user,
+          inviteToken,
+        );
+        if (rendered) return rendered;
+        // トークンが(直後に無効化されたなど)解決できなかった場合のみ、
+        // 通常のルーティングにフォールスルーする。
+      } else {
+        const state = await resolveUserRouteState(supabase, user.id);
+        if (state.type === "admin" || state.type === "guest") {
+          return renderRoomJoin(supabase, user, state);
+        }
+        // no-account(通常起こらないはずの防御的フォールバック)は
+        // 下の通常ルーティングに任せる。
       }
     }
 
@@ -50,7 +280,7 @@ export default async function Home({
     if (state.isMaster) redirect("/master");
     if (state.type === "no-account") redirect("/plan");
     if (state.type === "admin") redirect("/admin");
-    redirect("/rooms");
+    return renderRoomJoin(supabase, user, state);
   }
 
   const errorMessage = searchParams.error

@@ -14,7 +14,7 @@ export default async function AdminPage() {
 
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.type === "no-account") redirect("/plan");
-  if (state.type === "guest") redirect("/rooms");
+  if (state.type === "guest") redirect("/");
 
   const { data: account } = await supabase
     .from("accounts")

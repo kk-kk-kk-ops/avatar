@@ -38,7 +38,8 @@ export async function POST(request: Request) {
 
   // viewOnlyルート: 既に自分のアカウントを持つ人が他人の招待URLを一時閲覧している
   // 場合、profiles.account_idは書き換えていないためRLS経由のSELECTでは見えない。
-  // 招待トークンの一致をSECURITY DEFINER関数で検証する(/rooms?invite=と同じ考え方)。
+  // 招待トークンの一致をSECURITY DEFINER関数で検証する(/?invite=のviewOnly
+  // 判定と同じ考え方)。
   if (!accountId && inviteToken) {
     const { data: viewRooms } = await supabase.rpc(
       "list_rooms_by_invite_token",

@@ -4,7 +4,8 @@ import { resolveUserRouteState } from "@/lib/authRouting";
 import PlanSelector from "./PlanSelector";
 
 // プラン選択画面。まだどのアカウントにも属していない新規ユーザーだけが来る
-// (既にアカウントがあれば/admin・/roomsへ振り分け、未ログインなら/へ)。
+// (既にアカウントがあれば/admin・/(ルーム入室画面)へ振り分け、
+// 未ログインなら/へ)。
 export default async function PlanPage() {
   const supabase = createClient();
   const {
@@ -15,7 +16,7 @@ export default async function PlanPage() {
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.isMaster) redirect("/master");
   if (state.type === "admin") redirect("/admin");
-  if (state.type === "guest") redirect("/rooms");
+  if (state.type === "guest") redirect("/");
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4 py-10">

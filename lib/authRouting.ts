@@ -2,8 +2,8 @@ import { SupabaseClient } from "@supabase/supabase-js";
 import { ProfileRole } from "./types";
 
 // ログイン済みユーザーが次にどこへ行くべきかを、profiles.account_id/role
-// から判定する。 "/"・"/plan"・"/admin"・"/rooms" の各ページで
-// 同じ判定ロジックを重複させないための共通処理。
+// から判定する。 "/"・"/plan"・"/admin" の各ページで同じ判定ロジックを
+// 重複させないための共通処理。
 //
 // isMasterはaccount_id/roleとは独立した軸(プラットフォーム全体を横断して
 // 見られる権限)。k.one.for.all.k@gmail.comのように「自分のアカウントの
@@ -15,7 +15,7 @@ import { ProfileRole } from "./types";
 export type UserRouteState =
   | { type: "no-account"; isMaster: boolean } // プラン未選択・未招待の新規ユーザー → /plan
   | { type: "admin"; accountId: string; isMaster: boolean } // アカウントのオーナー → /admin
-  | { type: "guest"; accountId: string; isMaster: boolean }; // 招待されたゲスト → /rooms
+  | { type: "guest"; accountId: string; isMaster: boolean }; // 招待されたゲスト → /(ルーム入室画面)
 
 export async function resolveUserRouteState(
   supabase: SupabaseClient,
