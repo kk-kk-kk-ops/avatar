@@ -8,15 +8,25 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const oauthError = searchParams.get("error");
+  // H-3: ログイン失敗時も、元々開いていた招待URLへ(エラー表示付きで)
+  // 戻すため、成功時と同じ/auth/completeへの着地経路を使う。招待トークン
+  // はsessionStorage側が主で、ここでのクエリはその保険(H-1と同じ考え方)。
+  const inviteToken = searchParams.get("invite");
+  const redirectToComplete = (errorCode?: string) => {
+    const url = new URL("/auth/complete", origin);
+    if (inviteToken) url.searchParams.set("invite", inviteToken);
+    if (errorCode) url.searchParams.set("error", errorCode);
+    return NextResponse.redirect(url.toString());
+  };
 
   // ユーザーがGoogle側でログインをキャンセルした場合など
   if (oauthError) {
     const reason = oauthError === "access_denied" ? "cancelled" : "auth_failed";
-    return NextResponse.redirect(`${origin}/?error=${reason}`);
+    return redirectToComplete(reason);
   }
 
   if (!code) {
-    return NextResponse.redirect(`${origin}/?error=auth_failed`);
+    return redirectToComplete("auth_failed");
   }
 
   const supabase = createClient();
@@ -26,17 +36,15 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
       const isExpired = /expired/i.test(error.message);
-      return NextResponse.redirect(
-        `${origin}/?error=${isExpired ? "session_expired" : "auth_failed"}`
-      );
+      return redirectToComplete(isExpired ? "session_expired" : "auth_failed");
     }
     session = data.session;
   } catch {
-    return NextResponse.redirect(`${origin}/?error=network`);
+    return redirectToComplete("network");
   }
 
   if (!session || !session.user) {
-    return NextResponse.redirect(`${origin}/?error=auth_failed`);
+    return redirectToComplete("auth_failed");
   }
 
   const { user } = session;
@@ -92,10 +100,5 @@ export async function GET(request: NextRequest) {
   // だけには頼れない。/auth/complete側でsessionStorage(ログイン開始前に
   // GoogleLoginButtonが保存したもの)を優先的に読み、それが無い場合の
   // 保険としてこのクエリを使う。
-  const inviteToken = searchParams.get("invite");
-  return NextResponse.redirect(
-    inviteToken
-      ? `${origin}/auth/complete?invite=${encodeURIComponent(inviteToken)}`
-      : `${origin}/auth/complete`,
-  );
+  return redirectToComplete();
 }
