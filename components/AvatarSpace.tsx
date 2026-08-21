@@ -48,7 +48,6 @@ import RemoteVideo from "./RemoteVideo";
 import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
-import LogoutButton from "./auth/LogoutButton";
 import {
   uploadRawChatImageWithProgress,
   validateChatImageFile,
@@ -3749,11 +3748,6 @@ export default function AvatarSpace({
           >
             入室
           </button>
-
-          <LogoutButton
-            className="mt-2 w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
-            redirectTo={guestInviteToken ? `/?invite=${guestInviteToken}` : "/"}
-          />
         </div>
       </div>
     );
