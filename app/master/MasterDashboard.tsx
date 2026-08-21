@@ -22,6 +22,7 @@ export default function MasterDashboard({
   accounts,
   showAdminLink,
   showRoomsLink,
+  ownInviteToken,
   userEmail,
   avatarSizePx,
 }: {
@@ -33,6 +34,7 @@ export default function MasterDashboard({
   accounts: AccountSummary[];
   showAdminLink: boolean;
   showRoomsLink: boolean;
+  ownInviteToken: string | null;
   userEmail: string;
   avatarSizePx: number;
 }) {
@@ -148,9 +150,11 @@ export default function MasterDashboard({
               管理画面へ
             </Link>
           )}
-          {showRoomsLink && (
+          {showRoomsLink && ownInviteToken && (
             <Link
-              href="/rooms"
+              // 通常の"/"はログイン済みマスターを/masterへ戻してしまうため、
+              // 自分自身の招待URL経由でルーム入室画面へ進む(F-3)。
+              href={`/?invite=${ownInviteToken}`}
               className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
             >
               ルームへ

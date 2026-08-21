@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { MASTER_EMAILS } from "@/lib/masterEmails";
-import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
 
 // Googleログイン後、SupabaseがこのURLへリダイレクトしてくる。
 // ここで認可コードをセッションに交換し、プロフィールの作成/更新を行う。
@@ -80,33 +79,17 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // 招待リンク(?invite=トークン)経由のログインなら、そのアカウントを
-  // 扱う。自分自身が既に別アカウントを持っている場合はプロフィールを
-  // 書き換えず、URLだけで一時的に閲覧させる(viewOnly)。詳細は
-  // joinAccountViaInviteのコメント参照。
+  // 招待リンク(?invite=トークン)経由のログインなら、招待の解決(自分自身の
+  // 招待URLか・既に別アカウントを持つ人の一時閲覧か・純粋なゲスト参加か)は
+  // すべてTOPページ(/)側に一本化している(F-3: 以前はここと/page.tsxの
+  // 両方に同じ分岐ロジックが重複しており、片方の修正漏れが自分自身の
+  // 招待URLを開いた際に/masterへ飛んでしまう不具合の原因になっていた)。
+  // ここではトークンをクエリ文字列として保持したまま/へリダイレクトする
+  // だけでよい。
   const inviteToken = searchParams.get("invite");
-  if (inviteToken) {
-    const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
-    if (!result.ok) {
-      if (result.error === "join_failed") {
-        // eslint-disable-next-line no-console
-        console.error("招待経由の参加に失敗しました", result.detail);
-      }
-      const errorCode =
-        result.error === "invalid_invite" ? "invalid_invite" : "auth_failed";
-      return NextResponse.redirect(`${origin}/?error=${errorCode}`);
-    }
-    if (result.viewOnly) {
-      return NextResponse.redirect(
-        `${origin}/rooms?invite=${encodeURIComponent(inviteToken)}`,
-      );
-    }
-    // 他人の招待URL経由でゲスト参加した場合は、isMaster/管理者であっても
-    // 必ずルーム選択画面へ進む(自分の管理画面/マスター画面には戻さない)。
-    if (!result.isOwnAccount) {
-      return NextResponse.redirect(`${origin}/rooms`);
-    }
-  }
-
-  return NextResponse.redirect(`${origin}/`);
+  return NextResponse.redirect(
+    inviteToken
+      ? `${origin}/?invite=${encodeURIComponent(inviteToken)}`
+      : `${origin}/`,
+  );
 }

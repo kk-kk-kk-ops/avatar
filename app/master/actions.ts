@@ -127,7 +127,7 @@ export async function updateAvatarSize(sizePx: number): Promise<ActionResult> {
   if (error) return { ok: false, error: "保存に失敗しました" };
 
   revalidatePath("/master");
-  revalidatePath("/rooms");
+  revalidatePath("/");
   return { ok: true };
 }
 

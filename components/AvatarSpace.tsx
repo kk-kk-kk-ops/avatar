@@ -198,15 +198,12 @@ export default function AvatarSpace({
     document.body.appendChild(script);
   }, []);
 
-  // ---- ルーム選択(Googleログイン後、最初に必ずここへ遷移する) ----
-  const [roomSelected, setRoomSelected] = useState(false);
-  const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
-  // roomIdはRealtimeチャンネル名・map_layoutの検索キーに使う「確定した」ID。
-  // roomNameは表示用(ヘッダー・入室モーダルのタイトル)。
-  const [roomId, setRoomId] = useState("");
-  const [roomName, setRoomName] = useState("");
+  // ---- ルーム(F-2でルーム選択画面を廃止。アカウントにつきルームは1つの
+  // 前提のため、rooms[0]をそのまま「確定した」ルームとして扱う) ----
+  // Realtimeチャンネル名・map_layoutの検索キーに使う。
+  const [roomId] = useState(rooms[0]?.id ?? "");
   const [roomJoinError, setRoomJoinError] = useState<string | null>(null);
-  // ルーム選択画面で各ルームのオンライン人数を表示するための集計。
+  // 入室前のプレビューに表示するオンライン人数の集計。
   // 自分自身はtrack()しない観測者としてpresenceチャンネルを覗くだけ。
   const [roomOnlineCounts, setRoomOnlineCounts] = useState<
     Record<string, number>
@@ -1727,16 +1724,7 @@ export default function AvatarSpace({
     );
   }, [selectedScreenSharerId]);
 
-  // ---- ルーム選択:選んだルームを確定してアバター選択画面へ進む ----
-  const handleSelectRoom = useCallback(() => {
-    const room = rooms.find((r) => r.id === selectedRoomId) ?? rooms[0];
-    if (!room) return; // ルームが1つも無い(管理者がまだ作成していない)場合
-    setRoomId(room.id);
-    setRoomName(room.name);
-    setRoomSelected(true);
-  }, [rooms, selectedRoomId]);
-
-  // ---- 退出:バーチャル空間から抜けてルーム選択画面に戻る ----
+  // ---- 退出:バーチャル空間から抜けて入室前の画面に戻る ----
   // joinedをfalseにすることで、Realtimeチャンネルの購読解除・マイクや
   // 画面共有ストリームの解放・WebRTC接続のクローズなど、既存の
   // 「joined依存のエフェクトのクリーンアップ」が一通り走る。playersは
@@ -1750,7 +1738,6 @@ export default function AvatarSpace({
   const handleLeaveRoom = useCallback(() => {
     setJoined(false);
     setPlayers({});
-    setRoomSelected(false);
     setMicEnabled(false);
     setMicError(null);
     setScreenSharing(false);
@@ -3637,11 +3624,11 @@ export default function AvatarSpace({
     settingsShowMessage,
   ]);
 
-  // ルーム選択画面にいる間だけ、各ルームのRealtimeチャンネルにpresence
-  // 観測者として接続し、オンライン人数を取得する(入室後は不要なので
-  // roomSelectedになったら購読解除する)。
+  // 入室前の画面にいる間、ルームのRealtimeチャンネルにpresence観測者として
+  // 接続し、プレビュー表示用のオンライン人数を取得する(入室後は不要なので
+  // joinedになったら購読解除する)。
   useEffect(() => {
-    if (roomSelected || rooms.length === 0) return;
+    if (joined || rooms.length === 0) return;
     const channels = rooms.map((room) => {
       const channel = supabase.channel(`avatar-room-${room.id}`, {
         config: { presence: { key: `observer-${randomId()}` } },
@@ -3661,91 +3648,38 @@ export default function AvatarSpace({
     return () => {
       channels.forEach((channel) => supabase.removeChannel(channel));
     };
-  }, [roomSelected, rooms, supabase]);
+  }, [joined, rooms, supabase]);
 
-  // ---- ルーム選択画面(Googleログイン後、最初に必ずここへ来る) ----
-  if (!roomSelected) {
+  // ---- 入室前:ルームプレビュー(選択不可)・アバター選択・名前入力 ----
+  // F-2でルーム選択画面を廃止し、ログイン後は直接この画面へ来る。
+  if (!joined) {
+    const room = rooms[0];
     return (
       <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
         <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-          <h1 className="mb-1 text-lg font-bold text-slate-800">
-            ルームを選択
-          </h1>
-          <p className="mb-4 text-sm text-slate-500">
-            入室するルームを選んでください
-          </p>
-
-          {rooms.length === 0 && (
+          {room ? (
+            <div className="mb-4 overflow-hidden rounded-lg bg-slate-100">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={room.previewImage}
+                alt={room.name}
+                className="aspect-video w-full object-cover"
+              />
+              <div className="flex items-center justify-between gap-1 px-2 py-1.5">
+                <p className="truncate text-xs font-semibold text-slate-700">
+                  {room.name}
+                </p>
+                <span className="shrink-0 text-[10px] font-semibold text-slate-500">
+                  {roomOnlineCounts[room.id] ?? 0}/{maxPeoplePerRoom}名
+                </span>
+              </div>
+            </div>
+          ) : (
             <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
               まだルームがありません。管理画面からルームを作成してください。
             </p>
           )}
 
-          <div className="mb-4 grid grid-cols-2 gap-2">
-            {rooms.map((room) => (
-              <button
-                key={room.id}
-                type="button"
-                onClick={() => setSelectedRoomId(room.id)}
-                className={`overflow-hidden rounded-lg border-2 bg-slate-100 text-left transition-colors ${
-                  selectedRoomId === room.id
-                    ? "border-slate-900"
-                    : "border-transparent hover:border-slate-300"
-                }`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={room.previewImage}
-                  alt={room.name}
-                  className="aspect-video w-full object-cover"
-                />
-                <div className="flex items-center justify-between gap-1 px-2 py-1.5">
-                  <p className="truncate text-xs font-semibold text-slate-700">
-                    {room.name}
-                  </p>
-                  <span className="shrink-0 text-[10px] font-semibold text-slate-500">
-                    {roomOnlineCounts[room.id] ?? 0}/{maxPeoplePerRoom}名
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <button
-            onClick={handleSelectRoom}
-            disabled={rooms.length === 0}
-            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
-          >
-            入室
-          </button>
-
-          <LogoutButton
-            className="mt-2 w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
-            redirectTo={guestInviteToken ? `/?invite=${guestInviteToken}` : "/"}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // ---- 入室前:名前入力・アバター選択モーダル ----
-  if (!joined) {
-    return (
-      <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
-        <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-          <div className="mb-1 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setRoomSelected(false)}
-              aria-label="ルーム選択に戻る"
-              className="shrink-0 text-lg text-slate-500 hover:text-slate-800"
-            >
-              ←
-            </button>
-            <h1 className="text-lg font-bold text-slate-800">
-              {roomName}に入室
-            </h1>
-          </div>
           <p className="mb-4 text-sm text-slate-500">
             アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)
           </p>
@@ -3773,10 +3707,16 @@ export default function AvatarSpace({
           />
           <button
             onClick={handleJoin}
-            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+            disabled={!room}
+            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
-            確定
+            入室
           </button>
+
+          <LogoutButton
+            className="mt-2 w-full rounded-lg bg-red-50 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
+            redirectTo={guestInviteToken ? `/?invite=${guestInviteToken}` : "/"}
+          />
         </div>
       </div>
     );
