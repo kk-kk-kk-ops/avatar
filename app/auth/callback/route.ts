@@ -81,15 +81,21 @@ export async function GET(request: NextRequest) {
 
   // 招待リンク(?invite=トークン)経由のログインなら、招待の解決(自分自身の
   // 招待URLか・既に別アカウントを持つ人の一時閲覧か・純粋なゲスト参加か)は
-  // すべてTOPページ(/)側に一本化している(F-3: 以前はここと/page.tsxの
-  // 両方に同じ分岐ロジックが重複しており、片方の修正漏れが自分自身の
-  // 招待URLを開いた際に/masterへ飛んでしまう不具合の原因になっていた)。
-  // ここではトークンをクエリ文字列として保持したまま/へリダイレクトする
+  // すべてTOPページ(/)側に一本化している(F-3)。ここではトークンを
+  // クエリ文字列として保持したまま/auth/completeへリダイレクトする
   // だけでよい。
+  //
+  // 直接"/"へリダイレクトしないのはH-1対応: signInWithOAuthのredirectTo
+  // に付けたクエリ文字列は、Supabase側の許可リスト設定次第でGoogleとの
+  // 往復の途中で失われることがあり(実際に発生し、招待URL経由でログイン
+  // したのに管理者用ログイン画面に戻ってしまっていた)、ここでのクエリ
+  // だけには頼れない。/auth/complete側でsessionStorage(ログイン開始前に
+  // GoogleLoginButtonが保存したもの)を優先的に読み、それが無い場合の
+  // 保険としてこのクエリを使う。
   const inviteToken = searchParams.get("invite");
   return NextResponse.redirect(
     inviteToken
-      ? `${origin}/?invite=${encodeURIComponent(inviteToken)}`
-      : `${origin}/`,
+      ? `${origin}/auth/complete?invite=${encodeURIComponent(inviteToken)}`
+      : `${origin}/auth/complete`,
   );
 }

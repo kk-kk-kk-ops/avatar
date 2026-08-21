@@ -8,9 +8,13 @@ export default function GoogleLoginButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // TOPページに招待リンク(?invite=トークン)経由で来た場合、OAuthの
-  // リダイレクト先にも引き継いでおく。Googleの認証画面を経由しても
-  // クエリはそのまま保持されるため、/auth/callback側で招待トークンを
-  // 受け取ってゲストとしてアカウントに紐付けられる。
+  // リダイレクト先クエリにも引き継いでおく(保険)。ただしSupabaseの
+  // redirectToはダッシュボード側の許可リスト設定次第でクエリ文字列が
+  // 落とされることがあり、それだけには頼れない(H-1で実際に発生した
+  // 不具合)。そのため主な経路としてはOAuth開始前にsessionStorageへ
+  // 保存しておき、認証完了後(/auth/complete)にそこから読み出して
+  // 遷移先を決める。sessionStorageはブラウザ側で保持されるため、
+  // リダイレクトの経路に関わらず確実に生き残る。
   const searchParams = useSearchParams();
   const inviteToken = searchParams.get("invite");
 
@@ -18,6 +22,11 @@ export default function GoogleLoginButton() {
     setLoading(true);
     setError(null);
     try {
+      if (inviteToken) {
+        sessionStorage.setItem("pendingInviteToken", inviteToken);
+      } else {
+        sessionStorage.removeItem("pendingInviteToken");
+      }
       const supabase = createClient();
       const callbackUrl = new URL(
         "/auth/callback",
