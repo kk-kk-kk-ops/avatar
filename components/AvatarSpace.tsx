@@ -2866,7 +2866,19 @@ export default function AvatarSpace({
   }, [joined]);
 
   // ---- 会議室(conference)ゾーンの入室確認・施錠操作 ----
-  // 「はい」:ゾーン中央へ瞬間移動し、そのまま入室状態にする。
+  // 「はい」:接触時点の進行方向(向き)にそのまま60px進んだ位置へ移動する。
+  // ゾーンが小さい・斜め接触などでゾーン外へはみ出す場合は、ゾーン内側
+  // (当たり判定の半径分の余白を持たせた範囲)にクランプする(Tech Lead確認済み)。
+  const MEETING_ENTRY_STEP = 60;
+  const MEETING_ENTRY_DIRECTION: Record<
+    PlayerState["dir"],
+    { x: number; y: number }
+  > = {
+    up: { x: 0, y: -1 },
+    down: { x: 0, y: 1 },
+    left: { x: -1, y: 0 },
+    right: { x: 1, y: 0 },
+  };
   const confirmMeetingEntry = useCallback((zoneId: string) => {
     const zone = meetingZonesRef.current.find((z) => z.id === zoneId);
     const self = selfState.current;
@@ -2878,8 +2890,21 @@ export default function AvatarSpace({
     autoMoveTargetRef.current = null;
     if (!zone || !self) return;
     insideConferenceZoneIdsRef.current.add(zoneId);
-    self.x = zone.x + zone.width / 2;
-    self.y = zone.y + zone.height / 2;
+
+    const dir = MEETING_ENTRY_DIRECTION[self.dir];
+    const halfW = AVATAR_HITBOX_WIDTH / 2;
+    const halfH = AVATAR_HITBOX_HEIGHT / 2;
+    const rawX = self.x + dir.x * MEETING_ENTRY_STEP;
+    const rawY = self.y + dir.y * MEETING_ENTRY_STEP;
+    self.x = Math.min(
+      Math.max(rawX, zone.x + halfW),
+      zone.x + zone.width - halfW,
+    );
+    self.y = Math.min(
+      Math.max(rawY, zone.y + halfH),
+      zone.y + zone.height - halfH,
+    );
+
     self.meetingZoneId = zoneId;
     lastTrackedZoneId.current = zoneId;
     channelRef.current?.track(self);
