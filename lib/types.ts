@@ -237,6 +237,13 @@ export const CHAT_IMAGE_ALLOWED_MIME_TYPES = [
   "image/webp",
 ] as const;
 
+// タブ切替・アプリのバックグラウンド化が続いた際の自動ログアウトまでの
+// 秒数(永遠ログイン状態を防ぐため)。ただし通話中(音声・映像・画面共有の
+// いずれか)は時間制限なしでログアウトさせない。将来的に見直す可能性が
+// あるため定数として切り出している。
+export const DESKTOP_AUTO_LOGOUT_SECONDS = 5;
+export const MOBILE_AUTO_LOGOUT_SECONDS = 5;
+
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
 export const AVATAR_RADIUS = 8.5; // アバターの表示サイズ計算に使う半径(17px×17px表示。当たり判定には使わない)
