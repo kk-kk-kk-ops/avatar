@@ -492,6 +492,18 @@ export default function AvatarSpace({
     const timer = setTimeout(() => setLockPermissionError(null), 3000);
     return () => clearTimeout(timer);
   }, [lockPermissionError]);
+  // 施錠中の会議室に接触した際、自分の名前の上に出す警告吹き出し
+  // (「鍵がかかっています」、3秒で自動的に消える)。既に表示中かどうかは
+  // rAFループからも読めるようrefでも持ち、表示中の再接触は無視する
+  // (=タイマーは延長しない、実装しやすい方を採用)。
+  const [lockedZoneNotice, setLockedZoneNotice] = useState(false);
+  const lockedZoneNoticeRef = useRef(false);
+  useEffect(() => {
+    lockedZoneNoticeRef.current = lockedZoneNotice;
+    if (!lockedZoneNotice) return;
+    const timer = setTimeout(() => setLockedZoneNotice(false), 3000);
+    return () => clearTimeout(timer);
+  }, [lockedZoneNotice]);
   // 定期同期(下記)で「前回同期した時の値」を覚えておくための記録。
   // selfState.currentとplayers[自分のID]が同じオブジェクト参照になって
   // いることがあり(入室直後など)、その場合next[self.id]とself自体を
@@ -2718,6 +2730,12 @@ export default function AvatarSpace({
               pendingMeetingEntryRef.current = { zoneId: zone.id };
               setPendingMeetingEntry({ zoneId: zone.id });
             }
+            // 施錠中の場合は入室確認の代わりに警告吹き出しを出す
+            // (表示中の再接触は無視し、重複してタイマーを延長しない)。
+            if (lockedByOther && !lockedZoneNoticeRef.current) {
+              lockedZoneNoticeRef.current = true;
+              setLockedZoneNotice(true);
+            }
             // 施錠中・確認待ち・拒否済みのいずれの場合も、答えが出るまでは
             // 壁と同様にそれ以上先へは進めないようにする(接触した軸のみ)。
             if (touchX) blockedX = true;
@@ -4133,6 +4151,11 @@ export default function AvatarSpace({
                 player={p}
                 isSelf={p.id === selfId.current}
                 sizePx={avatarSizePx}
+                noticeText={
+                  p.id === selfId.current && lockedZoneNotice
+                    ? "鍵がかかっています"
+                    : undefined
+                }
                 ref={getAvatarRefCallback(p.id)}
               />
             ))}

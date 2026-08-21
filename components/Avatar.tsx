@@ -15,6 +15,11 @@ type Props = {
   player: PlayerState;
   isSelf: boolean;
   sizePx?: number; // アバター画像の表示サイズ(正方形、px)。マスター画面で設定可能。
+  // 自分だけに一時的に見せる警告吹き出し(例:施錠中の会議室に接触した際)。
+  // 他人には送らない・presenceにも乗せないローカル専用の表示のため、
+  // player.message(相手にも見えるチャット吹き出し)とは別枠で扱う。
+  // 表示中は通常のチャット吹き出しより優先する。
+  noticeText?: string;
 };
 
 export type AvatarHandle = {
@@ -26,7 +31,7 @@ export type AvatarHandle = {
 const DEFAULT_DISPLAY_SIZE = AVATAR_RADIUS * 2; // sizePx未指定時のフォールバック
 
 const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
-  { player, isSelf, sizePx },
+  { player, isSelf, sizePx, noticeText },
   ref,
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -85,10 +90,16 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
           高さが伸び縮みするため、名前タグ側の位置に影響しないよう
           このように親子関係にしている。 */}
       <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-        {showBubble && (
-          <div className="absolute bottom-full left-1/2 mb-1 w-max max-w-[100px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-center text-[10px] leading-tight shadow-md">
-            {player.message}
+        {noticeText ? (
+          <div className="absolute bottom-full left-1/2 mb-1 w-max max-w-[140px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg bg-red-600 px-1.5 py-1 text-center text-[10px] leading-tight text-white shadow-md">
+            {noticeText}
           </div>
+        ) : (
+          showBubble && (
+            <div className="absolute bottom-full left-1/2 mb-1 w-max max-w-[100px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-center text-[10px] leading-tight shadow-md">
+              {player.message}
+            </div>
+          )
         )}
         <span className="flex items-center gap-1 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
           <span
