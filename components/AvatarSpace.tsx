@@ -22,6 +22,8 @@ import {
   MAP_HEIGHT,
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
+  DESKTOP_AUTO_LOGOUT_SECONDS,
+  MOBILE_AUTO_LOGOUT_SECONDS,
   MOVE_SPEED,
   MESSAGE_MAX_LENGTH,
   findMeetingZoneId,
@@ -3422,6 +3424,50 @@ export default function AvatarSpace({
   }, [joined, supabase, voiceCallDailyLimitSeconds]);
 
   const isVoiceCallActive = micEnabled && eligiblePeerIds.length > 0;
+
+  // ---- タブ非アクティブ・アプリのバックグラウンド化が続いたら自動ログアウト ----
+  // 永遠ログイン状態を防ぐため。通話中(音声・映像・画面共有のいずれか)は
+  // 時間制限なしでログアウトさせない。通話が終了した時点でまだタブが
+  // 非アクティブなら、そこから改めてカウントを始める(依存配列の
+  // isInCallが変化するたびeffectが再実行され、start関数が呼び直される
+  // ことで実現している)。
+  const isInCall = isVoiceCallActive || inCall || screenSharing;
+  useEffect(() => {
+    if (!joined) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearTimer = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const startTimerIfNeeded = () => {
+      clearTimer();
+      if (document.visibilityState !== "hidden" || isInCall) return;
+      // スマホ/PCの判定は、既存のカメラズーム判定(rAFループ)と同じ
+      // 画面幅の基準(640px未満)に揃えている。
+      const seconds =
+        viewportRef.current.width > 0 && viewportRef.current.width < 640
+          ? MOBILE_AUTO_LOGOUT_SECONDS
+          : DESKTOP_AUTO_LOGOUT_SECONDS;
+      timer = setTimeout(() => {
+        supabase.auth.signOut().finally(() => {
+          window.location.href = guestInviteToken
+            ? `/?invite=${guestInviteToken}`
+            : "/";
+        });
+      }, seconds * 1000);
+    };
+
+    startTimerIfNeeded();
+    document.addEventListener("visibilitychange", startTimerIfNeeded);
+    return () => {
+      clearTimer();
+      document.removeEventListener("visibilitychange", startTimerIfNeeded);
+    };
+  }, [joined, isInCall, supabase, guestInviteToken]);
 
   useEffect(() => {
     if (!joined || voiceCallDailyLimitSeconds === null) return;
