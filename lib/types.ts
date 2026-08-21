@@ -251,7 +251,7 @@ export const AVATAR_HITBOX_WIDTH = 20; // 当たり判定の幅(px)
 export const AVATAR_HITBOX_HEIGHT = 20; // 当たり判定の高さ(px)
 export const MOVE_SPEED = 220; // px / sec
 export const MESSAGE_MAX_LENGTH = 20; // 吹き出しの最大文字数
-export const PROXIMITY_RADIUS = 68; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。従来の1.5倍)
+export const PROXIMITY_RADIUS = 88; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。E-5で+20px拡大)
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
