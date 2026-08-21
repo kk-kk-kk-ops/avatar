@@ -4797,7 +4797,7 @@ export default function AvatarSpace({
       {/* 会議室の入室確認ポップアップ */}
       {pendingMeetingEntry && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-xs rounded-xl bg-white p-6 text-center shadow-xl">
+          <div className="w-full max-w-[260px] rounded-xl bg-white p-6 text-center shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
               会議室に入室しますか?
             </p>
@@ -4824,7 +4824,7 @@ export default function AvatarSpace({
       {/* 会議室の施錠/解錠 確認ポップアップ */}
       {lockActionConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-xs rounded-xl bg-white p-6 text-center shadow-xl">
+          <div className="w-full max-w-[260px] rounded-xl bg-white p-6 text-center shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
               {lockActionConfirm.mode === "lock"
                 ? "鍵を閉めますか?"
