@@ -284,6 +284,11 @@ export default function AvatarSpace({
   const screenSharePublicationsRef = useRef<
     Record<string, RemoteTrackPublication>
   >({});
+  // D-1の「購読直後に一度だけキーフレーム再要求のトグルを行う」処理を、
+  // 同じtrackSidに対して二重に予約しないようにするための記録
+  // (trackSid単位。キーとして使うのは、共有を一度止めて再開すると新しい
+  // trackSidになるため「本当に新しい配信」だけを対象にできるため)。
+  const kickedScreenShareTrackSidsRef = useRef<Set<string>>(new Set());
   // 共有開始時点の最初の1フレームを静止画にしたプレビュー(dataURL)。
   // 選択して視聴を始めるまではこちらを表示し、選択後はライブ映像に切り替える。
   const [screenPreviewImages, setScreenPreviewImages] = useState<
@@ -454,6 +459,17 @@ export default function AvatarSpace({
   // 音声・映像・画面共有はLiveKit移行(Phase2〜4)でLiveKit経由に切り替えた
   // ため、自前PeerConnectionメッシュ関連の状態はPhase6で全て廃止した。
   const livekitRoomRef = useRef<LiveKitRoom | null>(null);
+  // room.connect()が完了した瞬間を検知するためのstate(refと違いレンダーを
+  // 起こせる)。G-2対応: 購読対象(eligiblePeerIds等)の計算はLiveKitの接続
+  // 完了より先に確定していることがあり(Supabase presenceの同期や
+  // meetingZonesの取得は別々の非同期処理で、どちらが先に終わるかは
+  // 保証されない)、その場合「購読対象を反映するeffect」がLiveKit未接続で
+  // 早期returnしたまま、購読対象自体はその後変化しないので二度と
+  // 再実行されず、繋がってから購読が一度も反映されないことがあった
+  // (全体アナウンスエリアで先に発信していた相手の音声・画面共有が、
+  // 後から入室した人にだけ届かない不具合の原因)。接続完了をこのstateの
+  // 変化として明示的に検知し、購読反映effectを必ずもう一度実行させる。
+  const [livekitConnected, setLivekitConnected] = useState(false);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const lastTrackedZoneId = useRef<string | null>(null);
@@ -1564,7 +1580,16 @@ export default function AvatarSpace({
         // 行わないため取りこぼすと直らない。購読が確立した直後に一度だけ
         // 購読をOFF→ONへ切り替え、新しいネゴシエーションでキーフレームを
         // 改めて要求させることで復旧を試みる。
-        if (pub.source === Track.Source.ScreenShare) {
+        // 重要: このsetSubscribed(true)自体がこのTrackSubscribedハンドラを
+        // 再度発火させるため、trackSid単位で「既に予約済みか」を記録して
+        // おかないと、自分自身の再購読をきっかけに無限にトグルを繰り返して
+        // しまう(G-1で発覚した、約1〜2秒間隔でプレビューがちらつく不具合の
+        // 原因はこれだった)。
+        if (
+          pub.source === Track.Source.ScreenShare &&
+          !kickedScreenShareTrackSidsRef.current.has(pub.trackSid)
+        ) {
+          kickedScreenShareTrackSidsRef.current.add(pub.trackSid);
           setTimeout(() => {
             if (!pub.isSubscribed) return;
             pub.setSubscribed(false);
@@ -1597,6 +1622,7 @@ export default function AvatarSpace({
       .on(RoomEvent.TrackUnpublished, (publication, participant) => {
         if (publication.source === Track.Source.ScreenShare) {
           clearScreenShare(participant.identity);
+          kickedScreenShareTrackSidsRef.current.delete(publication.trackSid);
         }
       })
       .on(RoomEvent.ParticipantDisconnected, (participant) => {
@@ -1636,6 +1662,7 @@ export default function AvatarSpace({
         console.warn("[livekit] disconnected, attempting manual reconnect", {
           reason,
         });
+        setLivekitConnected(false);
         // 画面共有はブラウザの仕様上、ユーザー操作なしでのgetDisplayMedia
         // 再取得が許可されないため自動復元できない。切れたことが伝わるよう
         // 状態だけ倒し、再開はユーザーの再操作に委ねる。
@@ -1670,6 +1697,7 @@ export default function AvatarSpace({
         const { token, url } = await res.json();
         if (cancelled) return;
         await room.connect(url, token, { autoSubscribe: false });
+        if (!cancelled) setLivekitConnected(true);
         // 意図しない切断からの再接続の場合、マイク/カメラのON/OFFトグルは
         // ONのままトラックだけが失われているので、現在の状態に合わせて
         // 再パブリッシュする(既に許可済みのgetUserMediaなので通常は
@@ -1708,8 +1736,10 @@ export default function AvatarSpace({
       room.disconnect();
       if (livekitRoomRef.current === room) livekitRoomRef.current = null;
       screenSharePublicationsRef.current = {};
+      kickedScreenShareTrackSidsRef.current = new Set();
       setSelectedScreenSharerId(null);
       setScreenPreviewImages({});
+      setLivekitConnected(false);
     };
   }, [joined, roomId, viewOnlyInviteToken]);
 
@@ -3225,8 +3255,15 @@ export default function AvatarSpace({
         }
       });
     });
+    // livekitConnectedもdepsに含める。購読対象(eligibleKey/audioEligibleKey)
+    // はSupabase presence/meetingZonesの取得から決まり、LiveKitの接続完了とは
+    // 非同期に(どちらが先とも限らないタイミングで)確定する。もし購読対象が
+    // 既に確定した"後"でLiveKitが接続完了した場合、depsに変化がないため
+    // このeffectは再実行されず、接続直後に一度も購読が反映されないままに
+    // なることがあった(G-2: 全体アナウンスエリアで先に発信していた相手の
+    // 音声・画面共有が、後から入室した人にだけ届かない不具合の原因)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligibleKey, audioEligibleKey, joined]);
+  }, [eligibleKey, audioEligibleKey, joined, livekitConnected]);
 
   // 選択中の相手が画面共有をやめた・近接範囲外に出た場合は選択を解除する
   useEffect(() => {
