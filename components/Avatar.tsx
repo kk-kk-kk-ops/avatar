@@ -44,7 +44,11 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         const el = rootRef.current;
         if (!el) return;
         const left = x - displaySize / 2;
-        const top = y + AVATAR_HITBOX_HEIGHT / 2 - displaySize + footOffset;
+        // footOffsetは「引く」のが正しい(コメント通り、大きいほど見た目の
+        // 足元が当たり判定ラインに近づく必要がある)。以前は符号が逆になって
+        // おり、当たり判定の下端より画像の下端がfootOffset分だけ余分に
+        // はみ出して見えていた(E-4で修正)。
+        const top = y + AVATAR_HITBOX_HEIGHT / 2 - displaySize - footOffset;
         el.style.transform = `translate(${left}px, ${top}px)`;
       },
     }),
