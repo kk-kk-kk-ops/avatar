@@ -3468,12 +3468,19 @@ export default function AvatarSpace({
 
   const isVoiceCallActive = micEnabled && eligiblePeerIds.length > 0;
 
-  // ---- タブ非アクティブ・アプリのバックグラウンド化が続いたら自動ログアウト ----
-  // 永遠ログイン状態を防ぐため。通話中(音声・映像・画面共有のいずれか)は
-  // 時間制限なしでログアウトさせない。通話が終了した時点でまだタブが
-  // 非アクティブなら、そこから改めてカウントを始める(依存配列の
+  // ---- タブ非アクティブ・アプリのバックグラウンド化が続いたら自動で退室/ログアウト ----
+  // 永遠ログイン状態(PC)・永遠入室状態を防ぐため。通話中(音声・映像・
+  // 画面共有のいずれか)は時間制限なしで発火させない。通話が終了した時点で
+  // まだ非アクティブなら、そこから改めてカウントを始める(依存配列の
   // isInCallが変化するたびeffectが再実行され、start関数が呼び直される
   // ことで実現している)。
+  // スマホ(D-2)とPC(D-3)で挙動が異なる点に注意:
+  // - スマホ: 従来通りアカウントごとログアウト(セッション破棄)する
+  // - PC: F-1でアカウントのログアウトではなく「ルームからの退室」に変更した。
+  //   ログインセッションは維持したまま、handleLeaveRoomと同じ後始末
+  //   (LiveKit切断・アバター消去)だけを行い、ページ遷移はしない
+  //   (再度タブをアクティブにすると、joinedがfalseに戻っているため
+  //   入室前の画面が表示される)。
   const isInCall = isVoiceCallActive || inCall || screenSharing;
   useEffect(() => {
     if (!joined) return;
@@ -3491,16 +3498,21 @@ export default function AvatarSpace({
       if (document.visibilityState !== "hidden" || isInCall) return;
       // スマホ/PCの判定は、既存のカメラズーム判定(rAFループ)と同じ
       // 画面幅の基準(640px未満)に揃えている。
-      const seconds =
-        viewportRef.current.width > 0 && viewportRef.current.width < 640
-          ? MOBILE_AUTO_LOGOUT_SECONDS
-          : DESKTOP_AUTO_LOGOUT_SECONDS;
+      const isMobile =
+        viewportRef.current.width > 0 && viewportRef.current.width < 640;
+      const seconds = isMobile
+        ? MOBILE_AUTO_LOGOUT_SECONDS
+        : DESKTOP_AUTO_LOGOUT_SECONDS;
       timer = setTimeout(() => {
-        supabase.auth.signOut().finally(() => {
-          window.location.href = guestInviteToken
-            ? `/?invite=${guestInviteToken}`
-            : "/";
-        });
+        if (isMobile) {
+          supabase.auth.signOut().finally(() => {
+            window.location.href = guestInviteToken
+              ? `/?invite=${guestInviteToken}`
+              : "/";
+          });
+        } else {
+          handleLeaveRoom();
+        }
       }, seconds * 1000);
     };
 
@@ -3510,7 +3522,7 @@ export default function AvatarSpace({
       clearTimer();
       document.removeEventListener("visibilitychange", startTimerIfNeeded);
     };
-  }, [joined, isInCall, supabase, guestInviteToken]);
+  }, [joined, isInCall, supabase, guestInviteToken, handleLeaveRoom]);
 
   useEffect(() => {
     if (!joined || voiceCallDailyLimitSeconds === null) return;
