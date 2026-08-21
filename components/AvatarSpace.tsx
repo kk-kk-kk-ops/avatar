@@ -314,6 +314,14 @@ export default function AvatarSpace({
     peerId: string;
     kind: "screen" | "camera";
   } | null>(null);
+  // I-2: 相手の画面共有を全画面視聴している間、自分のビデオ通話を一時停止
+  // して負荷を下げる。videoPausedForScreenViewはUI表示切り替え用、
+  // pausedVideoBeforeExpandedRefは「一時停止する直前、自分の意思で
+  // ビデオ通話をONにしていたか」を覚えておき、全画面を閉じた時に
+  // 再開すべきかどうかの判定に使う。
+  const [videoPausedForScreenView, setVideoPausedForScreenView] =
+    useState(false);
+  const pausedVideoBeforeExpandedRef = useRef(false);
 
   // ---- チャット(参加者ごとの1対1DM。全プラン共通の標準機能) ----
   type DmMessage = {
@@ -2121,6 +2129,32 @@ export default function AvatarSpace({
     }
   }, [inCall, stopVideoCall, startVideoCall]);
 
+  // ---- I-2: 相手の画面共有を全画面視聴している間は自分のビデオ通話を一時停止 ----
+  // 開始時にビデオ通話がONだった場合だけ記録し、閉じた時にその場合だけ
+  // 再開する(元々OFFだったのに閉じたタイミングでONにしてしまわないよう
+  // 注意)。音声通話・自分の画面共有は対象外。
+  useEffect(() => {
+    const isViewingScreenShare = expandedMedia?.kind === "screen";
+    if (isViewingScreenShare) {
+      if (inCallRef.current) {
+        pausedVideoBeforeExpandedRef.current = true;
+        setVideoPausedForScreenView(true);
+        stopVideoCall();
+      }
+      return;
+    }
+    if (pausedVideoBeforeExpandedRef.current) {
+      pausedVideoBeforeExpandedRef.current = false;
+      setVideoPausedForScreenView(false);
+      // 全画面視聴中にユーザー自身が手動でビデオ通話をONに戻していた
+      // 場合は、ここで二重に開始しないようにする。
+      if (!inCallRef.current) {
+        startVideoCall();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedMedia]);
+
   // ---- Supabase Realtimeチャンネルの接続 ----
   useEffect(() => {
     if (!joined) return;
@@ -3264,15 +3298,25 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey, audioEligibleKey, joined, livekitConnected]);
 
-  // 選択中の相手が画面共有をやめた・近接範囲外に出た場合は選択を解除する
+  // 選択中の相手が画面共有をやめた・近接範囲外に出た場合は選択を解除する。
+  // 即座に解除すると、presenceの瞬間的な揺らぎ(A-2で扱った、相手の
+  // ハートビートが一瞬途切れて自己修復のremoval対象になりかけるケース等)
+  // だけでeligiblePeerIdsやplayersから相手が一時的に消え、実際には
+  // 何も変わっていないのに視聴中の全画面表示が閉じてしまうことがあった
+  // (I-1)。数秒待っても状況が変わらない(=本当に対象外になった)場合
+  // だけ解除するようにする。揺らぎが解消してこの条件を満たさなくなれば
+  // (=依存配列が変化してeffectが再実行されれば)、保留中のタイマーは
+  // クリーンアップで自動的にキャンセルされる。
   useEffect(() => {
     if (!selectedScreenSharerId) return;
     const stillSharingNearby =
       eligiblePeerIds.includes(selectedScreenSharerId) &&
       players[selectedScreenSharerId]?.sharingScreen;
-    if (!stillSharingNearby) {
+    if (stillSharingNearby) return;
+    const timer = setTimeout(() => {
       setSelectedScreenSharerId(null);
-    }
+    }, 5000);
+    return () => clearTimeout(timer);
   }, [selectedScreenSharerId, eligiblePeerIds, players]);
 
   // ---- 誰かの画面共有を視聴中かどうかをpresenceに反映する ----
@@ -3954,23 +3998,30 @@ export default function AvatarSpace({
             </div>
           )}
 
-          {inCall && cameraStreamRef.current && (
-            <div className="relative">
-              <RemoteVideo
-                stream={cameraStreamRef.current}
-                className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
-              />
-              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                あなたのカメラ
-              </span>
-              <button
-                onClick={stopVideoCall}
-                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                aria-label="ビデオ通話を終了"
-              >
-                ✕
-              </button>
+          {videoPausedForScreenView ? (
+            <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300">
+              画面共有視聴中
             </div>
+          ) : (
+            inCall &&
+            cameraStreamRef.current && (
+              <div className="relative">
+                <RemoteVideo
+                  stream={cameraStreamRef.current}
+                  className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
+                />
+                <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                  あなたのカメラ
+                </span>
+                <button
+                  onClick={stopVideoCall}
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                  aria-label="ビデオ通話を終了"
+                >
+                  ✕
+                </button>
+              </div>
+            )
           )}
 
           {/* 画面共有は同時に何人でも共有できるが、視聴は1人だけ選ぶ方式。
