@@ -4911,6 +4911,8 @@ export default function AvatarSpace({
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
               >
                 はい
+                <br />
+                (Enter)
               </button>
             </div>
           </div>
