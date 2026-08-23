@@ -724,7 +724,7 @@ export default function TemplateEditor({
                 onPointerDown={(e) => handlePointerDown(e, "zone", zone.id, "move")}
                 className={`absolute cursor-move rounded-xl border p-2 ${
                   zone.kind === "conference"
-                    ? "border-emerald-300 bg-emerald-200/60"
+                    ? "border-2 border-red-500 bg-emerald-200/60"
                     : zone.kind === "announcement"
                       ? "border-amber-300 bg-amber-200/60"
                       : "border-slate-300 bg-slate-500/50"
