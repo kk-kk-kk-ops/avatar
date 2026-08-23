@@ -267,10 +267,12 @@ export type Obstacle = Rect & { id: string; label: string };
 // "announcement"(全体アナウンスエリア)は同エリア内の自動音声接続に加えて、
 // このエリア内でマイクONの人の音声だけを、距離・エリアに関わらずルーム内
 // 全員に一方的に届ける(詳細はAvatarSpace.tsxのaudioEligiblePeerIds参照)。
+// "work"(作業エリア)は音声通話・ビデオ通話・画面共有のいずれも利用不可
+// (エリア内では強制的にOFFになり、ONにもできない)にするための専用エリア。
 export type MeetingZone = Rect & {
   id: string;
   label: string;
-  kind?: "meeting" | "conference" | "announcement";
+  kind?: "meeting" | "conference" | "announcement" | "work";
 };
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ

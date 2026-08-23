@@ -1947,6 +1947,17 @@ export default function AvatarSpace({
     })();
   }, [joined, roomId, rooms, supabase]);
 
+  // 作業エリア(kind: "work")内にいる間は音声通話・ビデオ通話・画面共有を
+  // 一切ONにできない(既にONの場合は入室時点でoffMeetingZone側で強制OFF
+  // 済み)。各toggle/startのガードで共通して使う。
+  const isInWorkZone = useCallback(() => {
+    const zoneId = selfState.current?.meetingZoneId;
+    if (!zoneId) return false;
+    return (
+      meetingZonesRef.current.find((z) => z.id === zoneId)?.kind === "work"
+    );
+  }, []);
+
   // ---- 画面共有 ----
   // LiveKit移行Phase4でLiveKit経由に切り替え。screenStreamRefは自分の
   // プレビュー表示専用(LiveKitトラックをラップしたMediaStream)。
@@ -1969,6 +1980,11 @@ export default function AvatarSpace({
 
   const startScreenShare = useCallback(async () => {
     setShareError(null);
+
+    if (isInWorkZone()) {
+      setShareError("作業エリア内では画面共有を利用できません。");
+      return;
+    }
 
     if (
       screenShareRemainingRef.current !== null &&
@@ -2033,7 +2049,7 @@ export default function AvatarSpace({
     } catch {
       // 選択画面でキャンセルした場合などはここに来る。エラー扱いにはしない。
     }
-  }, [stopScreenShare]);
+  }, [stopScreenShare, isInWorkZone]);
 
   const toggleScreenShare = useCallback(() => {
     if (screenSharing) {
@@ -2066,6 +2082,10 @@ export default function AvatarSpace({
 
   const startVideoCall = useCallback(async () => {
     setCallError(null);
+    if (isInWorkZone()) {
+      setCallError("作業エリア内ではビデオ通話を利用できません。");
+      return;
+    }
     if (
       videoCallRemainingRef.current !== null &&
       videoCallRemainingRef.current <= 0
@@ -2114,7 +2134,7 @@ export default function AvatarSpace({
         "カメラを使用できませんでした。ブラウザのカメラ許可設定を確認してください。",
       );
     }
-  }, [stopVideoCall]);
+  }, [stopVideoCall, isInWorkZone]);
 
   const toggleVideoCall = useCallback(() => {
     if (inCall) {
@@ -2834,6 +2854,21 @@ export default function AvatarSpace({
           // (異常切断時はpresenceのleave検知で自動解錠される)。
           // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
           channelRef.current?.track(self);
+
+          // 作業エリアに入った瞬間、音声通話・ビデオ通話・画面共有を
+          // 強制的にオフにする(ONへ戻すことは各toggle側のガードで禁止する)。
+          const enteredZone = zoneId
+            ? meetingZonesRef.current.find((z) => z.id === zoneId)
+            : null;
+          if (enteredZone?.kind === "work") {
+            livekitRoomRef.current?.localParticipant
+              .setMicrophoneEnabled(false)
+              .catch(() => {});
+            setMicEnabled(false);
+            self.micOn = false;
+            stopVideoCall();
+            stopScreenShare();
+          }
         }
 
         // 自分のアバターの見た目の位置は、Reactのstateを介さずDOM操作で
@@ -3130,6 +3165,10 @@ export default function AvatarSpace({
   const toggleMic = useCallback(async () => {
     setMicError(null);
     const next = !micEnabled;
+    if (next && isInWorkZone()) {
+      setMicError("作業エリア内では音声通話を利用できません。");
+      return;
+    }
     if (
       next &&
       voiceCallRemainingRef.current !== null &&
@@ -3159,7 +3198,7 @@ export default function AvatarSpace({
         "マイクを使用できませんでした。ブラウザのアドレスバー付近のマイク許可設定を確認してください。",
       );
     }
-  }, [micEnabled]);
+  }, [micEnabled, isInWorkZone]);
 
   // 音声通話の残り時間が尽きた際に、マイクを強制的にオフにする(画面共有・
   // ビデオ通話の強制終了と同じ考え方)。次にオンにしようとしてもtoggleMic側
@@ -3831,6 +3870,11 @@ export default function AvatarSpace({
   // ---- カメラ計算:自分を画面中央に固定し、端では止めてアイコン側が動くようにする ----
   // スマホ(画面幅が狭い)場合は少し縮小(ズームアウト)して周囲が見えるようにする。
   const selfPlayer = players[selfId.current];
+  // 作業エリア内かどうか(マイク・ビデオ通話・画面共有ボタンをグレーアウトするため)。
+  const selfInWorkZone = selfPlayer?.meetingZoneId
+    ? meetingZones.find((z) => z.id === selfPlayer.meetingZoneId)?.kind ===
+      "work"
+    : false;
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
   const effectiveViewportWidth = viewport.width / mapScale;
   const effectiveViewportHeight = viewport.height / mapScale;
@@ -3893,7 +3937,11 @@ export default function AvatarSpace({
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <div className="flex shrink-0 flex-col items-center">
-              <MicButton enabled={micEnabled} onClick={toggleMic} />
+              <MicButton
+                enabled={micEnabled}
+                onClick={toggleMic}
+                disabled={selfInWorkZone}
+              />
               {voiceCallRemainingSeconds !== null && (
                 <span
                   className={`mt-0.5 inline text-[9px] leading-none ${
@@ -3911,6 +3959,7 @@ export default function AvatarSpace({
               <ScreenShareButton
                 enabled={screenSharing}
                 onClick={toggleScreenShare}
+                disabled={selfInWorkZone}
               />
               {screenShareRemainingSeconds !== null && (
                 <span
@@ -3926,7 +3975,11 @@ export default function AvatarSpace({
               )}
             </div>
             <div className="flex shrink-0 flex-col items-center">
-              <VideoCallButton enabled={inCall} onClick={toggleVideoCall} />
+              <VideoCallButton
+                enabled={inCall}
+                onClick={toggleVideoCall}
+                disabled={selfInWorkZone}
+              />
               {videoCallRemainingSeconds !== null && (
                 <span
                   className={`mt-0.5 inline text-[9px] leading-none ${
@@ -4168,7 +4221,9 @@ export default function AvatarSpace({
                   className={`absolute flex items-start rounded-xl border p-2 ${
                     zone.kind === "announcement"
                       ? "border-amber-400 bg-amber-500/20"
-                      : "border-slate-500 bg-slate-600/60"
+                      : zone.kind === "work"
+                        ? "border-sky-400 bg-sky-500/20"
+                        : "border-slate-500 bg-slate-600/60"
                   }`}
                   style={{
                     left: zone.x,
@@ -4181,10 +4236,13 @@ export default function AvatarSpace({
                     className={`text-[11px] ${
                       zone.kind === "announcement"
                         ? "text-amber-200"
-                        : "text-slate-300"
+                        : zone.kind === "work"
+                          ? "text-sky-200"
+                          : "text-slate-300"
                     }`}
                   >
                     {zone.kind === "announcement" ? "📢 " : ""}
+                    {zone.kind === "work" ? "🔇 " : ""}
                     {zone.label}
                   </span>
                 </div>

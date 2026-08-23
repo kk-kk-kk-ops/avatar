@@ -3,6 +3,7 @@
 type Props = {
   enabled: boolean;
   onClick: () => void;
+  disabled?: boolean;
 };
 
 function ScreenIcon({ enabled }: { enabled: boolean }) {
@@ -25,15 +26,26 @@ function ScreenIcon({ enabled }: { enabled: boolean }) {
   );
 }
 
-export default function ScreenShareButton({ enabled, onClick }: Props) {
+export default function ScreenShareButton({
+  enabled,
+  onClick,
+  disabled,
+}: Props) {
   return (
     <button
       onClick={onClick}
-      title={enabled ? "画面共有: 中(クリックで終了)" : "画面を共有する"}
+      disabled={disabled}
+      title={
+        disabled
+          ? "作業エリア内では利用できません"
+          : enabled
+            ? "画面共有: 中(クリックで終了)"
+            : "画面を共有する"
+      }
       aria-label={enabled ? "画面共有を終了する" : "画面共有を開始する"}
       className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-slate-700 text-slate-300"
-      } hover:opacity-80`}
+      } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}
     >
       <ScreenIcon enabled={enabled} />
     </button>

@@ -3,6 +3,7 @@
 type Props = {
   enabled: boolean;
   onClick: () => void;
+  disabled?: boolean;
 };
 
 function CameraIcon({ enabled }: { enabled: boolean }) {
@@ -33,17 +34,26 @@ function CameraIcon({ enabled }: { enabled: boolean }) {
   );
 }
 
-export default function VideoCallButton({ enabled, onClick }: Props) {
+export default function VideoCallButton({
+  enabled,
+  onClick,
+  disabled,
+}: Props) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       title={
-        enabled ? "ビデオ通話: 中(クリックで終了)" : "ビデオ通話を開始する"
+        disabled
+          ? "作業エリア内では利用できません"
+          : enabled
+            ? "ビデオ通話: 中(クリックで終了)"
+            : "ビデオ通話を開始する"
       }
       aria-label={enabled ? "ビデオ通話を終了する" : "ビデオ通話を開始する"}
       className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-slate-700 text-slate-300"
-      } hover:opacity-80`}
+      } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}
     >
       <CameraIcon enabled={enabled} />
     </button>
