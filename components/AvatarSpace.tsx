@@ -4146,7 +4146,7 @@ export default function AvatarSpace({
               zone.kind === "conference" ? (
                 <div
                   key={zone.id}
-                  className="absolute rounded-xl border border-green-300 bg-lime-200/40"
+                  className="absolute rounded-xl border border-green-300 bg-lime-200/20"
                   style={{
                     left: zone.x,
                     top: zone.y,
