@@ -3,6 +3,7 @@
 type Props = {
   enabled: boolean;
   onClick: () => void;
+  disabled?: boolean;
 };
 
 function MicIcon({ enabled }: { enabled: boolean }) {
@@ -28,15 +29,22 @@ function MicIcon({ enabled }: { enabled: boolean }) {
   );
 }
 
-export default function MicButton({ enabled, onClick }: Props) {
+export default function MicButton({ enabled, onClick, disabled }: Props) {
   return (
     <button
       onClick={onClick}
-      title={enabled ? "マイク: ON(クリックでミュート)" : "マイク: OFF(クリックで解除)"}
+      disabled={disabled}
+      title={
+        disabled
+          ? "作業エリア内では利用できません"
+          : enabled
+            ? "マイク: ON(クリックでミュート)"
+            : "マイク: OFF(クリックで解除)"
+      }
       aria-label={enabled ? "マイクをオフにする" : "マイクをオンにする"}
       className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-slate-700 text-slate-300"
-      } hover:opacity-80`}
+      } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}
     >
       <MicIcon enabled={enabled} />
     </button>

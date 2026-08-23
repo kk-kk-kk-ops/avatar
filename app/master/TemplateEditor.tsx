@@ -289,22 +289,60 @@ export default function TemplateEditor({
     };
   };
 
-  // 「＋アバター初期位置」ボタン: 今見えている範囲の中心へ(既に置いてい
-  // れば移動、未設置なら新規設置)。1点しか持たないstateなので、これだけで
-  // 「もう一度押すと元の位置を消して再設置」を満たす。
-  const setSpawnToVisibleCenter = () => {
-    const center = getVisibleCenterMapPoint();
+  // 「アバター初期位置」ボタン: 背景画像(マップ)の中心付近で、障害物・
+  // ミーティングエリアと重ならない位置を探して設置する。1点しか持たない
+  // stateなので、これだけで「もう一度押すと元の位置を消してデフォルト
+  // 位置へ再設置」を満たす(手動でドラッグして動かしていても上書きされる)。
+  const SPAWN_SEARCH_STEP = 20;
+  const findDefaultSpawnPoint = () => {
     const half = avatarSizePx / 2;
-    const x = Math.min(Math.max(center.x, half), mapWidth - half);
-    const y = Math.min(Math.max(center.y, half), mapHeight - half);
-    if (spawnOverlapsAnyZone(x, y)) {
+    const clampX = (x: number) => Math.min(Math.max(x, half), mapWidth - half);
+    const clampY = (y: number) => Math.min(Math.max(y, half), mapHeight - half);
+    const cx = mapWidth / 2;
+    const cy = mapHeight / 2;
+    const maxRing = Math.ceil(
+      Math.max(mapWidth, mapHeight) / SPAWN_SEARCH_STEP,
+    );
+    // マップ中心から外側へ正方形のリング状に候補点を広げながら、障害物・
+    // ミーティングエリアと重ならない最初の位置を採用する(見つからなければ
+    // 中心自体が最も近い妥協案として扱う場合はnullを返し、呼び出し側で
+    // エラーにする)。
+    for (let ring = 0; ring <= maxRing; ring++) {
+      if (ring === 0) {
+        const x = clampX(cx);
+        const y = clampY(cy);
+        if (!spawnOverlapsAnyZone(x, y)) return { x, y };
+        continue;
+      }
+      const r = ring * SPAWN_SEARCH_STEP;
+      for (let dx = -r; dx <= r; dx += SPAWN_SEARCH_STEP) {
+        for (const dy of [-r, r]) {
+          const x = clampX(cx + dx);
+          const y = clampY(cy + dy);
+          if (!spawnOverlapsAnyZone(x, y)) return { x, y };
+        }
+      }
+      for (let dy = -r + SPAWN_SEARCH_STEP; dy <= r - SPAWN_SEARCH_STEP; dy += SPAWN_SEARCH_STEP) {
+        for (const dx of [-r, r]) {
+          const x = clampX(cx + dx);
+          const y = clampY(cy + dy);
+          if (!spawnOverlapsAnyZone(x, y)) return { x, y };
+        }
+      }
+    }
+    return null;
+  };
+
+  const setSpawnToDefaultPosition = () => {
+    const point = findDefaultSpawnPoint();
+    if (!point) {
       setError(
-        "表示中の中心が障害物・ミーティングエリアと重なっているため、アバター初期位置を設置できませんでした。別の位置にスクロールしてからもう一度お試しください。",
+        "障害物・ミーティングエリアが多く、アバター初期位置を設置できる空きスペースが見つかりませんでした。配置を見直してください。",
       );
       return;
     }
     setError(null);
-    setSpawnPoint({ x, y });
+    setSpawnPoint(point);
   };
 
   // 新規アイテムを追加する位置。固定座標(旧: 常に100,100=マップ左上)だと
@@ -414,6 +452,32 @@ export default function TemplateEditor({
         height: NEW_ITEM_SIZE * 2,
         label: "全体アナウンスエリア",
         kind: "announcement",
+      },
+    ]);
+  };
+
+  // 作業エリア:音声通話・ビデオ通話・画面共有をすべて利用不可にするエリア。
+  // 見た目はミーティングエリアと同様に枠・ラベルを表示する(編集画面では
+  // 区別しやすいよう水色で表示)。
+  const addWorkArea = () => {
+    const center = getVisibleCenterMapPoint();
+    const pos = clampPosition(
+      center.x - NEW_ITEM_SIZE,
+      center.y - NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE * 2,
+      NEW_ITEM_SIZE * 2,
+      mapWidth,
+      mapHeight,
+    );
+    setMeetingZones((prev) => [
+      ...prev,
+      {
+        id: randomItemId("work"),
+        ...pos,
+        width: NEW_ITEM_SIZE * 2,
+        height: NEW_ITEM_SIZE * 2,
+        label: "作業エリア",
+        kind: "work",
       },
     ]);
   };
@@ -533,6 +597,8 @@ export default function TemplateEditor({
           )}
         </div>
 
+        <p className="text-xs font-semibold text-slate-500">レイアウト</p>
+
         {error && (
           <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
             {error}
@@ -559,16 +625,22 @@ export default function TemplateEditor({
             ＋会議室
           </button>
           <button
+            onClick={addWorkArea}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            ＋作業エリア
+          </button>
+          <button
             onClick={addAnnouncementZone}
             className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
           >
             ＋全体アナウンスエリア
           </button>
           <button
-            onClick={setSpawnToVisibleCenter}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+            onClick={setSpawnToDefaultPosition}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
           >
-            ＋アバター初期位置
+            アバター初期位置
           </button>
           <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
             {uploading ? "アップロード中..." : "背景画像を変更"}
@@ -659,6 +731,26 @@ export default function TemplateEditor({
           プレビュー
         </button>
 
+        <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+          <div>
+            <p className="font-semibold text-slate-700">【障害物】</p>
+            <p>・通ることができないエリア</p>
+          </div>
+          <div>
+            <p className="font-semibold text-slate-700">【ミーティングエリア】</p>
+            <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
+          </div>
+          <div>
+            <p className="font-semibold text-slate-700">【会議室】</p>
+            <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
+            <p>・鍵の開け閉めが可能(鍵を閉めた人のみ鍵を開けることができる)</p>
+          </div>
+          <div>
+            <p className="font-semibold text-slate-700">【作業エリア】</p>
+            <p>・音声・ビデオ通話・画面共有不可</p>
+          </div>
+        </div>
+
         <div className="mt-auto flex flex-col gap-2">
           <button
             onClick={handleSaveAndClose}
@@ -727,7 +819,9 @@ export default function TemplateEditor({
                     ? "border-green-300 bg-lime-200/25"
                     : zone.kind === "announcement"
                       ? "border-amber-300 bg-amber-200/60"
-                      : "border-slate-300 bg-slate-500/50"
+                      : zone.kind === "work"
+                        ? "border-sky-300 bg-sky-200/60"
+                        : "border-slate-300 bg-slate-500/50"
                 }`}
                 style={{
                   left: zone.x * scale,
@@ -742,7 +836,9 @@ export default function TemplateEditor({
                       ? "text-green-900"
                       : zone.kind === "announcement"
                         ? "text-amber-900"
-                        : "text-white"
+                        : zone.kind === "work"
+                          ? "text-sky-900"
+                          : "text-white"
                   }`}
                 >
                   {zone.label}
