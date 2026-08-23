@@ -3015,9 +3015,21 @@ export default function AvatarSpace({
     setLockActionConfirm((action) => {
       const self = selfState.current;
       if (action && self) {
-        self.lockedMeetingZoneId =
+        const lockedMeetingZoneId =
           action.mode === "lock" ? action.zoneId : null;
+        self.lockedMeetingZoneId = lockedMeetingZoneId;
         channelRef.current?.track(self);
+        // selfState.current(ref)を書き換えただけではReactが再レンダリング
+        // しないため、その場で動かなくても南京錠アイコンが即時に表示される
+        // よう、players Stateも明示的に更新する。
+        setPlayers((prev) => {
+          const current = prev[self.id];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [self.id]: { ...current, lockedMeetingZoneId },
+          };
+        });
       }
       return null;
     });
