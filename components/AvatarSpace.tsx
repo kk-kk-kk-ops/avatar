@@ -498,11 +498,6 @@ export default function AvatarSpace({
   useEffect(() => {
     pendingMeetingEntryRef.current = pendingMeetingEntry;
   }, [pendingMeetingEntry]);
-  // 施錠/解錠の確認ポップアップ("鍵を閉めますか?"/"鍵を開けますか?")
-  const [lockActionConfirm, setLockActionConfirm] = useState<{
-    zoneId: string;
-    mode: "lock" | "unlock";
-  } | null>(null);
   // 施錠者以外が鍵アイコンを押した際のエラーポップアップ(3秒で自動的に消す)
   const [lockPermissionError, setLockPermissionError] = useState<{
     zoneId: string;
@@ -3008,44 +3003,32 @@ export default function AvatarSpace({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [pendingMeetingEntry, confirmMeetingEntry]);
 
-  // 鍵アイコン押下:現在の施錠状態に応じて、施錠/解錠の確認、または
-  // 「施錠者以外は操作できない」エラーを出し分ける。
+  // 鍵アイコン押下:確認ポップアップなしで即座に施錠/解錠を切り替える。
+  // 既に自分以外の誰かが施錠している場合のみ、操作不可のエラーを出す。
   const handleLockIconClick = useCallback((zoneId: string) => {
     const locker = Object.values(playersRef.current).find(
       (p) => p.lockedMeetingZoneId === zoneId,
     );
-    if (locker) {
-      if (locker.id === selfId.current) {
-        setLockActionConfirm({ zoneId, mode: "unlock" });
-      } else {
-        setLockPermissionError({ zoneId });
-      }
-    } else {
-      setLockActionConfirm({ zoneId, mode: "lock" });
+    if (locker && locker.id !== selfId.current) {
+      setLockPermissionError({ zoneId });
+      return;
     }
-  }, []);
 
-  const confirmLockAction = useCallback(() => {
-    setLockActionConfirm((action) => {
-      const self = selfState.current;
-      if (action && self) {
-        const lockedMeetingZoneId =
-          action.mode === "lock" ? action.zoneId : null;
-        self.lockedMeetingZoneId = lockedMeetingZoneId;
-        channelRef.current?.track(self);
-        // selfState.current(ref)を書き換えただけではReactが再レンダリング
-        // しないため、その場で動かなくても南京錠アイコンが即時に表示される
-        // よう、players Stateも明示的に更新する。
-        setPlayers((prev) => {
-          const current = prev[self.id];
-          if (!current) return prev;
-          return {
-            ...prev,
-            [self.id]: { ...current, lockedMeetingZoneId },
-          };
-        });
-      }
-      return null;
+    const self = selfState.current;
+    if (!self) return;
+    const lockedMeetingZoneId = locker ? null : zoneId;
+    self.lockedMeetingZoneId = lockedMeetingZoneId;
+    channelRef.current?.track(self);
+    // selfState.current(ref)を書き換えただけではReactが再レンダリング
+    // しないため、その場で動かなくても南京錠アイコンが即時に表示される
+    // よう、players Stateも明示的に更新する。
+    setPlayers((prev) => {
+      const current = prev[self.id];
+      if (!current) return prev;
+      return {
+        ...prev,
+        [self.id]: { ...current, lockedMeetingZoneId },
+      };
     });
   }, []);
 
@@ -4920,35 +4903,6 @@ export default function AvatarSpace({
               <button
                 type="button"
                 onClick={() => confirmMeetingEntry(pendingMeetingEntry.zoneId)}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-              >
-                はい
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 会議室の施錠/解錠 確認ポップアップ */}
-      {lockActionConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-[260px] rounded-xl bg-white p-6 text-center shadow-xl">
-            <p className="mb-4 text-sm font-semibold text-slate-800">
-              {lockActionConfirm.mode === "lock"
-                ? "鍵を閉めますか?"
-                : "鍵を開けますか?"}
-            </p>
-            <div className="flex justify-center gap-3">
-              <button
-                type="button"
-                onClick={() => setLockActionConfirm(null)}
-                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
-              >
-                いいえ
-              </button>
-              <button
-                type="button"
-                onClick={confirmLockAction}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
               >
                 はい
