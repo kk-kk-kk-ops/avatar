@@ -4140,13 +4140,13 @@ export default function AvatarSpace({
           >
             {/* ミーティングエリア(複数設置可能)。配置はマスターがテンプレート側で編集する
                 (ルーム内での編集は廃止)。「会議室」(kind: "conference")は機能は
-                同じ(同エリア内での自動音声接続)だが、見た目には存在が分からない
-                よう背景・枠・ラベルを一切出さない透明なエリアとして扱う。 */}
+                同じ(同エリア内での自動音声接続)。ラベルは出さないが、部屋の
+                境界がわかるよう薄黄緑の背景・薄緑の枠で塗る。 */}
             {meetingZones.map((zone) =>
               zone.kind === "conference" ? (
                 <div
                   key={zone.id}
-                  className="absolute bg-transparent"
+                  className="absolute rounded-xl border border-green-300 bg-lime-200/40"
                   style={{
                     left: zone.x,
                     top: zone.y,
