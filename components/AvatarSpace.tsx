@@ -2994,6 +2994,20 @@ export default function AvatarSpace({
     autoMoveTargetRef.current = null;
   }, []);
 
+  // 会議室入室確認ポップアップ表示中は、Enterキーでも「はい」と同じ挙動にする。
+  useEffect(() => {
+    if (!pendingMeetingEntry) return;
+    const zoneId = pendingMeetingEntry.zoneId;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        confirmMeetingEntry(zoneId);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pendingMeetingEntry, confirmMeetingEntry]);
+
   // 鍵アイコン押下:現在の施錠状態に応じて、施錠/解錠の確認、または
   // 「施錠者以外は操作できない」エラーを出し分ける。
   const handleLockIconClick = useCallback((zoneId: string) => {
