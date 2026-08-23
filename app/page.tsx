@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
@@ -221,6 +222,36 @@ async function renderViewOnlyRoomJoin(
       viewOnlyInviteToken={inviteToken}
     />
   );
+}
+
+// 招待URL(?invite=トークン)をSlack/LINEなどに貼った際のリンクプレビュー
+// (OGP)に、管理画面で設定した招待者名を「〇〇さんからの招待」として
+// 表示するための動的メタデータ。招待者名が取得できない場合はlayout.tsxの
+// 既定タイトル("Globy")にフォールバックする。
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: { invite?: string };
+}): Promise<Metadata> {
+  const inviteToken = searchParams.invite;
+  if (!inviteToken) return {};
+
+  const supabase = createClient();
+  const { data: accountRows } = await supabase.rpc(
+    "lookup_account_by_invite_token",
+    { token: inviteToken },
+  );
+  const inviterName = accountRows?.[0]?.invite_inviter_name ?? null;
+  if (!inviterName) return {};
+
+  const title = `${inviterName}さんからの招待 | Globy`;
+  const description = `${inviterName}さんからGlobyに招待されました`;
+  return {
+    title,
+    description,
+    openGraph: { title, description },
+    twitter: { title, description },
+  };
 }
 
 // TOPページ(公開)。ログイン済みなら、招待URL経由・通常ログインの
