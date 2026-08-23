@@ -4127,24 +4127,28 @@ export default function AvatarSpace({
                 境界がわかるよう薄黄緑の背景・薄緑の枠で塗る。 */}
             {meetingZones.map((zone) =>
               zone.kind === "conference" ? (
-                <div
-                  key={zone.id}
-                  className="absolute rounded-xl border border-green-300 bg-lime-200/20"
-                  style={{
-                    left: zone.x,
-                    top: zone.y,
-                    width: zone.width,
-                    height: zone.height,
-                  }}
-                >
-                  {/* 施錠アイコン:このゾーンに現在いる人にだけ操作させる
-                      (入室していない相手には見せない=押せない)。 */}
-                  {selfPlayer?.meetingZoneId === zone.id &&
-                    (() => {
-                      const locker = Object.values(players).find(
-                        (p) => p.lockedMeetingZoneId === zone.id,
-                      );
-                      return (
+                (() => {
+                  const locker = Object.values(players).find(
+                    (p) => p.lockedMeetingZoneId === zone.id,
+                  );
+                  return (
+                    <div
+                      key={zone.id}
+                      className={`absolute rounded-xl border ${
+                        locker
+                          ? "border-red-300 bg-pink-200/30"
+                          : "border-green-300 bg-lime-200/20"
+                      }`}
+                      style={{
+                        left: zone.x,
+                        top: zone.y,
+                        width: zone.width,
+                        height: zone.height,
+                      }}
+                    >
+                      {/* 施錠アイコン:このゾーンに現在いる人にだけ操作させる
+                          (入室していない相手には見せない=押せない)。 */}
+                      {selfPlayer?.meetingZoneId === zone.id && (
                         <button
                           type="button"
                           onClick={() => handleLockIconClick(zone.id)}
@@ -4154,9 +4158,10 @@ export default function AvatarSpace({
                         >
                           {locker ? "🔒" : "🔓"}
                         </button>
-                      );
-                    })()}
-                </div>
+                      )}
+                    </div>
+                  );
+                })()
               ) : (
                 <div
                   key={zone.id}
