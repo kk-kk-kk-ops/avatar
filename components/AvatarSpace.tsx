@@ -30,6 +30,7 @@ import {
   rectIntersectsRect,
   resolveSpawnPosition,
   PROXIMITY_RADIUS,
+  AVATAR_RADIUS,
   NEW_ITEM_SIZE,
   Obstacle,
   MeetingZone,
@@ -1985,6 +1986,7 @@ export default function AvatarSpace({
     setScreenSharing(false);
     if (selfState.current) {
       selfState.current.sharingScreen = false;
+      selfState.current.screenPreviewDataUrl = null;
       channelRef.current?.track(selfState.current);
     }
     const room = livekitRoomRef.current;
@@ -2056,8 +2058,13 @@ export default function AvatarSpace({
       // 選択前プレビュー用に、共有開始時点の最初の1フレームだけを
       // 静止画として他の参加者へ配信する(ライブ映像は選択されるまで
       // 誰にも購読させないため、これが無いと共有中かどうかしか分からない)。
+      // broadcastは既に入室中の相手にしか届かない(後から入室した人には
+      // 再配信されない)ため、presence(selfState.screenPreviewDataUrl)にも
+      // 同じ画像を乗せておき、後から入室した人にもsync時点で渡るようにする。
       captureFirstFrame(track.mediaStreamTrack).then((dataUrl) => {
         if (dataUrl && selfState.current) {
+          selfState.current.screenPreviewDataUrl = dataUrl;
+          channelRef.current?.track(selfState.current);
           channelRef.current?.send({
             type: "broadcast",
             event: "screen-preview",
@@ -2227,6 +2234,18 @@ export default function AvatarSpace({
               if (!current) {
                 next[p.id] = p;
                 changed = true;
+                // タブが非アクティブな相手は移動(move)broadcastを送れず、
+                // 初回マウント時の位置をpeerPositionsRefから拾えないと
+                // (0,0)にアバターが表示されてしまう(=見えない扱いに近い)。
+                // presenceで新規に把握した時点でここに座標を種まきしておく。
+                if (!peerPositionsRef.current.has(p.id)) {
+                  peerPositionsRef.current.set(p.id, {
+                    currentX: p.x,
+                    currentY: p.y,
+                    targetX: p.x,
+                    targetY: p.y,
+                  });
+                }
                 return;
               }
               if (
@@ -2263,6 +2282,24 @@ export default function AvatarSpace({
               next[selfState.current.id] = selfState.current;
               changed = true;
             }
+            return changed ? next : prev;
+          });
+
+          // 画面共有の静止画プレビューは、後から入室した人にはbroadcast
+          // (共有開始時点の一度きり)が届かないため、presenceに乗っている
+          // screenPreviewDataUrlから補完する(既に持っていれば上書きしない
+          // ・共有中でなければ何もしない)。
+          setScreenPreviewImages((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            Object.values(state).forEach((entries) => {
+              const p = entries[0] as PlayerState;
+              if (p.id === selfId.current) return;
+              if (p.sharingScreen && p.screenPreviewDataUrl && !next[p.id]) {
+                next[p.id] = p.screenPreviewDataUrl;
+                changed = true;
+              }
+            });
             return changed ? next : prev;
           });
         })
@@ -2578,6 +2615,15 @@ export default function AvatarSpace({
           if (p.id !== selfId.current && !next[p.id]) {
             next[p.id] = p;
             changed = true;
+            // 上のpresence syncハンドラと同じ理由で座標を種まきする。
+            if (!peerPositionsRef.current.has(p.id)) {
+              peerPositionsRef.current.set(p.id, {
+                currentX: p.x,
+                currentY: p.y,
+                targetX: p.x,
+                targetY: p.y,
+              });
+            }
           }
         });
 
@@ -2885,6 +2931,11 @@ export default function AvatarSpace({
               .catch(() => {});
             setMicEnabled(false);
             self.micOn = false;
+            setPlayers((prev) => {
+              const current = prev[self.id];
+              if (!current) return prev;
+              return { ...prev, [self.id]: { ...current, micOn: false } };
+            });
             stopVideoCall();
             stopScreenShare();
           }
@@ -2896,10 +2947,15 @@ export default function AvatarSpace({
 
         // マイクの音声が届く範囲の目安の円も、アバターと同じく毎フレーム
         // DOM操作で位置を更新する(Reactのstate経由だと追従が遅れて見える)。
+        // アバター画像はAvatar.tsx側でx方向のみ中心揃え、y方向は当たり判定
+        // (足元付近を基準)に対して画像を上へずらして表示しているため、円も
+        // 同じ計算式で中心を合わせないと見た目上アバターより下にずれる。
         if (proximityCircleRef.current) {
+          const displaySize = avatarSizePx ?? AVATAR_RADIUS * 2;
+          const visualCenterY = self.y + AVATAR_HITBOX_HEIGHT / 2 - displaySize / 2;
           proximityCircleRef.current.style.transform = `translate(${
             self.x - PROXIMITY_RADIUS
-          }px, ${self.y - PROXIMITY_RADIUS}px)`;
+          }px, ${visualCenterY - PROXIMITY_RADIUS}px)`;
         }
 
         // カメラ(マップ全体の表示位置)もDOM操作で直接更新する。
@@ -3211,6 +3267,15 @@ export default function AvatarSpace({
       if (selfState.current) {
         selfState.current.micOn = next;
         channelRef.current?.track(selfState.current);
+        // selfState.current(ref)を書き換えただけではReactが再レンダリング
+        // しないため、その場で動かなくてもマイクアイコンの表示/非表示が
+        // 即時に反映されるよう、players Stateも明示的に更新する。
+        const self = selfState.current;
+        setPlayers((prev) => {
+          const current = prev[self.id];
+          if (!current) return prev;
+          return { ...prev, [self.id]: { ...current, micOn: next } };
+        });
       }
     } catch {
       setMicError(
@@ -3235,6 +3300,12 @@ export default function AvatarSpace({
     if (selfState.current) {
       selfState.current.micOn = false;
       channelRef.current?.track(selfState.current);
+      const self = selfState.current;
+      setPlayers((prev) => {
+        const current = prev[self.id];
+        if (!current) return prev;
+        return { ...prev, [self.id]: { ...current, micOn: false } };
+      });
     }
   }, []);
 
@@ -3740,12 +3811,24 @@ export default function AvatarSpace({
     };
   }, [joined]);
 
-  // 相手から離れて映像が届かなくなったら、開いていた全画面表示も自動的に閉じる
+  // 相手から離れて映像が届かなくなったら、開いていた全画面表示も自動的に閉じる。
+  // 画面共有は選択(クリック)と同時に購読を開始するため、開いた直後は
+  // まだストリームが届いていない一瞬が必ずある。一度もストリームが
+  // 届いていないうちに「届いていない」を理由に閉じてしまわないよう、
+  // 一度でも届いたことがある場合だけ「消えた」を検知して閉じる。
+  const expandedMediaHadStreamRef = useRef(false);
   useEffect(() => {
-    if (!expandedMedia) return;
+    if (!expandedMedia) {
+      expandedMediaHadStreamRef.current = false;
+      return;
+    }
     const streamMap =
       expandedMedia.kind === "screen" ? remoteScreenStreams : remoteCallStreams;
-    if (!streamMap[expandedMedia.peerId]) {
+    if (streamMap[expandedMedia.peerId]) {
+      expandedMediaHadStreamRef.current = true;
+      return;
+    }
+    if (expandedMediaHadStreamRef.current) {
       setExpandedMedia(null);
     }
   }, [expandedMedia, remoteScreenStreams, remoteCallStreams]);
@@ -4121,49 +4204,37 @@ export default function AvatarSpace({
           )}
 
           {/* 画面共有は同時に何人でも共有できるが、視聴は1人だけ選ぶ方式。
-              選択中の相手だけライブ映像、それ以外は共有開始時点の静止画
-              プレビュー(無ければ「共有中」の簡易表示)を出す。 */}
-          {visibleScreenShares.map((p) => {
-            const isSelected = selectedScreenSharerId === p.id;
-            const liveStream = isSelected ? remoteScreenStreams[p.id] : null;
-            return (
-              <button
-                key={`screen-${p.id}`}
-                onClick={() =>
-                  isSelected
-                    ? setExpandedMedia({ peerId: p.id, kind: "screen" })
-                    : setSelectedScreenSharerId(p.id)
-                }
-                className="relative"
-                aria-label={
-                  isSelected
-                    ? `${p.name}の画面を全画面表示`
-                    : `${p.name}の画面共有を視聴する`
-                }
-              >
-                {liveStream ? (
-                  <RemoteVideo
-                    stream={liveStream}
-                    className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
-                  />
-                ) : screenPreviewImages[p.id] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={screenPreviewImages[p.id]}
-                    alt={`${p.name}の画面共有プレビュー`}
-                    className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
-                  />
-                ) : (
-                  <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
-                    共有中
-                  </div>
-                )}
-                <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                  {p.name}の画面{!isSelected && "(視聴する)"}
-                </span>
-              </button>
-            );
-          })}
+              小さいプレビューは常に共有開始時点の静止画(ライブ映像には
+              しない)、1回のクリックで購読開始と同時に全画面表示へ進む
+              (以前の「黒→静止画プレビュー→全画面」の3段階を、
+              「静止画プレビュー→全画面」の2段階に短縮)。 */}
+          {visibleScreenShares.map((p) => (
+            <button
+              key={`screen-${p.id}`}
+              onClick={() => {
+                setSelectedScreenSharerId(p.id);
+                setExpandedMedia({ peerId: p.id, kind: "screen" });
+              }}
+              className="relative"
+              aria-label={`${p.name}の画面を全画面表示`}
+            >
+              {screenPreviewImages[p.id] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={screenPreviewImages[p.id]}
+                  alt={`${p.name}の画面共有プレビュー`}
+                  className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
+                />
+              ) : (
+                <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
+                  入室中...
+                </div>
+              )}
+              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                {p.name}の画面
+              </span>
+            </button>
+          ))}
 
           {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
               全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
@@ -4301,7 +4372,7 @@ export default function AvatarSpace({
             {/* 自分の音声が届く範囲の目安(マイクON時のみ表示。位置は毎フレームDOM操作で更新) */}
             <div
               ref={proximityCircleRef}
-              className={`pointer-events-none absolute left-0 top-0 rounded-full border border-emerald-400/40 ${
+              className={`pointer-events-none absolute left-0 top-0 rounded-full border-2 border-emerald-400/40 ${
                 micEnabled ? "" : "hidden"
               }`}
               style={{
@@ -4972,7 +5043,14 @@ export default function AvatarSpace({
                 }`}
               />
               <button
-                onClick={() => setExpandedMedia(null)}
+                onClick={() => {
+                  setExpandedMedia(null);
+                  // 画面共有は視聴終了と同時に購読も止める(見ている人が
+                  // いない間は不要な帯域を使わないため)。
+                  if (expandedMedia.kind === "screen") {
+                    setSelectedScreenSharerId(null);
+                  }
+                }}
                 className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
                 aria-label="全画面表示を閉じる"
               >

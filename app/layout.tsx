@@ -9,22 +9,24 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "Globy",
   description: "Globyの2Dアバタースペース (Next.js + Supabase)",
+  // logo-icon.pngはlogo.png(透過背景)に白丸の背景を敷いたもの
+  // (public/logo.pngから生成)。ダークなタブ背景でも視認できるようにする。
   icons: {
-    icon: "/logo.png",
-    apple: "/logo.png",
+    icon: "/logo-icon.png",
+    apple: "/logo-icon.png",
   },
   openGraph: {
     title: "Globy",
     description: "Globyの2Dアバタースペース (Next.js + Supabase)",
     siteName: "Globy",
-    images: ["/logo.png"],
+    images: ["/logo-icon.png"],
     type: "website",
   },
   twitter: {
     card: "summary",
     title: "Globy",
     description: "Globyの2Dアバタースペース (Next.js + Supabase)",
-    images: ["/logo.png"],
+    images: ["/logo-icon.png"],
   },
 };
 
