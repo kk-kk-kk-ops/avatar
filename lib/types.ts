@@ -241,8 +241,14 @@ export const CHAT_IMAGE_ALLOWED_MIME_TYPES = [
 // 秒数(永遠ログイン状態を防ぐため)。ただし通話中(音声・映像・画面共有の
 // いずれか)は時間制限なしでログアウトさせない。将来的に見直す可能性が
 // あるため定数として切り出している。
-export const DESKTOP_AUTO_LOGOUT_SECONDS = 5;
-export const MOBILE_AUTO_LOGOUT_SECONDS = 5;
+// PC: タブ非アクティブでもすぐには退出させず、8時間の猶予を持たせる
+// (ログイン状態は維持したままルーム内表示のみ残る想定)。
+export const DESKTOP_AUTO_LOGOUT_SECONDS = 8 * 60 * 60;
+// スマホ: 画面オフ・アプリ切替はブラウザ側の仕様上区別できないため、
+// どちらも同じ「非表示」として扱い、5分の猶予後に自動ログアウトする。
+// ブラウザ自体を閉じた場合は別途pagehideイベントで即座にログアウトする
+// (AvatarSpace.tsx参照。iOS Safariでは発火が保証されない場合がある)。
+export const MOBILE_AUTO_LOGOUT_SECONDS = 5 * 60;
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;

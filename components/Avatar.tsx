@@ -59,7 +59,10 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   // 吹き出しは設定画面のチェックボックスで表示/非表示が切り替わる常時
   // 表示方式(自動で消えるタイマーは持たない)。
   const showBubble = !!player.showMessage && !!player.message;
-  const showMicBadge = player.micOn !== undefined;
+  // マイクバッジはON中(通話ボタンを押している間)だけ表示する。OFF時は
+  // 何も表示しない(手動ミュート・作業エリアでの強制ミュートいずれの
+  // 場合も同様)。
+  const showMicBadge = player.micOn === true;
   const avatarImage = player.avatarImage || AVATAR_IMAGES[0];
   const spriteSrc = getAvatarSpritePath(avatarImage, player.dir);
 
@@ -125,14 +128,10 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         </span>
       )}
 
-      {/* マイクのON/OFF状態(相手にも見える) */}
+      {/* マイクON中の状態(相手にも見える)。OFF時はバッジを出さない。 */}
       {showMicBadge && (
-        <span
-          className={`absolute left-0 top-0 z-20 flex h-4 w-4 items-center justify-center rounded-full text-[9px] shadow ${
-            player.micOn ? "bg-emerald-500" : "bg-slate-500"
-          }`}
-        >
-          {player.micOn ? "🎤" : "🔇"}
+        <span className="absolute left-0 top-0 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] shadow">
+          🎤
         </span>
       )}
     </div>
