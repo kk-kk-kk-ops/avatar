@@ -4600,7 +4600,7 @@ export default function AvatarSpace({
                     </h2>
                     <button
                       onClick={() => setSelectedPeerUserId(null)}
-                      className="shrink-0 text-slate-400 hover:text-white"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-2xl text-slate-300 hover:bg-slate-800 hover:text-white"
                       aria-label="チャットを閉じる"
                     >
                       ✕
