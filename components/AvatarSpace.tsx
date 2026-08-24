@@ -3608,6 +3608,14 @@ export default function AvatarSpace({
       }
     };
 
+    const mobileLogout = () => {
+      supabase.auth.signOut().finally(() => {
+        window.location.href = guestInviteToken
+          ? `/?invite=${guestInviteToken}`
+          : "/";
+      });
+    };
+
     const startTimerIfNeeded = () => {
       clearTimer();
       if (document.visibilityState !== "hidden" || isInCall) return;
@@ -3620,22 +3628,34 @@ export default function AvatarSpace({
         : DESKTOP_AUTO_LOGOUT_SECONDS;
       timer = setTimeout(() => {
         if (isMobile) {
-          supabase.auth.signOut().finally(() => {
-            window.location.href = guestInviteToken
-              ? `/?invite=${guestInviteToken}`
-              : "/";
-          });
+          mobileLogout();
         } else {
           handleLeaveRoom();
         }
       }, seconds * 1000);
     };
 
+    // スマホでブラウザ/タブを実際に閉じた場合は、上のタイマー(画面オフ・
+    // アプリ切替と区別できないため一律5分待ち)を待たず即座にログアウト
+    // する。pagehideはナビゲーションでも発火するため、通話中は他の端末
+    // への画面遷移などを誤って即ログアウトさせないよう対象外とする。
+    // ただし非同期処理(signOut)がページ破棄前に完了する保証はなく、
+    // 特にiOS Safariでは発火自体が保証されないベストエフォートの実装。
+    const onPageHide = () => {
+      const isMobile =
+        viewportRef.current.width > 0 && viewportRef.current.width < 640;
+      if (isMobile && !isInCall) {
+        mobileLogout();
+      }
+    };
+
     startTimerIfNeeded();
     document.addEventListener("visibilitychange", startTimerIfNeeded);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
       clearTimer();
       document.removeEventListener("visibilitychange", startTimerIfNeeded);
+      window.removeEventListener("pagehide", onPageHide);
     };
   }, [joined, isInCall, supabase, guestInviteToken, handleLeaveRoom]);
 
