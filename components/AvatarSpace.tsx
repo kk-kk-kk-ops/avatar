@@ -4471,7 +4471,7 @@ export default function AvatarSpace({
               </div>
               <button
                 onClick={() => setShowParticipants(false)}
-                className="text-slate-400 hover:text-white sm:hidden"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-2xl text-slate-300 hover:bg-slate-800 hover:text-white sm:hidden"
                 aria-label="閉じる"
               >
                 ✕
