@@ -225,9 +225,12 @@ async function renderViewOnlyRoomJoin(
 }
 
 // 招待URL(?invite=トークン)をSlack/LINEなどに貼った際のリンクプレビュー
-// (OGP)に、管理画面で設定した招待者名を「〇〇さんからの招待」として
-// 表示するための動的メタデータ。招待者名が取得できない場合はlayout.tsxの
-// 既定タイトル("Globy")にフォールバックする。
+// (OGP)に、管理画面で設定した招待者名を本文(description)として表示する
+// ための動的メタデータ。タイトル・アイコンはブラウザタブ表示と統一する
+// ため、招待の有無に関わらず常に「Globy」で固定する(openGraphは親
+// (layout.tsx)のオブジェクトを丸ごと上書きするため、siteName・画像も
+// ここで明示し直す必要がある)。招待者名が取得できない場合は何も返さず、
+// layout.tsxの既定メタデータ(タイトル・説明とも「Globy」側)へ委ねる。
 export async function generateMetadata({
   searchParams,
 }: {
@@ -244,13 +247,24 @@ export async function generateMetadata({
   const inviterName = accountRows?.[0]?.invite_inviter_name ?? null;
   if (!inviterName) return {};
 
-  const title = `${inviterName}さんからの招待 | Globy`;
-  const description = `${inviterName}さんからGlobyに招待されました`;
+  const title = "Globy";
+  const description = `${inviterName}さんから招待されました`;
   return {
     title,
     description,
-    openGraph: { title, description },
-    twitter: { title, description },
+    openGraph: {
+      title,
+      description,
+      siteName: "Globy",
+      images: ["/logo.png"],
+      type: "website",
+    },
+    twitter: {
+      card: "summary",
+      title,
+      description,
+      images: ["/logo.png"],
+    },
   };
 }
 
