@@ -4914,7 +4914,7 @@ export default function AvatarSpace({
           onPointerMove={handleSidebarResizeMove}
           onPointerUp={handleSidebarResizeEnd}
           onPointerCancel={handleSidebarResizeEnd}
-          className="hidden w-1.5 shrink-0 cursor-col-resize touch-none bg-slate-700 hover:bg-emerald-500 active:bg-emerald-500 sm:order-2 sm:block"
+          className="hidden w-[3px] shrink-0 cursor-col-resize touch-none bg-slate-700 hover:bg-emerald-500 active:bg-emerald-500 sm:order-2 sm:block"
         />
       </div>
 
