@@ -94,6 +94,20 @@ function formatDmClockTime(iso: string): string {
   });
 }
 
+// チャットタブの一覧用。当日なら時刻のみ、それ以前は日付(M/D)を表示する
+// (ログインをまたいで数日〜数ヶ月前の履歴も並ぶため、時刻だけでは
+// いつのやり取りか分からなくなるのを防ぐ)。
+function formatDmListTime(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isSameDay) return formatDmClockTime(iso);
+  return date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
+}
+
 // 画面共有開始時点の最初の1フレームを、選択前プレビュー用の軽量な
 // JPEG dataURLとして切り出す。取得に失敗した場合はnullを返す
 // (プレビューが出ないだけで、選択視聴自体は引き続き可能)。
@@ -214,7 +228,11 @@ export default function AvatarSpace({
   const [assetsReady, setAssetsReady] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // サイドバーの3タブ(参加者/チャット/設定)。設定は以前は別画面の
+  // モーダルだったが、サイドバー内のタブへ埋め込む形に変更した。
+  const [sidebarTab, setSidebarTab] = useState<
+    "participants" | "chat" | "settings"
+  >("participants");
   const [settingsNameInput, setSettingsNameInput] = useState("");
   const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
   const [settingsStatus, setSettingsStatus] =
@@ -378,6 +396,21 @@ export default function AvatarSpace({
   useEffect(() => {
     selectedPeerUserIdRef.current = selectedPeerUserId;
   }, [selectedPeerUserId]);
+  // 「チャット」タブ上部に出す、やり取りした相手ごとの最新メッセージ一覧
+  // (LINEのトーク一覧のようなもの)。list_chat_threads RPCでサーバー側に
+  // 集計させる(未読数はログインをまたいでも保持するため、chat_read_state
+  // テーブルの既読位置と突き合わせてサーバー側で計算している)。
+  type ChatThreadSummary = {
+    peerUserId: string;
+    peerName: string;
+    lastMessage: string;
+    lastMessageAt: string;
+    unreadCount: number;
+  };
+  const [chatThreads, setChatThreads] = useState<ChatThreadSummary[]>([]);
+  const [chatThreadsLoading, setChatThreadsLoading] = useState(false);
+  // 新着DMを受信するたびに+1し、チャット一覧の再取得トリガーにする。
+  const [chatThreadsRefreshTrigger, setChatThreadsRefreshTrigger] = useState(0);
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
@@ -753,15 +786,80 @@ export default function AvatarSpace({
         }));
       dmForceScrollRef.current = true;
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
-      // スレッドを開いたので未読を消す
+      // スレッドを開いたので未読を消す(ローカル表示用)。
       setUnreadFromPeers((prev) =>
         prev[selectedPeerUserId] ? { ...prev, [selectedPeerUserId]: 0 } : prev,
       );
+      // 既読位置をサーバー側にも保存する(ログインし直しても未読数が
+      // 保持されるようにするため)。viewOnlyは別ルートのため対象外。
+      if (!viewOnlyInviteToken) {
+        supabase
+          .rpc("mark_chat_thread_read", {
+            p_room_id: roomId,
+            p_peer_user_id: selectedPeerUserId,
+          })
+          .then(({ error: markError }) => {
+            if (markError) {
+              // eslint-disable-next-line no-console
+              console.error("既読位置の保存に失敗しました", markError);
+            }
+          });
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, [joined, roomId, supabase, viewOnlyInviteToken, selectedPeerUserId]);
+
+  // ---- チャットタブ:やり取りした相手ごとの最新メッセージ一覧を読み込む ----
+  // 一覧が実際に表示されているタイミング(チャットタブが開いていて、かつ
+  // 個別スレッドを開いていない)でのみ取得する。新着DM受信時にも
+  // chatThreadsRefreshTriggerを介して再取得する(未読数・並び順を最新化)。
+  useEffect(() => {
+    if (!joined || viewOnlyInviteToken) return;
+    if (sidebarTab !== "chat" || selectedPeerUserId) return;
+    let cancelled = false;
+    setChatThreadsLoading(true);
+    (async () => {
+      const { data, error } = await supabase.rpc("list_chat_threads", {
+        p_room_id: roomId,
+      });
+      if (cancelled) return;
+      setChatThreadsLoading(false);
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("チャット一覧の取得に失敗しました", error);
+        return;
+      }
+      const rows = (data ?? []) as Array<{
+        peer_user_id: string;
+        peer_name: string;
+        last_message: string;
+        last_message_at: string;
+        unread_count: number;
+      }>;
+      setChatThreads(
+        rows.map((row) => ({
+          peerUserId: row.peer_user_id,
+          peerName: row.peer_name,
+          lastMessage: row.last_message,
+          lastMessageAt: row.last_message_at,
+          unreadCount: row.unread_count,
+        })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    joined,
+    roomId,
+    supabase,
+    viewOnlyInviteToken,
+    sidebarTab,
+    selectedPeerUserId,
+    chatThreadsRefreshTrigger,
+  ]);
 
   // ---- チャット:表示中のスレッドが更新されるたびにスクロール位置を制御する ----
   // dmForceScrollRef(送信直後・スレッドを開いた直後・最下部付近での新着)が
@@ -2469,6 +2567,7 @@ export default function AvatarSpace({
               [msg.senderUserId]: (prev[msg.senderUserId] ?? 0) + 1,
             }));
           }
+          setChatThreadsRefreshTrigger((n) => n + 1);
         })
         .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
           const msg = payload as {
@@ -3881,7 +3980,7 @@ export default function AvatarSpace({
     setSettingsStatus(selfState.current?.status ?? "available");
     setSettingsMessageInput(selfState.current?.message ?? "");
     setSettingsShowMessage(selfState.current?.showMessage ?? false);
-    setSettingsOpen(true);
+    setSidebarTab("settings");
   }, []);
 
   const saveSettings = useCallback(() => {
@@ -3898,7 +3997,7 @@ export default function AvatarSpace({
     const updated = selfState.current;
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
     channelRef.current?.track(updated);
-    setSettingsOpen(false);
+    setSidebarTab("participants");
   }, [
     settingsNameInput,
     settingsAvatar,
@@ -4448,10 +4547,9 @@ export default function AvatarSpace({
           } fixed inset-y-0 left-0 z-40 w-full flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-1 sm:flex sm:w-[var(--sidebar-width)] sm:shrink-0`}
           style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
         >
-          {/* 上半分:自分+参加者一覧。サイドバー全体の残り高さ(下半分の
-              DMが50%を占める分の残り)をこのブロックで使い切り、参加者が
-              増えても自分欄は固定したまま参加者一覧だけがスクロールする
-              ようにする。 */}
+          {/* サイドバー本体:ヘッダー+タブ(参加者/チャット/設定)+
+              選択中タブの中身。中身はタブごとに排他的に描画するため、
+              表示中のタブがflex-1で残り高さを使い切る。 */}
           <div className="flex min-h-0 flex-1 flex-col pl-4 pr-3 pb-3 sm:pt-2">
             {/* ヘッダー:アイコン(左上)+閉じるボタン(右上)。スマホの
                 ドロワー表示専用(PC版は常設サイドバーなので、上部の
@@ -4478,125 +4576,180 @@ export default function AvatarSpace({
               </button>
             </div>
 
-            <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
-              自分
-            </h2>
-            {selfPlayer && (
-              <div className="mb-3 flex shrink-0 items-center justify-between gap-2 text-sm">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span
-                    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{
-                      backgroundColor:
-                        PRESENCE_STATUS_COLORS[selfPlayer.status ?? "available"],
-                    }}
-                  />
-                  <span className="truncate">{selfPlayer.name}</span>
-                </div>
+            {/* タブ切替:参加者/チャット/設定 */}
+            <div className="mb-3 flex shrink-0 gap-1 rounded-lg bg-white/5 p-1 text-xs font-semibold">
+              {(
+                [
+                  { key: "participants" as const, label: "参加者" },
+                  { key: "chat" as const, label: "チャット" },
+                  { key: "settings" as const, label: "設定" },
+                ]
+              ).map((tab) => (
                 <button
-                  onClick={openSettings}
-                  className="shrink-0 rounded p-1 text-sm hover:bg-white/10"
-                  aria-label="アバター・名前の設定"
-                  title="アバター・名前を変更"
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setSidebarTab(tab.key)}
+                  className={`flex-1 rounded-md py-1.5 transition-colors ${
+                    sidebarTab === tab.key
+                      ? "bg-emerald-600 text-white"
+                      : "text-slate-300 hover:bg-white/10"
+                  }`}
                 >
-                  ⚙️
+                  {tab.label}
                 </button>
-              </div>
+              ))}
+            </div>
+
+            {sidebarTab === "participants" && (
+              <>
+                <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
+                  自分
+                </h2>
+                {selfPlayer && (
+                  <div className="mb-3 flex shrink-0 items-center justify-between gap-2 text-sm">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{
+                          backgroundColor:
+                            PRESENCE_STATUS_COLORS[selfPlayer.status ?? "available"],
+                        }}
+                      />
+                      <span className="truncate">{selfPlayer.name}</span>
+                    </div>
+                    <button
+                      onClick={openSettings}
+                      className="shrink-0 rounded p-1 text-sm hover:bg-white/10"
+                      aria-label="アバター・名前の設定"
+                      title="アバター・名前を変更"
+                    >
+                      ⚙️
+                    </button>
+                  </div>
+                )}
+
+                <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
+                  参加者
+                </h2>
+                <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+                  {playerList
+                    .filter((p) => p.id !== selfId.current)
+                    .map((p) => (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!p.userId) return;
+                            setSelectedPeerUserId(p.userId);
+                            setSidebarTab("chat");
+                          }}
+                          disabled={!p.userId}
+                          className={`flex w-full items-center gap-1.5 rounded px-1 py-1.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                            p.userId && selectedPeerUserId === p.userId
+                              ? "bg-white/10"
+                              : "hover:bg-white/5"
+                          }`}
+                        >
+                          <span
+                            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor:
+                                PRESENCE_STATUS_COLORS[p.status ?? "available"],
+                            }}
+                          />
+                          <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                        </button>
+                      </li>
+                    ))}
+                </ul>
+              </>
             )}
 
-            <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
-              参加者
-            </h2>
-            <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-              {playerList
-                .filter((p) => p.id !== selfId.current)
-                .map((p) => {
-                  const unreadCount = p.userId ? unreadFromPeers[p.userId] ?? 0 : 0;
-                  const peerThread = p.userId ? dmThreads[p.userId] : undefined;
-                  const lastMessageAt =
-                    peerThread && peerThread.length > 0
-                      ? peerThread[peerThread.length - 1].createdAt
-                      : null;
-                  return (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        onClick={() => p.userId && setSelectedPeerUserId(p.userId)}
-                        disabled={!p.userId}
-                        className={`flex w-full items-center gap-1.5 rounded px-1 py-1.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                          p.userId && selectedPeerUserId === p.userId
-                            ? "bg-white/10"
-                            : "hover:bg-white/5"
-                        }`}
-                      >
-                        <span
-                          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                          style={{
-                            backgroundColor:
-                              PRESENCE_STATUS_COLORS[p.status ?? "available"],
-                          }}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                        {(unreadCount > 0 || lastMessageAt) && (
-                          <span className="flex shrink-0 flex-col items-end gap-0.5">
-                            {lastMessageAt && (
-                              <span className="text-[10px] leading-none text-slate-400">
-                                {formatDmClockTime(lastMessageAt)}
-                              </span>
-                            )}
-                            {unreadCount > 0 && (
-                              <span
-                                className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white"
-                                title="未読メッセージがあります"
-                              >
-                                {unreadCount > 99 ? "99+" : unreadCount}
-                              </span>
-                            )}
-                          </span>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
-            </ul>
-          </div>
-
-          {/* 下半分:選択中の相手とのDM。サイドバー全体の50%の高さを占める */}
-          <div
-            className={`flex h-1/2 shrink-0 flex-col border-t border-slate-700 ${
-              dmDragActive ? "ring-2 ring-inset ring-emerald-400" : ""
-            }`}
-            onDragOver={(e) => {
-              if (!selectedPeerUserId) return;
-              e.preventDefault();
-              setDmDragActive(true);
-            }}
-            onDragLeave={() => setDmDragActive(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDmDragActive(false);
-              if (!selectedPeerUserId) return;
-              const files = Array.from(e.dataTransfer.files ?? []);
-              if (files.length > 0) stageDmImages(files);
-            }}
-          >
-            {(() => {
+            {sidebarTab === "chat" && (
+              <div
+                className={`flex min-h-0 flex-1 flex-col ${
+                  dmDragActive ? "ring-2 ring-inset ring-emerald-400" : ""
+                }`}
+                onDragOver={(e) => {
+                  if (!selectedPeerUserId) return;
+                  e.preventDefault();
+                  setDmDragActive(true);
+                }}
+                onDragLeave={() => setDmDragActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDmDragActive(false);
+                  if (!selectedPeerUserId) return;
+                  const files = Array.from(e.dataTransfer.files ?? []);
+                  if (files.length > 0) stageDmImages(files);
+                }}
+              >
+                {!selectedPeerUserId ? (
+                  chatThreadsLoading ? (
+                    <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
+                      読み込み中...
+                    </div>
+                  ) : chatThreads.length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
+                      参加者を選んでチャットを開始してください
+                    </div>
+                  ) : (
+                    <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+                      {chatThreads.map((t) => (
+                        <li key={t.peerUserId}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPeerUserId(t.peerUserId)}
+                            className="flex w-full items-center gap-2 rounded px-1 py-2 text-left transition-colors hover:bg-white/5"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate text-sm">
+                                  {t.peerName}
+                                </span>
+                                <span className="shrink-0 text-[10px] leading-none text-slate-400">
+                                  {formatDmListTime(t.lastMessageAt)}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate text-xs text-slate-400">
+                                  {t.lastMessage}
+                                </span>
+                                {t.unreadCount > 0 && (
+                                  <span
+                                    className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white"
+                                    title="未読メッセージがあります"
+                                  >
+                                    {t.unreadCount > 99 ? "99+" : t.unreadCount}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                ) : null}
+                {(() => {
               const peer = selectedPeerUserId
                 ? playerList.find((p) => p.userId === selectedPeerUserId)
                 : null;
               if (!selectedPeerUserId) {
-                return (
-                  <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
-                    参加者を選択してチャットを開始してください
-                  </div>
-                );
+                return null;
               }
+              // 今オンラインでない相手(チャット履歴一覧経由で開いた場合など)
+              // は playerList には出てこないため、list_chat_threads側の
+              // 最新表示名にフォールバックする。
+              const threadSummary = chatThreads.find(
+                (t) => t.peerUserId === selectedPeerUserId,
+              );
               const thread = dmThreads[selectedPeerUserId] ?? [];
               return (
                 <>
                   <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
                     <h2 className="truncate text-xs font-semibold text-slate-300">
-                      {peer?.name ?? "退出したユーザー"}
+                      {peer?.name ?? threadSummary?.peerName ?? "退出したユーザー"}
                     </h2>
                     <button
                       onClick={() => setSelectedPeerUserId(null)}
@@ -4902,6 +5055,126 @@ export default function AvatarSpace({
               );
             })()}
           </div>
+            )}
+
+            {sidebarTab === "settings" && (
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-2">
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-slate-400">
+                    アバター
+                  </p>
+                  <AvatarPicker
+                    selected={settingsAvatar}
+                    onSelect={setSettingsAvatar}
+                  />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-slate-400">
+                    表示名
+                  </p>
+                  <input
+                    value={settingsNameInput}
+                    onChange={(e) => setSettingsNameInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && saveSettings()}
+                    placeholder="例:みく"
+                    className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-slate-400"
+                  />
+                </div>
+
+                <div className="flex gap-4">
+                  <div>
+                    <p className="mb-2 text-xs font-semibold text-slate-400">
+                      ステータス
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      {(
+                        Object.keys(PRESENCE_STATUS_LABELS) as PresenceStatus[]
+                      ).map((status) => (
+                        <label
+                          key={status}
+                          className="flex items-center gap-2 text-sm text-slate-200"
+                        >
+                          <input
+                            type="radio"
+                            name="presence-status"
+                            value={status}
+                            checked={settingsStatus === status}
+                            onChange={() => setSettingsStatus(status)}
+                          />
+                          <span
+                            className="inline-block h-2.5 w-2.5 rounded-full"
+                            style={{
+                              backgroundColor: PRESENCE_STATUS_COLORS[status],
+                            }}
+                          />
+                          {PRESENCE_STATUS_LABELS[status]}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="mb-2 text-xs font-semibold text-slate-400">
+                      吹き出し
+                    </p>
+                    <label className="mb-2 flex items-center gap-2 text-sm text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={settingsShowMessage}
+                        onChange={(e) =>
+                          setSettingsShowMessage(e.target.checked)
+                        }
+                      />
+                      表示する
+                    </label>
+                    <input
+                      value={settingsMessageInput}
+                      onChange={(e) =>
+                        setSettingsMessageInput(
+                          e.target.value.slice(0, MESSAGE_MAX_LENGTH),
+                        )
+                      }
+                      maxLength={MESSAGE_MAX_LENGTH}
+                      placeholder="吹き出しの内容"
+                      className="w-full rounded-lg border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-slate-400"
+                    />
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      {settingsMessageInput.length}/{MESSAGE_MAX_LENGTH}文字
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={saveSettings}
+                  className="w-full rounded-lg bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+                >
+                  保存する
+                </button>
+
+                {(isAccountAdmin || isMaster) && (
+                  <div className="space-y-2 border-t border-slate-700 pt-4">
+                    {isAccountAdmin && (
+                      <Link
+                        href="/admin"
+                        className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
+                      >
+                        管理画面へ
+                      </Link>
+                    )}
+                    {isMaster && (
+                      <Link
+                        href="/master"
+                        className="block w-full rounded-lg bg-emerald-900/40 py-2 text-center text-sm font-semibold text-emerald-300 hover:bg-emerald-900/60"
+                      >
+                        マスター画面へ
+                      </Link>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* サイドバーのリサイズハンドル(PC版のみ)。下限は既存の固定幅
@@ -5159,131 +5432,6 @@ export default function AvatarSpace({
         </div>
       )}
 
-      {/* アバター・名前の変更モーダル */}
-      {settingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
-            <h2 className="text-base font-bold text-slate-800">設定</h2>
-            <hr className="mb-4 mt-2 border-slate-200" />
-
-            <p className="mb-2 text-xs font-semibold text-slate-500">
-              アバター
-            </p>
-            <div className="mb-4">
-              <AvatarPicker
-                selected={settingsAvatar}
-                onSelect={setSettingsAvatar}
-              />
-            </div>
-
-            <p className="mb-2 text-xs font-semibold text-slate-500">
-              表示名
-            </p>
-            <input
-              value={settingsNameInput}
-              onChange={(e) => setSettingsNameInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && saveSettings()}
-              placeholder="例:みく"
-              className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-            />
-
-            <div className="mb-4 flex gap-4">
-              <div>
-                <p className="mb-2 text-xs font-semibold text-slate-500">
-                  ステータス
-                </p>
-                <div className="flex flex-col gap-2">
-                  {(
-                    Object.keys(PRESENCE_STATUS_LABELS) as PresenceStatus[]
-                  ).map((status) => (
-                    <label
-                      key={status}
-                      className="flex items-center gap-2 text-sm text-slate-700"
-                    >
-                      <input
-                        type="radio"
-                        name="presence-status"
-                        value={status}
-                        checked={settingsStatus === status}
-                        onChange={() => setSettingsStatus(status)}
-                      />
-                      <span
-                        className="inline-block h-2.5 w-2.5 rounded-full"
-                        style={{ backgroundColor: PRESENCE_STATUS_COLORS[status] }}
-                      />
-                      {PRESENCE_STATUS_LABELS[status]}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <p className="mb-2 text-xs font-semibold text-slate-500">
-                  吹き出し
-                </p>
-                <label className="mb-2 flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={settingsShowMessage}
-                    onChange={(e) => setSettingsShowMessage(e.target.checked)}
-                  />
-                  表示する
-                </label>
-                <input
-                  value={settingsMessageInput}
-                  onChange={(e) =>
-                    setSettingsMessageInput(
-                      e.target.value.slice(0, MESSAGE_MAX_LENGTH),
-                    )
-                  }
-                  maxLength={MESSAGE_MAX_LENGTH}
-                  placeholder="吹き出しの内容"
-                  className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
-                />
-                <p className="mt-1 text-[10px] text-slate-400">
-                  {settingsMessageInput.length}/{MESSAGE_MAX_LENGTH}文字
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => setSettingsOpen(false)}
-                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={saveSettings}
-                className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-              >
-                保存する
-              </button>
-            </div>
-
-            {(isAccountAdmin || isMaster) && (
-              <div className="mt-4 space-y-2 border-t border-slate-200 pt-4">
-                {isAccountAdmin && (
-                  <Link
-                    href="/admin"
-                    className="block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
-                  >
-                    管理画面へ
-                  </Link>
-                )}
-                {isMaster && (
-                  <Link
-                    href="/master"
-                    className="block w-full rounded-lg bg-emerald-50 py-2 text-center text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
-                  >
-                    マスター画面へ
-                  </Link>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

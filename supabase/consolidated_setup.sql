@@ -1077,6 +1077,138 @@ end $$;
 
 
 -- ------------------------------------------------------------
+-- 9f-3. chat_read_state / list_chat_threads / mark_chat_thread_read:
+--   サイドバーの「チャット」タブ(相手ごとの最新メッセージ一覧、LINEの
+--   トーク一覧のようなUI)用。未読数をログインセッションをまたいで
+--   保持したいという要望のため、既読位置(last_read_at)を専用テーブルに
+--   永続化する(以前はクライアント側のstateのみで管理しており、
+--   ログインし直すと0にリセットされていた)。
+-- ------------------------------------------------------------
+create table if not exists public.chat_read_state (
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  peer_user_id uuid not null references auth.users(id) on delete cascade,
+  last_read_at timestamptz not null default now(),
+  primary key (room_id, user_id, peer_user_id)
+);
+
+alter table public.chat_read_state enable row level security;
+
+drop policy if exists "chat_read_state: select own" on public.chat_read_state;
+create policy "chat_read_state: select own"
+  on public.chat_read_state for select
+  using (user_id = auth.uid());
+
+drop policy if exists "chat_read_state: insert own" on public.chat_read_state;
+create policy "chat_read_state: insert own"
+  on public.chat_read_state for insert
+  with check (user_id = auth.uid());
+
+drop policy if exists "chat_read_state: update own" on public.chat_read_state;
+create policy "chat_read_state: update own"
+  on public.chat_read_state for update
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- チャットタブの一覧表示用に、そのルームで自分がやり取りした相手ごとの
+-- 最新メッセージ・未読数・現在の表示名をまとめて返す。表示名は
+-- profiles.display_name(最新の表示名)を優先し、profilesが無い場合のみ
+-- 送信時点のスナップショット(chat_messages.sender_name)にフォールバック
+-- する(=改名して再入室した相手は自動的に最新の名前で表示される)。
+-- profilesは本人以外SELECTできないRLSのため、SECURITY DEFINERで読む。
+-- (viewOnlyゲストのスレッドは対象外。viewOnlyは既存のlist_chat_messages_
+-- by_invite_token経由の別ルートのみで、一覧化はスコープ外とする)
+drop function if exists public.list_chat_threads(uuid);
+create function public.list_chat_threads(p_room_id uuid)
+returns table (
+  peer_user_id uuid,
+  peer_name text,
+  last_message text,
+  last_message_at timestamptz,
+  unread_count bigint
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  with allowed as (
+    select 1
+    from public.rooms r
+    join public.profiles p on p.account_id = r.account_id
+    where r.id = p_room_id and p.user_id = auth.uid()
+  ),
+  peers as (
+    select distinct
+      case when m.sender_user_id = auth.uid() then m.recipient_user_id else m.sender_user_id end as peer_id
+    from public.chat_messages m
+    where m.room_id = p_room_id
+      and (m.sender_user_id = auth.uid() or m.recipient_user_id = auth.uid())
+      and exists (select 1 from allowed)
+  ),
+  last_msgs as (
+    select distinct on (pe.peer_id)
+      pe.peer_id,
+      m.message,
+      m.sender_name,
+      m.deleted_at,
+      m.created_at
+    from peers pe
+    join public.chat_messages m
+      on m.room_id = p_room_id
+      and (
+        (m.sender_user_id = auth.uid() and m.recipient_user_id = pe.peer_id)
+        or (m.recipient_user_id = auth.uid() and m.sender_user_id = pe.peer_id)
+      )
+    order by pe.peer_id, m.created_at desc
+  ),
+  unread as (
+    select
+      m.sender_user_id as peer_id,
+      count(*) as cnt
+    from public.chat_messages m
+    left join public.chat_read_state rs
+      on rs.room_id = p_room_id and rs.user_id = auth.uid() and rs.peer_user_id = m.sender_user_id
+    where m.room_id = p_room_id
+      and m.recipient_user_id = auth.uid()
+      and m.deleted_at is null
+      and m.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
+    group by m.sender_user_id
+  )
+  select
+    lm.peer_id,
+    coalesce(pr.display_name, lm.sender_name) as peer_name,
+    case when lm.deleted_at is not null then '' else lm.message end as last_message,
+    lm.created_at,
+    coalesce(u.cnt, 0) as unread_count
+  from last_msgs lm
+  left join public.profiles pr on pr.user_id = lm.peer_id
+  left join unread u on u.peer_id = lm.peer_id
+  order by lm.created_at desc;
+$$;
+
+revoke all on function public.list_chat_threads(uuid) from public;
+grant execute on function public.list_chat_threads(uuid) to authenticated;
+
+-- スレッドを開いた際に既読位置を更新する。
+drop function if exists public.mark_chat_thread_read(uuid, uuid);
+create function public.mark_chat_thread_read(p_room_id uuid, p_peer_user_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.chat_read_state (room_id, user_id, peer_user_id, last_read_at)
+  values (p_room_id, auth.uid(), p_peer_user_id, now())
+  on conflict (room_id, user_id, peer_user_id)
+  do update set last_read_at = excluded.last_read_at;
+$$;
+
+revoke all on function public.mark_chat_thread_read(uuid, uuid) from public;
+grant execute on function public.mark_chat_thread_read(uuid, uuid) to authenticated;
+
+
+-- ------------------------------------------------------------
 -- 9f-4. chat-images: チャットの画像添付機能用Storageバケット。
 --   非公開バケット(public: false)。DMの内容は本来sender/recipient以外に
 --   見えてはいけないため、template-imagesのような公開バケットにはしない。
