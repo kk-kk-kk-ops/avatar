@@ -228,6 +228,39 @@ export default function AvatarSpace({
   const eligiblePeerIdsRef = useRef<string[]>([]);
   const remoteScreenStreamsRef = useRef<Record<string, MediaStream>>({});
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
+
+  // ---- サイドバーの幅可変(PC版のみ)。リロードで既定幅に戻るシンプルな
+  // 実装(永続化はしない)。下限は既存の固定幅、上限は画面幅の50%。 ----
+  const SIDEBAR_MIN_WIDTH = 274; // 既存のPC版固定幅(sm:w-[274px]だった値)
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
+  const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(
+    null,
+  );
+  const handleSidebarResizeStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      sidebarResizeRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+    },
+    [sidebarWidth],
+  );
+  const handleSidebarResizeMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = sidebarResizeRef.current;
+      if (!drag) return;
+      const dx = e.clientX - drag.startX;
+      const maxWidth = window.innerWidth * 0.5;
+      const next = Math.min(
+        Math.max(drag.startWidth + dx, SIDEBAR_MIN_WIDTH),
+        maxWidth,
+      );
+      setSidebarWidth(next);
+    },
+    [],
+  );
+  const handleSidebarResizeEnd = useCallback(() => {
+    sidebarResizeRef.current = null;
+  }, []);
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
@@ -4261,7 +4294,7 @@ export default function AvatarSpace({
             absoluteなので通常は影響しないはずだが、念のための保険)。 */}
         <div
           ref={containerRef}
-          className="relative min-w-0 flex-1 overflow-hidden bg-slate-700"
+          className="relative min-w-0 flex-1 overflow-hidden bg-slate-700 sm:order-3"
         >
           <div
             ref={worldRef}
@@ -4406,11 +4439,14 @@ export default function AvatarSpace({
           />
         )}
 
-        {/* サイドバー:オンラインリスト+DM(スマホはドロワー表示) */}
+        {/* サイドバー:オンラインリスト+DM(スマホはドロワー表示・画面幅
+            100%。PC版は右端のハンドルでドラッグリサイズ可能、幅は
+            --sidebar-width(px)で制御し、リロードすると既定幅に戻る)。 */}
         <div
           className={`${
             showParticipants ? "flex" : "hidden"
-          } fixed inset-y-0 left-0 z-40 w-64 flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-first sm:flex sm:w-[274px] sm:shrink-0`}
+          } fixed inset-y-0 left-0 z-40 w-full flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-1 sm:flex sm:w-[var(--sidebar-width)] sm:shrink-0`}
+          style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
         >
           {/* 上半分:自分+参加者一覧。サイドバー全体の残り高さ(下半分の
               DMが50%を占める分の残り)をこのブロックで使い切り、参加者が
@@ -4867,6 +4903,19 @@ export default function AvatarSpace({
             })()}
           </div>
         </div>
+
+        {/* サイドバーのリサイズハンドル(PC版のみ)。下限は既存の固定幅
+            (SIDEBAR_MIN_WIDTH)、上限は画面幅の50%。 */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="サイドバーの幅を変更"
+          onPointerDown={handleSidebarResizeStart}
+          onPointerMove={handleSidebarResizeMove}
+          onPointerUp={handleSidebarResizeEnd}
+          onPointerCancel={handleSidebarResizeEnd}
+          className="hidden w-1.5 shrink-0 cursor-col-resize touch-none bg-slate-700 hover:bg-emerald-500 active:bg-emerald-500 sm:order-2 sm:block"
+        />
       </div>
 
       {/* チャット添付画像の拡大プレビュー。送受信済み画像はmessageIdありで
