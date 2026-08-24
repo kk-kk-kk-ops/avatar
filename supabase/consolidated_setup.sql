@@ -1110,19 +1110,250 @@ create policy "chat_read_state: update own"
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
--- チャットタブの一覧表示用に、そのルームで自分がやり取りした相手ごとの
--- 最新メッセージ・未読数・現在の表示名をまとめて返す。表示名は
+-- スレッドを開いた際に既読位置を更新する(1対1)。
+drop function if exists public.mark_chat_thread_read(uuid, uuid);
+create function public.mark_chat_thread_read(p_room_id uuid, p_peer_user_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.chat_read_state (room_id, user_id, peer_user_id, last_read_at)
+  values (p_room_id, auth.uid(), p_peer_user_id, now())
+  on conflict (room_id, user_id, peer_user_id)
+  do update set last_read_at = excluded.last_read_at;
+$$;
+
+revoke all on function public.mark_chat_thread_read(uuid, uuid) from public;
+grant execute on function public.mark_chat_thread_read(uuid, uuid) to authenticated;
+
+
+-- ------------------------------------------------------------
+-- 9f-3b. chat_groups / chat_group_members / chat_group_read_state:
+--   「チャット」タブのグループチャット機能用。1対1(chat_messages.
+--   recipient_user_id)とは別に、chat_messages.group_idでグループ宛て
+--   メッセージを表現する(recipient_user_id/group_idのどちらか一方だけが
+--   埋まる)。既読管理は1対1(chat_read_state)とキーの形が異なる
+--   (相手の代わりにグループID)ため、別テーブルに分けている。
+-- ------------------------------------------------------------
+create table if not exists public.chat_groups (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.chat_group_members (
+  group_id uuid not null references public.chat_groups(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+
+-- chat_groupsのポリシーがchat_group_membersを参照するため、両方のテーブルを
+-- 作成してからRLSを有効化・ポリシーを定義する(順序を逆にすると、まだ
+-- 存在しないテーブルを参照してCREATE POLICY自体がエラーになる)。
+alter table public.chat_groups enable row level security;
+
+drop policy if exists "chat_groups: select member" on public.chat_groups;
+create policy "chat_groups: select member"
+  on public.chat_groups for select
+  using (
+    id in (select group_id from public.chat_group_members where user_id = auth.uid())
+  );
+
+alter table public.chat_group_members enable row level security;
+
+drop policy if exists "chat_group_members: select same group" on public.chat_group_members;
+create policy "chat_group_members: select same group"
+  on public.chat_group_members for select
+  using (
+    group_id in (
+      select m2.group_id from public.chat_group_members m2 where m2.user_id = auth.uid()
+    )
+  );
+
+create table if not exists public.chat_group_read_state (
+  group_id uuid not null references public.chat_groups(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  last_read_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+
+alter table public.chat_group_read_state enable row level security;
+
+drop policy if exists "chat_group_read_state: select own" on public.chat_group_read_state;
+create policy "chat_group_read_state: select own"
+  on public.chat_group_read_state for select
+  using (user_id = auth.uid());
+
+drop policy if exists "chat_group_read_state: insert own" on public.chat_group_read_state;
+create policy "chat_group_read_state: insert own"
+  on public.chat_group_read_state for insert
+  with check (user_id = auth.uid());
+
+drop policy if exists "chat_group_read_state: update own" on public.chat_group_read_state;
+create policy "chat_group_read_state: update own"
+  on public.chat_group_read_state for update
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- 既存のchat_messages(1対1専用だった)をグループメッセージにも使えるよう
+-- 拡張する。recipient_user_id/group_idはどちらか一方だけが埋まる
+-- (both null・both not nullは許可しない)。
+alter table public.chat_messages add column if not exists group_id uuid references public.chat_groups(id) on delete cascade;
+alter table public.chat_messages alter column recipient_user_id drop not null;
+
+alter table public.chat_messages drop constraint if exists chat_messages_target_check;
+alter table public.chat_messages add constraint chat_messages_target_check
+  check (
+    (recipient_user_id is not null and group_id is null)
+    or (recipient_user_id is null and group_id is not null)
+  );
+
+create index if not exists chat_messages_group_id_created_at_idx
+  on public.chat_messages (group_id, created_at);
+
+-- 1対1のRLSに、グループ宛てメッセージの分岐を追加する(既存の1対1部分は
+-- 条件を変えていない)。
+drop policy if exists "chat_messages: select own dm" on public.chat_messages;
+create policy "chat_messages: select own dm"
+  on public.chat_messages for select
+  using (
+    (
+      recipient_user_id is not null
+      and (sender_user_id = auth.uid() or recipient_user_id = auth.uid())
+      and room_id in (
+        select r.id from public.rooms r
+        join public.profiles p on p.account_id = r.account_id
+        where p.user_id = auth.uid()
+      )
+    )
+    or (
+      group_id is not null
+      and group_id in (
+        select group_id from public.chat_group_members where user_id = auth.uid()
+      )
+    )
+  );
+
+drop policy if exists "chat_messages: insert own dm" on public.chat_messages;
+create policy "chat_messages: insert own dm"
+  on public.chat_messages for insert
+  with check (
+    sender_user_id = auth.uid()
+    and char_length(message) <= 500
+    and (
+      image_path is null
+      or image_path like (room_id::text || '/' || sender_user_id::text || '/%')
+    )
+    and (
+      (
+        recipient_user_id is not null
+        and group_id is null
+        and recipient_user_id <> auth.uid()
+        and room_id in (
+          select r.id from public.rooms r
+          join public.profiles p on p.account_id = r.account_id
+          where p.user_id = auth.uid()
+        )
+      )
+      or (
+        recipient_user_id is null
+        and group_id is not null
+        and group_id in (
+          select group_id from public.chat_group_members where user_id = auth.uid()
+        )
+      )
+    )
+  );
+
+-- グループ作成。グループ本体・メンバー行(自分含む)をまとめて作る
+-- (メンバーをまとめて追加するには他人の行をINSERTする必要があり、単純な
+-- RLSでは表現しづらいため、SECURITY DEFINERの関数を経由する。members一覧
+-- の各ユーザーIDがそのルームに実在するかまでは検証しない。これは既存の
+-- 1対1DM(insert own dmポリシー)が宛先の所属を検証していないのと同じ
+-- 設計方針で、実際に読めるかどうかは常にSELECT側のRLSで担保される)。
+drop function if exists public.create_chat_group(uuid, uuid[]);
+create function public.create_chat_group(p_room_id uuid, p_member_user_ids uuid[])
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_group_id uuid;
+  v_member uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  if p_member_user_ids is null or array_length(p_member_user_ids, 1) is null then
+    raise exception '参加者を1人以上選択してください';
+  end if;
+  if not exists (
+    select 1 from public.rooms r
+    join public.profiles p on p.account_id = r.account_id
+    where r.id = p_room_id and p.user_id = auth.uid()
+  ) then
+    raise exception 'このルームへのアクセス権がありません';
+  end if;
+
+  insert into public.chat_groups (room_id, created_by)
+  values (p_room_id, auth.uid())
+  returning id into v_group_id;
+
+  insert into public.chat_group_members (group_id, user_id)
+  values (v_group_id, auth.uid())
+  on conflict do nothing;
+
+  foreach v_member in array p_member_user_ids loop
+    if v_member <> auth.uid() then
+      insert into public.chat_group_members (group_id, user_id)
+      values (v_group_id, v_member)
+      on conflict do nothing;
+    end if;
+  end loop;
+
+  return v_group_id;
+end;
+$$;
+
+grant execute on function public.create_chat_group(uuid, uuid[]) to authenticated;
+
+-- スレッドを開いた際に既読位置を更新する(グループ)。
+drop function if exists public.mark_chat_group_read(uuid);
+create function public.mark_chat_group_read(p_group_id uuid)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.chat_group_read_state (group_id, user_id, last_read_at)
+  values (p_group_id, auth.uid(), now())
+  on conflict (group_id, user_id)
+  do update set last_read_at = excluded.last_read_at;
+$$;
+
+revoke all on function public.mark_chat_group_read(uuid) from public;
+grant execute on function public.mark_chat_group_read(uuid) to authenticated;
+
+-- チャットタブの一覧表示用に、そのルームで自分がやり取りした相手・
+-- 参加しているグループを、最終やり取り順にまとめて返す。1対1の表示名は
 -- profiles.display_name(最新の表示名)を優先し、profilesが無い場合のみ
 -- 送信時点のスナップショット(chat_messages.sender_name)にフォールバック
 -- する(=改名して再入室した相手は自動的に最新の名前で表示される)。
--- profilesは本人以外SELECTできないRLSのため、SECURITY DEFINERで読む。
+-- グループの表示名は、自分以外のメンバーの表示名を「、」区切りで並べた
+-- ものを自動生成する。profilesは本人以外SELECTできないRLSのため、
+-- SECURITY DEFINERで読む。
 -- (viewOnlyゲストのスレッドは対象外。viewOnlyは既存のlist_chat_messages_
 -- by_invite_token経由の別ルートのみで、一覧化はスコープ外とする)
 drop function if exists public.list_chat_threads(uuid);
 create function public.list_chat_threads(p_room_id uuid)
 returns table (
-  peer_user_id uuid,
-  peer_name text,
+  thread_id uuid,
+  is_group boolean,
+  thread_name text,
   last_message text,
   last_message_at timestamptz,
   unread_count bigint
@@ -1143,10 +1374,11 @@ as $$
       case when m.sender_user_id = auth.uid() then m.recipient_user_id else m.sender_user_id end as peer_id
     from public.chat_messages m
     where m.room_id = p_room_id
+      and m.recipient_user_id is not null
       and (m.sender_user_id = auth.uid() or m.recipient_user_id = auth.uid())
       and exists (select 1 from allowed)
   ),
-  last_msgs as (
+  dm_last as (
     select distinct on (pe.peer_id)
       pe.peer_id,
       m.message,
@@ -1162,7 +1394,7 @@ as $$
       )
     order by pe.peer_id, m.created_at desc
   ),
-  unread as (
+  dm_unread as (
     select
       m.sender_user_id as peer_id,
       count(*) as cnt
@@ -1174,38 +1406,74 @@ as $$
       and m.deleted_at is null
       and m.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
     group by m.sender_user_id
+  ),
+  dm_rows as (
+    select
+      lm.peer_id as thread_id,
+      false as is_group,
+      coalesce(pr.display_name, lm.sender_name) as thread_name,
+      case when lm.deleted_at is not null then '' else lm.message end as last_message,
+      lm.created_at as last_message_at,
+      coalesce(u.cnt, 0) as unread_count
+    from dm_last lm
+    left join public.profiles pr on pr.user_id = lm.peer_id
+    left join dm_unread u on u.peer_id = lm.peer_id
+  ),
+  my_groups as (
+    select g.id as group_id, g.created_at
+    from public.chat_groups g
+    join public.chat_group_members gm on gm.group_id = g.id and gm.user_id = auth.uid()
+    where g.room_id = p_room_id
+  ),
+  group_names as (
+    select
+      gm.group_id,
+      string_agg(coalesce(pr.display_name, 'メンバー'), '、' order by pr.display_name) as name
+    from public.chat_group_members gm
+    left join public.profiles pr on pr.user_id = gm.user_id
+    where gm.group_id in (select group_id from my_groups)
+      and gm.user_id <> auth.uid()
+    group by gm.group_id
+  ),
+  group_last as (
+    select distinct on (m.group_id)
+      m.group_id, m.message, m.deleted_at, m.created_at
+    from public.chat_messages m
+    where m.group_id in (select group_id from my_groups)
+    order by m.group_id, m.created_at desc
+  ),
+  group_unread as (
+    select m.group_id, count(*) as cnt
+    from public.chat_messages m
+    left join public.chat_group_read_state rs
+      on rs.group_id = m.group_id and rs.user_id = auth.uid()
+    where m.group_id in (select group_id from my_groups)
+      and m.sender_user_id <> auth.uid()
+      and m.deleted_at is null
+      and m.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
+    group by m.group_id
+  ),
+  group_rows as (
+    select
+      mg.group_id as thread_id,
+      true as is_group,
+      coalesce(gn.name, 'グループ') as thread_name,
+      case when gl.deleted_at is not null then '' else coalesce(gl.message, '') end as last_message,
+      coalesce(gl.created_at, mg.created_at) as last_message_at,
+      coalesce(gu.cnt, 0) as unread_count
+    from my_groups mg
+    left join group_names gn on gn.group_id = mg.group_id
+    left join group_last gl on gl.group_id = mg.group_id
+    left join group_unread gu on gu.group_id = mg.group_id
   )
-  select
-    lm.peer_id,
-    coalesce(pr.display_name, lm.sender_name) as peer_name,
-    case when lm.deleted_at is not null then '' else lm.message end as last_message,
-    lm.created_at,
-    coalesce(u.cnt, 0) as unread_count
-  from last_msgs lm
-  left join public.profiles pr on pr.user_id = lm.peer_id
-  left join unread u on u.peer_id = lm.peer_id
-  order by lm.created_at desc;
+  select * from dm_rows
+  union all
+  select * from group_rows
+  order by last_message_at desc;
 $$;
 
 revoke all on function public.list_chat_threads(uuid) from public;
 grant execute on function public.list_chat_threads(uuid) to authenticated;
-
--- スレッドを開いた際に既読位置を更新する。
-drop function if exists public.mark_chat_thread_read(uuid, uuid);
-create function public.mark_chat_thread_read(p_room_id uuid, p_peer_user_id uuid)
-returns void
-language sql
-security definer
-set search_path = public
-as $$
-  insert into public.chat_read_state (room_id, user_id, peer_user_id, last_read_at)
-  values (p_room_id, auth.uid(), p_peer_user_id, now())
-  on conflict (room_id, user_id, peer_user_id)
-  do update set last_read_at = excluded.last_read_at;
-$$;
-
-revoke all on function public.mark_chat_thread_read(uuid, uuid) from public;
-grant execute on function public.mark_chat_thread_read(uuid, uuid) to authenticated;
 
 
 -- ------------------------------------------------------------

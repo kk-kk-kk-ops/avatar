@@ -401,16 +401,55 @@ export default function AvatarSpace({
   // 集計させる(未読数はログインをまたいでも保持するため、chat_read_state
   // テーブルの既読位置と突き合わせてサーバー側で計算している)。
   type ChatThreadSummary = {
-    peerUserId: string;
-    peerName: string;
+    threadId: string; // 1対1: 相手のuserId、グループ: グループID
+    isGroup: boolean;
+    threadName: string;
     lastMessage: string;
     lastMessageAt: string;
     unreadCount: number;
   };
   const [chatThreads, setChatThreads] = useState<ChatThreadSummary[]>([]);
+  // 自分が所属しているグループIDの集合。ルームchannelのbroadcastは
+  // グループメンバー以外にも届いてしまう(broadcast自体はRLSの対象外の
+  // ため)ため、受信側でメンバーかどうかをこれで判定して弾く。
+  // chatThreads取得のたびに更新し、グループ作成直後は楽観的に追加する。
+  const myGroupIdsRef = useRef<Set<string>>(new Set());
   const [chatThreadsLoading, setChatThreadsLoading] = useState(false);
-  // 新着DMを受信するたびに+1し、チャット一覧の再取得トリガーにする。
+  // 新着DM/グループメッセージを受信するたびに+1し、チャット一覧の
+  // 再取得トリガーにする。
   const [chatThreadsRefreshTrigger, setChatThreadsRefreshTrigger] = useState(0);
+
+  // ---- グループチャット ----
+  type GroupMessage = {
+    id: string;
+    senderUserId: string;
+    senderName: string;
+    isSelf: boolean;
+    message: string;
+    createdAt: string;
+    deletedAt: string | null;
+  };
+  // 現在サイドバーで開いているグループスレッド。1対1(selectedPeerUserId)
+  // とは排他的(どちらか一方だけがnullでない)。
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const selectedGroupIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedGroupIdRef.current = selectedGroupId;
+  }, [selectedGroupId]);
+  const [groupThreads, setGroupThreads] = useState<
+    Record<string, GroupMessage[]>
+  >({});
+  const [groupInput, setGroupInput] = useState("");
+  const [groupSending, setGroupSending] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [createGroupSelectedIds, setCreateGroupSelectedIds] = useState<
+    Set<string>
+  >(new Set());
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [createGroupError, setCreateGroupError] = useState<string | null>(
+    null,
+  );
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
@@ -469,6 +508,10 @@ export default function AvatarSpace({
   const dmScrollRef = useRef<HTMLDivElement | null>(null);
   const dmForceScrollRef = useRef(false);
   const [showDmScrollButton, setShowDmScrollButton] = useState(false);
+  // グループチャットは1対1よりシンプルな仕様(画像添付・編集・削除・
+  // コピーメニュー無し)のため、スクロール制御も単純に「更新のたびに
+  // 一番下へ」だけにする。
+  const groupScrollRef = useRef<HTMLDivElement | null>(null);
 
   // ---- チャット:メッセージのコピー(右クリック/長押しメニュー) ----
   // 各メッセージ本文<p>へのref(Range操作でメッセージ全文選択・選択中の
@@ -811,13 +854,79 @@ export default function AvatarSpace({
     };
   }, [joined, roomId, supabase, viewOnlyInviteToken, selectedPeerUserId]);
 
+  // ---- チャット:選択中のグループスレッドを読み込む ----
+  // viewOnly(招待URL経由の一時閲覧)はグループチャットの対象外
+  // (グループはchat_group_members経由のRLSのため、そもそもviewOnly
+  // ユーザーはどのグループのメンバーにもなり得ない)。
+  useEffect(() => {
+    if (!joined || !selectedGroupId || viewOnlyInviteToken) return;
+    let cancelled = false;
+    const myUserId = authUserIdRef.current;
+    (async () => {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("id, sender_user_id, sender_name, message, created_at, deleted_at")
+        .eq("room_id", roomId)
+        .eq("group_id", selectedGroupId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (cancelled) return;
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("グループチャット履歴の取得に失敗しました", error);
+        return;
+      }
+      const rows = (data ?? []) as Array<{
+        id: string;
+        sender_user_id: string;
+        sender_name: string;
+        message: string;
+        created_at: string;
+        deleted_at: string | null;
+      }>;
+      const messages: GroupMessage[] = rows
+        .slice()
+        .reverse()
+        .filter((row) => !row.deleted_at)
+        .map((row) => ({
+          id: row.id,
+          senderUserId: row.sender_user_id,
+          senderName: row.sender_name,
+          isSelf: row.sender_user_id === myUserId,
+          message: row.message,
+          createdAt: row.created_at,
+          deletedAt: row.deleted_at,
+        }));
+      setGroupThreads((prev) => ({ ...prev, [selectedGroupId]: messages }));
+      supabase
+        .rpc("mark_chat_group_read", { p_group_id: selectedGroupId })
+        .then(({ error: markError }) => {
+          if (markError) {
+            // eslint-disable-next-line no-console
+            console.error("既読位置の保存に失敗しました", markError);
+          }
+        });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, roomId, supabase, viewOnlyInviteToken, selectedGroupId]);
+
+  // グループチャットのスクロール位置制御(更新のたびに一番下へ)。
+  useEffect(() => {
+    if (!selectedGroupId) return;
+    const el = groupScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [selectedGroupId, groupThreads]);
+
   // ---- チャットタブ:やり取りした相手ごとの最新メッセージ一覧を読み込む ----
   // 一覧が実際に表示されているタイミング(チャットタブが開いていて、かつ
   // 個別スレッドを開いていない)でのみ取得する。新着DM受信時にも
   // chatThreadsRefreshTriggerを介して再取得する(未読数・並び順を最新化)。
   useEffect(() => {
     if (!joined || viewOnlyInviteToken) return;
-    if (sidebarTab !== "chat" || selectedPeerUserId) return;
+    if (sidebarTab !== "chat" || selectedPeerUserId || selectedGroupId) return;
     let cancelled = false;
     setChatThreadsLoading(true);
     (async () => {
@@ -832,20 +941,25 @@ export default function AvatarSpace({
         return;
       }
       const rows = (data ?? []) as Array<{
-        peer_user_id: string;
-        peer_name: string;
+        thread_id: string;
+        is_group: boolean;
+        thread_name: string;
         last_message: string;
         last_message_at: string;
         unread_count: number;
       }>;
       setChatThreads(
         rows.map((row) => ({
-          peerUserId: row.peer_user_id,
-          peerName: row.peer_name,
+          threadId: row.thread_id,
+          isGroup: row.is_group,
+          threadName: row.thread_name,
           lastMessage: row.last_message,
           lastMessageAt: row.last_message_at,
           unreadCount: row.unread_count,
         })),
+      );
+      myGroupIdsRef.current = new Set(
+        rows.filter((row) => row.is_group).map((row) => row.thread_id),
       );
     })();
     return () => {
@@ -858,6 +972,7 @@ export default function AvatarSpace({
     viewOnlyInviteToken,
     sidebarTab,
     selectedPeerUserId,
+    selectedGroupId,
     chatThreadsRefreshTrigger,
   ]);
 
@@ -998,6 +1113,101 @@ export default function AvatarSpace({
     },
     [dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken],
   );
+
+  // グループチャットの送信(画像添付・編集・削除は1対1と異なり非対応。
+  // viewOnlyもグループの対象外)。
+  const sendGroupMessage = useCallback(async () => {
+    const groupId = selectedGroupId;
+    const text = groupInput.trim();
+    if (!text || !selfState.current || !groupId || groupSending) return;
+    const senderName = selfState.current.name;
+    const myUserId = authUserIdRef.current;
+    if (!myUserId) return;
+    setGroupError(null);
+    setGroupSending(true);
+    setGroupInput("");
+    try {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .insert({
+          room_id: roomId,
+          sender_user_id: myUserId,
+          group_id: groupId,
+          sender_name: senderName,
+          message: text,
+        })
+        .select("id, created_at")
+        .single();
+      if (error || !data) {
+        // eslint-disable-next-line no-console
+        console.error("グループメッセージの送信に失敗しました", error);
+        setGroupError("送信に失敗しました。時間をおいて再度お試しください。");
+        setGroupInput(text);
+        return;
+      }
+      setGroupThreads((prev) => ({
+        ...prev,
+        [groupId]: [
+          ...(prev[groupId] ?? []),
+          {
+            id: data.id,
+            senderUserId: myUserId,
+            senderName,
+            isSelf: true,
+            message: text,
+            createdAt: data.created_at,
+            deletedAt: null,
+          },
+        ],
+      }));
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "group-dm",
+        payload: {
+          id: data.id,
+          originId: selfId.current,
+          groupId,
+          senderUserId: myUserId,
+          senderName,
+          message: text,
+          createdAt: data.created_at,
+        },
+      });
+      setChatThreadsRefreshTrigger((n) => n + 1);
+    } finally {
+      setGroupSending(false);
+    }
+  }, [groupInput, groupSending, roomId, selectedGroupId, supabase]);
+
+  // グループチャット作成モーダルの「作成」ボタン。
+  const handleCreateGroup = useCallback(async () => {
+    if (createGroupSelectedIds.size === 0 || creatingGroup) return;
+    setCreatingGroup(true);
+    setCreateGroupError(null);
+    try {
+      const { data, error } = await supabase.rpc("create_chat_group", {
+        p_room_id: roomId,
+        p_member_user_ids: Array.from(createGroupSelectedIds),
+      });
+      if (error || !data) {
+        // eslint-disable-next-line no-console
+        console.error("グループチャットの作成に失敗しました", error);
+        setCreateGroupError(
+          "作成に失敗しました。時間をおいて再度お試しください。",
+        );
+        return;
+      }
+      const newGroupId = data as string;
+      myGroupIdsRef.current.add(newGroupId);
+      setShowCreateGroupModal(false);
+      setCreateGroupSelectedIds(new Set());
+      setSelectedPeerUserId(null);
+      setSelectedGroupId(newGroupId);
+      setChatThreadsRefreshTrigger((n) => n + 1);
+    } finally {
+      setCreatingGroup(false);
+    }
+  }, [createGroupSelectedIds, creatingGroup, roomId, supabase]);
 
   // 添付中の画像を1件、idを指定して取り消す。プレビュー用のオブジェクトURLは
   // 明示的に解放しないとリークするため、必ずこの関数経由でクリアする。
@@ -2569,6 +2779,41 @@ export default function AvatarSpace({
           }
           setChatThreadsRefreshTrigger((n) => n + 1);
         })
+        .on("broadcast", { event: "group-dm" }, ({ payload }) => {
+          const msg = payload as {
+            id: string;
+            originId: string;
+            groupId: string;
+            senderUserId: string;
+            senderName: string;
+            message: string;
+            createdAt: string;
+          };
+          // broadcast自体はグループメンバー以外にも届くため、自分が
+          // そのグループのメンバーかどうかをここで判定して弾く。
+          if (
+            msg.originId === selfId.current ||
+            !myGroupIdsRef.current.has(msg.groupId)
+          ) {
+            return;
+          }
+          setGroupThreads((prev) => ({
+            ...prev,
+            [msg.groupId]: [
+              ...(prev[msg.groupId] ?? []),
+              {
+                id: msg.id,
+                senderUserId: msg.senderUserId,
+                senderName: msg.senderName,
+                isSelf: false,
+                message: msg.message,
+                createdAt: msg.createdAt,
+                deletedAt: null,
+              },
+            ],
+          }));
+          setChatThreadsRefreshTrigger((n) => n + 1);
+        })
         .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
           const msg = payload as {
             id: string;
@@ -3974,14 +4219,18 @@ export default function AvatarSpace({
   }, []);
 
   // ---- 入室後の設定変更(名前・アバター画像・在席ステータス・吹き出し) ----
-  const openSettings = useCallback(() => {
+  // 以前は歯車アイコン(削除済み)を押した瞬間にだけ現在値を読み込んで
+  // いたが、タブバーから直接「設定」タブへ切り替えても同じフォームが
+  // 開くようになったため、タブがsettingsになるたびに読み込み直す。
+  useEffect(() => {
+    if (sidebarTab !== "settings") return;
     setSettingsNameInput(selfState.current?.name ?? "");
     setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
     setSettingsStatus(selfState.current?.status ?? "available");
     setSettingsMessageInput(selfState.current?.message ?? "");
     setSettingsShowMessage(selfState.current?.showMessage ?? false);
-    setSidebarTab("settings");
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarTab]);
 
   const saveSettings = useCallback(() => {
     if (!selfState.current) return;
@@ -4606,25 +4855,15 @@ export default function AvatarSpace({
                   自分
                 </h2>
                 {selfPlayer && (
-                  <div className="mb-3 flex shrink-0 items-center justify-between gap-2 text-sm">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span
-                        className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor:
-                            PRESENCE_STATUS_COLORS[selfPlayer.status ?? "available"],
-                        }}
-                      />
-                      <span className="truncate">{selfPlayer.name}</span>
-                    </div>
-                    <button
-                      onClick={openSettings}
-                      className="shrink-0 rounded p-1 text-sm hover:bg-white/10"
-                      aria-label="アバター・名前の設定"
-                      title="アバター・名前を変更"
-                    >
-                      ⚙️
-                    </button>
+                  <div className="mb-3 flex shrink-0 items-center gap-2 text-sm">
+                    <span
+                      className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{
+                        backgroundColor:
+                          PRESENCE_STATUS_COLORS[selfPlayer.status ?? "available"],
+                      }}
+                    />
+                    <span className="truncate">{selfPlayer.name}</span>
                   </div>
                 )}
 
@@ -4640,6 +4879,7 @@ export default function AvatarSpace({
                           type="button"
                           onClick={() => {
                             if (!p.userId) return;
+                            setSelectedGroupId(null);
                             setSelectedPeerUserId(p.userId);
                             setSidebarTab("chat");
                           }}
@@ -4684,52 +4924,73 @@ export default function AvatarSpace({
                   if (files.length > 0) stageDmImages(files);
                 }}
               >
-                {!selectedPeerUserId ? (
-                  chatThreadsLoading ? (
-                    <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
-                      読み込み中...
-                    </div>
-                  ) : chatThreads.length === 0 ? (
-                    <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
-                      参加者を選んでチャットを開始してください
-                    </div>
-                  ) : (
-                    <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-                      {chatThreads.map((t) => (
-                        <li key={t.peerUserId}>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPeerUserId(t.peerUserId)}
-                            className="flex w-full items-center gap-2 rounded px-1 py-2 text-left transition-colors hover:bg-white/5"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="min-w-0 truncate text-sm">
-                                  {t.peerName}
-                                </span>
-                                <span className="shrink-0 text-[10px] leading-none text-slate-400">
-                                  {formatDmListTime(t.lastMessageAt)}
-                                </span>
-                              </div>
-                              <div className="mt-0.5 flex items-center justify-between gap-2">
-                                <span className="min-w-0 truncate text-xs text-slate-400">
-                                  {t.lastMessage}
-                                </span>
-                                {t.unreadCount > 0 && (
-                                  <span
-                                    className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white"
-                                    title="未読メッセージがあります"
-                                  >
-                                    {t.unreadCount > 99 ? "99+" : t.unreadCount}
+                {!selectedPeerUserId && !selectedGroupId ? (
+                  <>
+                    {chatThreadsLoading ? (
+                      <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
+                        読み込み中...
+                      </div>
+                    ) : chatThreads.length === 0 ? (
+                      <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
+                        参加者を選んでチャットを開始してください
+                      </div>
+                    ) : (
+                      <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+                        {chatThreads.map((t) => (
+                          <li key={`${t.isGroup ? "group" : "dm"}-${t.threadId}`}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (t.isGroup) {
+                                  setSelectedPeerUserId(null);
+                                  setSelectedGroupId(t.threadId);
+                                } else {
+                                  setSelectedGroupId(null);
+                                  setSelectedPeerUserId(t.threadId);
+                                }
+                              }}
+                              className="flex w-full items-center gap-2 rounded px-1 py-2 text-left transition-colors hover:bg-white/5"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="min-w-0 truncate text-sm">
+                                    {t.isGroup ? "👥 " : ""}
+                                    {t.threadName}
                                   </span>
-                                )}
+                                  <span className="shrink-0 text-[10px] leading-none text-slate-400">
+                                    {formatDmListTime(t.lastMessageAt)}
+                                  </span>
+                                </div>
+                                <div className="mt-0.5 flex items-center justify-between gap-2">
+                                  <span className="min-w-0 truncate text-xs text-slate-400">
+                                    {t.lastMessage}
+                                  </span>
+                                  {t.unreadCount > 0 && (
+                                    <span
+                                      className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white"
+                                      title="未読メッセージがあります"
+                                    >
+                                      {t.unreadCount > 99 ? "99+" : t.unreadCount}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreateGroupSelectedIds(new Set());
+                        setShowCreateGroupModal(true);
+                      }}
+                      className="mt-2 shrink-0 rounded-lg border border-dashed border-slate-600 py-2 text-xs font-semibold text-slate-300 hover:bg-white/5"
+                    >
+                      ＋ グループチャット作成
+                    </button>
+                  </>
                 ) : null}
                 {(() => {
               const peer = selectedPeerUserId
@@ -4742,14 +5003,14 @@ export default function AvatarSpace({
               // は playerList には出てこないため、list_chat_threads側の
               // 最新表示名にフォールバックする。
               const threadSummary = chatThreads.find(
-                (t) => t.peerUserId === selectedPeerUserId,
+                (t) => !t.isGroup && t.threadId === selectedPeerUserId,
               );
               const thread = dmThreads[selectedPeerUserId] ?? [];
               return (
                 <>
                   <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
                     <h2 className="truncate text-xs font-semibold text-slate-300">
-                      {peer?.name ?? threadSummary?.peerName ?? "退出したユーザー"}
+                      {peer?.name ?? threadSummary?.threadName ?? "退出したユーザー"}
                     </h2>
                     <button
                       onClick={() => setSelectedPeerUserId(null)}
@@ -5054,6 +5315,85 @@ export default function AvatarSpace({
                 </>
               );
             })()}
+                {(() => {
+                  if (!selectedGroupId) return null;
+                  const threadSummary = chatThreads.find(
+                    (t) => t.isGroup && t.threadId === selectedGroupId,
+                  );
+                  const thread = groupThreads[selectedGroupId] ?? [];
+                  return (
+                    <>
+                      <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
+                        <h2 className="truncate text-xs font-semibold text-slate-300">
+                          👥 {threadSummary?.threadName ?? "グループ"}
+                        </h2>
+                        <button
+                          onClick={() => setSelectedGroupId(null)}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base text-slate-300 hover:bg-slate-800 hover:text-white"
+                          aria-label="チャットを閉じる"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <div className="relative min-h-0 flex-1">
+                        <div
+                          ref={groupScrollRef}
+                          className="h-full space-y-2 overflow-y-auto px-3 py-2"
+                        >
+                          {thread.length === 0 && (
+                            <p className="mt-4 text-center text-[11px] text-slate-500">
+                              まだメッセージはありません
+                            </p>
+                          )}
+                          {thread.map((m) => (
+                            <div
+                              key={m.id}
+                              className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                                m.isSelf
+                                  ? "ml-auto bg-emerald-600 text-white"
+                                  : "bg-slate-700 text-slate-100"
+                              }`}
+                            >
+                              {!m.isSelf && (
+                                <p className="mb-0.5 text-[10px] font-semibold text-slate-300">
+                                  {m.senderName}
+                                </p>
+                              )}
+                              <p className="whitespace-pre-wrap break-words">
+                                {m.message}
+                              </p>
+                              <p className="mt-0.5 text-right text-[9px] opacity-70">
+                                {formatDmClockTime(m.createdAt)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {groupError && (
+                        <p className="border-t border-slate-700 px-3 py-1 text-[10px] text-red-400">
+                          {groupError}
+                        </p>
+                      )}
+                      <div className="flex shrink-0 items-center gap-2 border-t border-slate-700 p-2">
+                        <input
+                          value={groupInput}
+                          onChange={(e) => setGroupInput(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && sendGroupMessage()}
+                          maxLength={500}
+                          placeholder="メッセージを入力"
+                          className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
+                        />
+                        <button
+                          onClick={sendGroupMessage}
+                          disabled={!groupInput.trim() || groupSending}
+                          className="flex h-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold leading-none text-white hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          送信
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
           </div>
             )}
 
@@ -5428,6 +5768,78 @@ export default function AvatarSpace({
             <p className="text-sm font-semibold text-slate-800">
               {forceLeaveMessage}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* グループチャット作成モーダル */}
+      {showCreateGroupModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h2 className="text-base font-bold text-slate-800">
+              グループチャット作成
+            </h2>
+            <hr className="mb-4 mt-2 border-slate-200" />
+
+            <p className="mb-2 text-xs font-semibold text-slate-500">
+              参加者(現在ルームに入室中の人のみ選べます)
+            </p>
+            <div className="mb-4 max-h-64 space-y-1 overflow-y-auto">
+              {playerList.filter((p) => p.id !== selfId.current && p.userId)
+                .length === 0 && (
+                <p className="text-xs text-slate-500">
+                  現在、他に入室中の参加者がいません。
+                </p>
+              )}
+              {playerList
+                .filter((p) => p.id !== selfId.current && p.userId)
+                .map((p) => (
+                  <label
+                    key={p.id}
+                    className="flex items-center gap-2 rounded px-1 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={createGroupSelectedIds.has(p.userId as string)}
+                      onChange={(e) => {
+                        const userId = p.userId as string;
+                        setCreateGroupSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(userId);
+                          else next.delete(userId);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="truncate">{p.name}</span>
+                  </label>
+                ))}
+            </div>
+
+            {createGroupError && (
+              <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                {createGroupError}
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setShowCreateGroupModal(false);
+                  setCreateGroupError(null);
+                }}
+                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleCreateGroup}
+                disabled={createGroupSelectedIds.size === 0 || creatingGroup}
+                className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                {creatingGroup ? "作成中..." : "作成"}
+              </button>
+            </div>
           </div>
         </div>
       )}
