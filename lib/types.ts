@@ -19,6 +19,9 @@ export type PlayerState = {
   // presenceのleave検知だけで自動的に解錠扱いになる(専用の後始末処理が不要)。
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
+  // 画面共有開始時点の静止画プレビュー(dataURL)。broadcastは後から入室
+  // した人には届かないため、presence経由でも渡せるようここに乗せる。
+  screenPreviewDataUrl?: string | null;
   inCall?: boolean; // ビデオ通話中かどうか(相手にも表示する)
   watchingScreen?: boolean; // 誰かの画面共有を視聴中かどうか(マスター画面の集計用)
   avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)
@@ -257,7 +260,7 @@ export const AVATAR_HITBOX_WIDTH = 20; // 当たり判定の幅(px)
 export const AVATAR_HITBOX_HEIGHT = 20; // 当たり判定の高さ(px)
 export const MOVE_SPEED = 220; // px / sec
 export const MESSAGE_MAX_LENGTH = 20; // 吹き出しの最大文字数
-export const PROXIMITY_RADIUS = 88; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。E-5で+20px拡大)
+export const PROXIMITY_RADIUS = 98; // 近くにいる人だけ会話できる距離(近接ボイスチャット用。E-5で+20px拡大、2026-08-24でさらに+10px拡大)
 
 export type Rect = { x: number; y: number; width: number; height: number };
 

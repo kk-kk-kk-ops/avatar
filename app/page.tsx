@@ -256,14 +256,14 @@ export async function generateMetadata({
       title,
       description,
       siteName: "Globy",
-      images: ["/logo.png"],
+      images: ["/logo-icon.png"],
       type: "website",
     },
     twitter: {
       card: "summary",
       title,
       description,
-      images: ["/logo.png"],
+      images: ["/logo-icon.png"],
     },
   };
 }
