@@ -1700,6 +1700,25 @@ export default function AvatarSpace({
         if (cancelled) return;
         await room.connect(url, token, { autoSubscribe: false });
         if (!cancelled) setLivekitConnected(true);
+
+        // 接続前から既に画面共有中だった相手のpublicationは、
+        // RoomEvent.TrackPublished(接続後に新規発行された場合にしか
+        // 発火しない)では拾えないため、ここでroom.remoteParticipantsを
+        // 一度走査してscreenSharePublicationsRefへ補完する。これが
+        // 無いと、後から入室した人からは相手の画面共有が(「共有中」
+        // 表示は出るが)黒いプレビューのまま見られない不具合になる
+        // (カメラ・音声は近接判定で購読が繰り返し再評価されるため
+        // 影響を受けない)。
+        room.remoteParticipants.forEach((participant) => {
+          participant.videoTrackPublications.forEach((pub) => {
+            if (pub.source !== Track.Source.ScreenShare) return;
+            screenSharePublicationsRef.current[participant.identity] = pub;
+            if (selectedScreenSharerIdRef.current === participant.identity) {
+              pub.setSubscribed(true);
+            }
+          });
+        });
+
         // 意図しない切断からの再接続の場合、マイク/カメラのON/OFFトグルは
         // ONのままトラックだけが失われているので、現在の状態に合わせて
         // 再パブリッシュする(既に許可済みのgetUserMediaなので通常は
@@ -3949,11 +3968,6 @@ export default function AvatarSpace({
             <span className="hidden shrink-0 text-xs text-slate-300 md:inline">
               オンライン: {playerList.length}人
             </span>
-            {eligiblePeerIds.length > 0 && (
-              <span className="ml-2 hidden shrink-0 rounded-full bg-emerald-600/80 px-2 py-0.5 text-[10px] font-semibold text-white sm:inline-block">
-                🎧 音声通話中({eligiblePeerIds.length}人)
-              </span>
-            )}
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <div className="flex shrink-0 flex-col items-center">
