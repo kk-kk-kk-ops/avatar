@@ -1143,6 +1143,9 @@ create table if not exists public.chat_groups (
   created_at timestamptz not null default now()
 );
 
+-- 任意のグループ名(未設定=nullの場合は参加者名から自動生成する)。
+alter table public.chat_groups add column if not exists name text;
+
 create table if not exists public.chat_group_members (
   group_id uuid not null references public.chat_groups(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -1338,6 +1341,57 @@ $$;
 revoke all on function public.mark_chat_group_read(uuid) from public;
 grant execute on function public.mark_chat_group_read(uuid) to authenticated;
 
+-- グループ名の変更。メンバーなら誰でも変更できる(空文字を渡した場合は
+-- nullに戻し、自動生成の名前に戻す)。
+drop function if exists public.rename_chat_group(uuid, text);
+create function public.rename_chat_group(p_group_id uuid, p_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  if not exists (
+    select 1 from public.chat_group_members
+    where group_id = p_group_id and user_id = auth.uid()
+  ) then
+    raise exception 'このグループのメンバーではありません';
+  end if;
+  update public.chat_groups
+  set name = nullif(trim(p_name), '')
+  where id = p_group_id;
+end;
+$$;
+
+grant execute on function public.rename_chat_group(uuid, text) to authenticated;
+
+-- グループの削除(メッセージ・メンバー・既読情報もon delete cascadeで
+-- まとめて消える)。誤操作で全員分のグループが消えてしまわないよう、
+-- 作成者のみに許可する。
+drop function if exists public.delete_chat_group(uuid);
+create function public.delete_chat_group(p_group_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  delete from public.chat_groups
+  where id = p_group_id and created_by = auth.uid();
+  if not found then
+    raise exception 'このグループを削除する権限がありません';
+  end if;
+end;
+$$;
+
+grant execute on function public.delete_chat_group(uuid) to authenticated;
+
 -- チャットタブの一覧表示用に、そのルームで自分がやり取りした相手・
 -- 参加しているグループを、最終やり取り順にまとめて返す。1対1の表示名は
 -- profiles.display_name(最新の表示名)を優先し、profilesが無い場合のみ
@@ -1420,7 +1474,7 @@ as $$
     left join dm_unread u on u.peer_id = lm.peer_id
   ),
   my_groups as (
-    select g.id as group_id, g.created_at
+    select g.id as group_id, g.created_at, g.name as custom_name
     from public.chat_groups g
     join public.chat_group_members gm on gm.group_id = g.id and gm.user_id = auth.uid()
     where g.room_id = p_room_id
@@ -1457,7 +1511,7 @@ as $$
     select
       mg.group_id as thread_id,
       true as is_group,
-      coalesce(gn.name, 'グループ') as thread_name,
+      coalesce(mg.custom_name, gn.name, 'グループ') as thread_name,
       case when gl.deleted_at is not null then '' else coalesce(gl.message, '') end as last_message,
       coalesce(gl.created_at, mg.created_at) as last_message_at,
       coalesce(gu.cnt, 0) as unread_count

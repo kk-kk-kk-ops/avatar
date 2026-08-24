@@ -450,6 +450,23 @@ export default function AvatarSpace({
   const [createGroupError, setCreateGroupError] = useState<string | null>(
     null,
   );
+  // グループ一覧の右クリックメニュー(グループ名変更/削除)。
+  const [groupContextMenu, setGroupContextMenu] = useState<{
+    groupId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [renameGroupInput, setRenameGroupInput] = useState("");
+  const [renamingGroupSaving, setRenamingGroupSaving] = useState(false);
+  const [renameGroupError, setRenameGroupError] = useState<string | null>(
+    null,
+  );
+  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
+  const [deletingGroupBusy, setDeletingGroupBusy] = useState(false);
+  const [deleteGroupError, setDeleteGroupError] = useState<string | null>(
+    null,
+  );
   const [dmInput, setDmInput] = useState("");
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
@@ -1208,6 +1225,73 @@ export default function AvatarSpace({
       setCreatingGroup(false);
     }
   }, [createGroupSelectedIds, creatingGroup, roomId, supabase]);
+
+  // グループ名変更。メンバーなら誰でも変更できる。
+  const handleRenameGroupSave = useCallback(async () => {
+    if (!renamingGroupId || renamingGroupSaving) return;
+    setRenamingGroupSaving(true);
+    setRenameGroupError(null);
+    try {
+      const { error } = await supabase.rpc("rename_chat_group", {
+        p_group_id: renamingGroupId,
+        p_name: renameGroupInput,
+      });
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("グループ名の変更に失敗しました", error);
+        setRenameGroupError(
+          "変更に失敗しました。時間をおいて再度お試しください。",
+        );
+        return;
+      }
+      setRenamingGroupId(null);
+      setChatThreadsRefreshTrigger((n) => n + 1);
+    } finally {
+      setRenamingGroupSaving(false);
+    }
+  }, [renamingGroupId, renameGroupInput, renamingGroupSaving, supabase]);
+
+  // グループ削除(作成者のみ可能。サーバー側のRLS/権限チェックで最終的に
+  // 弾かれるが、UI上も作成者以外には「削除」を出さない)。
+  const handleDeleteGroupConfirm = useCallback(async () => {
+    if (!deletingGroupId || deletingGroupBusy) return;
+    setDeletingGroupBusy(true);
+    setDeleteGroupError(null);
+    try {
+      const { error } = await supabase.rpc("delete_chat_group", {
+        p_group_id: deletingGroupId,
+      });
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("グループの削除に失敗しました", error);
+        setDeleteGroupError(
+          "削除に失敗しました(作成者のみ削除できます)。",
+        );
+        return;
+      }
+      myGroupIdsRef.current.delete(deletingGroupId);
+      setChatThreads((prev) => prev.filter((t) => t.threadId !== deletingGroupId));
+      if (selectedGroupId === deletingGroupId) {
+        setSelectedGroupId(null);
+      }
+      setDeletingGroupId(null);
+    } finally {
+      setDeletingGroupBusy(false);
+    }
+  }, [deletingGroupId, deletingGroupBusy, selectedGroupId, supabase]);
+
+  // グループの右クリックメニューは、開いている間だけ外側クリック/スクロール
+  // で閉じるようにする。
+  useEffect(() => {
+    if (!groupContextMenu) return;
+    const close = () => setGroupContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [groupContextMenu]);
 
   // 添付中の画像を1件、idを指定して取り消す。プレビュー用のオブジェクトURLは
   // 明示的に解放しないとリークするため、必ずこの関数経由でクリアする。
@@ -4949,6 +5033,15 @@ export default function AvatarSpace({
                                   setSelectedPeerUserId(t.threadId);
                                 }
                               }}
+                              onContextMenu={(e) => {
+                                if (!t.isGroup) return;
+                                e.preventDefault();
+                                setGroupContextMenu({
+                                  groupId: t.threadId,
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                });
+                              }}
                               className="flex w-full items-center gap-2 rounded px-1 py-2 text-left transition-colors hover:bg-white/5"
                             >
                               <div className="min-w-0 flex-1">
@@ -5838,6 +5931,115 @@ export default function AvatarSpace({
                 className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
               >
                 {creatingGroup ? "作成中..." : "作成"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* グループ一覧の右クリックメニュー */}
+      {groupContextMenu && (
+        <div
+          className="fixed z-[70] w-40 overflow-hidden rounded-lg bg-slate-800 text-sm text-white shadow-xl"
+          style={{ left: groupContextMenu.x, top: groupContextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const current = chatThreads.find(
+                (t) => t.threadId === groupContextMenu.groupId,
+              );
+              setRenamingGroupId(groupContextMenu.groupId);
+              setRenameGroupInput(current?.threadName ?? "");
+              setRenameGroupError(null);
+              setGroupContextMenu(null);
+            }}
+            className="block w-full px-3 py-2 text-left hover:bg-slate-700"
+          >
+            グループ名変更
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDeletingGroupId(groupContextMenu.groupId);
+              setDeleteGroupError(null);
+              setGroupContextMenu(null);
+            }}
+            className="block w-full border-t border-slate-700 px-3 py-2 text-left text-red-300 hover:bg-slate-700"
+          >
+            削除
+          </button>
+        </div>
+      )}
+
+      {/* グループ名変更モーダル */}
+      {renamingGroupId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h2 className="text-base font-bold text-slate-800">
+              グループ名変更
+            </h2>
+            <hr className="mb-4 mt-2 border-slate-200" />
+            <input
+              value={renameGroupInput}
+              onChange={(e) => setRenameGroupInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleRenameGroupSave()}
+              maxLength={100}
+              placeholder="グループ名"
+              className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+            />
+            {renameGroupError && (
+              <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                {renameGroupError}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRenamingGroupId(null)}
+                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleRenameGroupSave}
+                disabled={renamingGroupSaving}
+                className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                {renamingGroupSaving ? "保存中..." : "保存する"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* グループ削除の確認モーダル */}
+      {deletingGroupId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              このグループチャットを削除しますか?
+              <br />
+              メッセージも含めて全員から見えなくなります。
+            </p>
+            {deleteGroupError && (
+              <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                {deleteGroupError}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDeletingGroupId(null)}
+                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleDeleteGroupConfirm}
+                disabled={deletingGroupBusy}
+                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                {deletingGroupBusy ? "削除中..." : "削除する"}
               </button>
             </div>
           </div>
