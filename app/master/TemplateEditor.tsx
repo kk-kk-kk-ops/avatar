@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
 import {
   NEW_ITEM_SIZE,
+  MIN_ITEM_SIZE,
+  MIN_OBSTACLE_WIDTH,
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
   clampPosition,
@@ -209,6 +211,7 @@ export default function TemplateEditor({
     drag: DragState,
     dx: number,
     dy: number,
+    minWidth: number = MIN_ITEM_SIZE,
   ): T[] =>
     prev.map((item) => {
       if (item.id !== drag.id) return item;
@@ -230,6 +233,7 @@ export default function TemplateEditor({
         drag.originHeight + dy,
         mapWidth,
         mapHeight,
+        minWidth,
       );
       return { ...item, ...size };
     });
@@ -267,7 +271,7 @@ export default function TemplateEditor({
     const dx = (e.clientX - drag.startX) / scale;
     const dy = (e.clientY - drag.startY) / scale;
     if (drag.itemType === "obstacle") {
-      setObstacles((prev) => applyDrag(prev, drag, dx, dy));
+      setObstacles((prev) => applyDrag(prev, drag, dx, dy, MIN_OBSTACLE_WIDTH));
     } else {
       setMeetingZones((prev) => applyDrag(prev, drag, dx, dy));
     }
@@ -337,7 +341,7 @@ export default function TemplateEditor({
     const point = findDefaultSpawnPoint();
     if (!point) {
       setError(
-        "障害物・ミーティングエリアが多く、アバター初期位置を設置できる空きスペースが見つかりませんでした。配置を見直してください。",
+        "壁・ミーティングエリアが多く、アバター初期位置を設置できる空きスペースが見つかりませんでした。配置を見直してください。",
       );
       return;
     }
@@ -375,7 +379,7 @@ export default function TemplateEditor({
         ...pos,
         width: NEW_ITEM_SIZE,
         height: NEW_ITEM_SIZE,
-        label: "🧱 障害物",
+        label: "🧱 壁",
       },
     ]);
   };
@@ -610,7 +614,7 @@ export default function TemplateEditor({
             onClick={addObstacle}
             className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
           >
-            ＋障害物
+            ＋壁
           </button>
           <button
             onClick={addMeetingZone}
@@ -733,7 +737,7 @@ export default function TemplateEditor({
 
         <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
           <div>
-            <p className="font-semibold text-slate-700">【障害物】</p>
+            <p className="font-semibold text-slate-700">【壁】</p>
             <p>・通ることができないエリア</p>
           </div>
           <div>
@@ -871,7 +875,7 @@ export default function TemplateEditor({
                   height: o.height * scale,
                 }}
               >
-                {o.label}
+                🧱 壁
                 <button
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={() => removeObstacle(o.id)}
@@ -883,7 +887,7 @@ export default function TemplateEditor({
                   onPointerDown={(e) =>
                     handlePointerDown(e, "obstacle", o.id, "resize")
                   }
-                  className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize bg-slate-200"
+                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
                 />
               </div>
             ))}

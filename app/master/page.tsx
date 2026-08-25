@@ -126,7 +126,7 @@ export default async function MasterPage() {
         y: o.y ?? 0,
         width: o.width ?? NEW_ITEM_SIZE,
         height: o.height ?? NEW_ITEM_SIZE,
-        label: o.label ?? "🧱 障害物",
+        label: o.label ?? "🧱 壁",
       }),
     );
 
