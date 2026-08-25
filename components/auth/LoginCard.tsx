@@ -11,7 +11,7 @@ type Props = {
   errorMessage: string | null;
 };
 
-// 新規登録・パスワード再設定は、いずれも「メールで届いた6桁のコードを
+// 新規登録・パスワード再設定は、いずれも「メールで届いた確認コードを
 // 画面に入力する」方式にしている(2026-08-24)。以前はリンクをクリックする
 // 方式だったが、メールアプリやセキュリティ製品がリンクを自動で開いて
 // しまい、実際にユーザーが押す前にリンクが失効してしまう不具合があった
@@ -111,20 +111,30 @@ export default function LoginCard({
     try {
       stashInviteToken();
       const supabase = createClient();
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
           data: displayName.trim() ? { full_name: displayName.trim() } : undefined,
         },
       });
-      // 既に登録済みのメールアドレスの場合、Supabase側はアカウントの
-      // 有無を外部から探られないよう、エラーを返さず「確認コードを
-      // 送信しました」風の応答のみを返す(実際にはメール送信しない)。
-      // そのため成功・重複いずれの場合も同じ案内・同じ次の画面で統一する。
       if (error) {
         setFormError(
           "登録に失敗しました。入力内容をご確認のうえ、時間をおいて再度お試しください。",
+        );
+        setSubmitting(false);
+        return;
+      }
+      // 既に登録済みのメールアドレスの場合、Supabaseはアカウントの有無を
+      // 外部から探られないよう、エラーを返さず「確認コードを送信しました」
+      // 風の応答のみを返す(実際にはメール送信しない)。ただし
+      // data.user.identitiesが空配列になる点で、本当に新規作成できたか
+      // どうかをクライアント側でも判別できる(Supabase公式に案内されている
+      // 方法)。これを見て、既存アカウントの場合ははっきり「登録済み」と
+      // 案内する。
+      if (data.user && data.user.identities?.length === 0) {
+        setFormError(
+          "このメールアドレスは既に登録済みです。ログインをお試しいただくか、パスワードをお忘れの場合は再設定してください。",
         );
         setSubmitting(false);
         return;
@@ -393,7 +403,7 @@ export default function LoginCard({
       {mode === "signup-code" && (
         <p className="mb-3 text-left text-xs text-slate-600">
           <span className="font-semibold">{email}</span>{" "}
-          宛に確認コードを送信しました。メールに記載の6桁のコードを入力してください。
+          宛に確認コードを送信しました。メールに記載の確認コードを入力してください。
         </p>
       )}
       {mode === "forgot" && (
@@ -404,7 +414,7 @@ export default function LoginCard({
       {mode === "forgot-code" && (
         <p className="mb-3 text-left text-xs text-slate-600">
           <span className="font-semibold">{email}</span>{" "}
-          宛に確認コードを送信しました。メールに記載の6桁のコードを入力してください。
+          宛に確認コードを送信しました。メールに記載の確認コードを入力してください。
         </p>
       )}
       {mode === "forgot-new-password" && (
@@ -459,11 +469,16 @@ export default function LoginCard({
           <input
             value={otpCode}
             onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ""))}
-            placeholder="6桁のコード"
+            placeholder="確認コード"
             inputMode="numeric"
-            maxLength={6}
+            // Supabase側のOTP桁数設定(プロジェクトの作成時期により6桁/
+            // 8桁いずれかがデフォルトになる)にコード側が依存しすぎない
+            // よう、実際の桁数より余裕を持たせている(桁数を厳密に
+            // 固定すると、ダッシュボード側の設定変更だけで正しいコードが
+            // 入力できなくなる不具合が起きるため)。
+            maxLength={10}
             autoFocus
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-center text-lg tracking-[0.5em] outline-none focus:border-slate-500"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-center text-lg tracking-[0.3em] outline-none focus:border-slate-500"
           />
         )}
 
