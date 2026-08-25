@@ -109,9 +109,29 @@ export default function LoginCard({
     setSubmitting(true);
     setFormError(null);
     try {
+      // メール/パスワードで既に登録済みかどうかをサーバー側(profiles.provider)
+      // で先に判定する。Googleで登録済みの場合はここではfalseが返り、
+      // 未登録の場合と区別しない(メールアドレス列挙攻撃対策)。そのまま
+      // signUp()に進ませることで、Googleアカウントとの重複時は従来通り
+      // 「確認コードを送信しました」という曖昧な案内のみを表示する
+      // (実際には送信されない)。
+      const checkRes = await fetch("/api/auth/check-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const checkJson = await checkRes.json().catch(() => ({}));
+      if (checkJson.registeredWithPassword) {
+        setFormError(
+          "このメールアドレスは既に登録済みです。ログインをお試しいただくか、パスワードをお忘れの場合は再設定してください。",
+        );
+        setSubmitting(false);
+        return;
+      }
+
       stashInviteToken();
       const supabase = createClient();
-      const { data, error } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
@@ -121,20 +141,6 @@ export default function LoginCard({
       if (error) {
         setFormError(
           "登録に失敗しました。入力内容をご確認のうえ、時間をおいて再度お試しください。",
-        );
-        setSubmitting(false);
-        return;
-      }
-      // 既に登録済みのメールアドレスの場合、Supabaseはアカウントの有無を
-      // 外部から探られないよう、エラーを返さず「確認コードを送信しました」
-      // 風の応答のみを返す(実際にはメール送信しない)。ただし
-      // data.user.identitiesが空配列になる点で、本当に新規作成できたか
-      // どうかをクライアント側でも判別できる(Supabase公式に案内されている
-      // 方法)。これを見て、既存アカウントの場合ははっきり「登録済み」と
-      // 案内する。
-      if (data.user && data.user.identities?.length === 0) {
-        setFormError(
-          "このメールアドレスは既に登録済みです。ログインをお試しいただくか、パスワードをお忘れの場合は再設定してください。",
         );
         setSubmitting(false);
         return;
