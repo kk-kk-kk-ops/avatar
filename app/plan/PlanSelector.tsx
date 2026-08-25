@@ -37,7 +37,7 @@ export default function PlanSelector() {
 
   return (
     <div>
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {PLAN_ORDER.map((planId) => {
           const plan = PLANS[planId];
           const isSelected = selected === planId;
@@ -70,7 +70,7 @@ export default function PlanSelector() {
                 <li>画面共有: {formatPlanDailyLimit(plan.screenShareDailyMinutes)}</li>
                 <li>ビデオ通話: {formatPlanDailyLimit(plan.videoCallDailyMinutes)}</li>
                 <li>音声通話: {formatPlanDailyLimit(plan.voiceCallDailyMinutes)}</li>
-                <li>チャット・画像履歴の保管期間: {plan.historyRetentionLabel}</li>
+                <li>チャット履歴保管期間: {plan.historyRetentionLabel}</li>
                 <li>ルーム: {formatPlanRoomLabel(plan.roomCreation)}</li>
               </ul>
             </label>

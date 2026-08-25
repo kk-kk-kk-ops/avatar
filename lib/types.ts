@@ -220,11 +220,11 @@ export const PLANS: Record<
   },
 };
 
-// 「1人あたり1日◯分」/「無制限」の表示テキストをPLANSの値から生成する
+// 「1人/1日◯分」/「無制限」の表示テキストをPLANSの値から生成する
 // (プラン選択画面・契約情報画面の両方でこの関数を使い、表示ロジックの
 // 重複を避ける)。
 export function formatPlanDailyLimit(minutes: number | null): string {
-  return minutes === null ? "無制限" : `1人あたり1日${minutes}分`;
+  return minutes === null ? "無制限" : `1人/1日${minutes}分`;
 }
 
 // プラン選択画面・契約情報画面で共通して使うプランの項目一覧
