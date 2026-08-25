@@ -1944,7 +1944,20 @@ export default function AvatarSpace({
   useEffect(() => {
     if (!joined) return;
     let cancelled = false;
-    const room = new LiveKitRoom({ adaptiveStream: true, dynacast: true });
+    // audioCaptureDefaults: WebRTC標準のノイズ抑制・エコーキャンセル・
+    // 自動音量調整を有効にする。実はLiveKit SDK自体のデフォルト値も
+    // 全てtrueなのでこの指定が無くても同じ挙動になるが、暗黙のSDK
+    // デフォルトに頼らずコード上で明示しておく(将来のSDKバージョン
+    // アップでデフォルト値が変わっても気づけるように)。
+    const room = new LiveKitRoom({
+      adaptiveStream: true,
+      dynacast: true,
+      audioCaptureDefaults: {
+        noiseSuppression: true,
+        echoCancellation: true,
+        autoGainControl: true,
+      },
+    });
     livekitRoomRef.current = room;
 
     const isManagedKind = (publication: RemoteTrackPublication) =>
