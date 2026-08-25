@@ -5,7 +5,7 @@ import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
 import { AUTH_ERROR_MESSAGES } from "@/lib/authErrorMessages";
 import { PLANS, type PlanId, type Room } from "@/lib/types";
-import GoogleLoginButton from "@/components/auth/GoogleLoginButton";
+import LoginCard from "@/components/auth/LoginCard";
 import AvatarSpaceLoader from "@/components/AvatarSpaceLoader";
 import LogoutButton from "@/components/auth/LogoutButton";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -349,35 +349,16 @@ export default async function Home({
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4">
-      <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
-        {/* ログインフロー統一(2026-08-24): 管理者用/ゲスト用のバッジ・
-            文言出し分けを廃止し、常に同じログイン画面にする。招待URL
-            経由の場合の招待者名表示だけは引き続き案内として残す。 */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/logo.png"
-          alt="ロゴ"
-          className="mx-auto mb-4 h-14 w-14 object-contain"
-        />
-        <h1 className="mb-2 text-lg font-bold text-slate-800">
-          Globy
-        </h1>
-        <p className="mb-6 text-xs text-slate-500">
-          {inviteToken
-            ? inviterName
-              ? `${inviterName}さんからの招待`
-              : "招待されたルームにゲストとして参加します"
-            : "Googleアカウントでログインしてください"}
-        </p>
-
-        {errorMessage && (
-          <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
-            {errorMessage}
-          </p>
-        )}
-
-        <GoogleLoginButton />
-      </div>
+      {/* ログインフロー統一(2026-08-24): 管理者用/ゲスト用のバッジ・
+          文言出し分けを廃止し、常に同じログイン画面にする。招待URL
+          経由の場合の招待者名表示だけは引き続き案内として残す。
+          メール/パスワードのログイン・新規登録・パスワード再設定は
+          クライアント側の対話操作が必要なためLoginCardへ切り出した。 */}
+      <LoginCard
+        inviteToken={inviteToken ?? null}
+        inviterName={inviterName}
+        errorMessage={errorMessage}
+      />
     </div>
   );
 }
