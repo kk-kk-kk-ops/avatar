@@ -1,16 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { PLANS, type PlanId } from "@/lib/types";
+import { PLANS, formatPlanDailyLimit, formatPlanRoomLabel, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
 
 const PLAN_DISPLAY_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
-
-// 「1人あたり1日◯分」/「無制限」の表示テキストをPLANSの値から生成する
-// (プラン名・価格・機能項目の重複記述を避け、PLANSを唯一の情報源にする)。
-function formatDailyLimit(minutes: number | null): string {
-  return minutes === null ? "無制限" : `1人あたり1日${minutes}分`;
-}
 
 export default function BillingPanel({
   plan,
@@ -81,16 +75,11 @@ export default function BillingPanel({
                 </p>
                 <ul className="mb-4 flex-1 space-y-1 text-[11px] text-slate-600">
                   <li>同時入室: {info.maxPeoplePerRoom}人</li>
-                  <li>画面共有: {formatDailyLimit(info.screenShareDailyMinutes)}</li>
-                  <li>ビデオ通話: {formatDailyLimit(info.videoCallDailyMinutes)}</li>
-                  <li>音声通話: {formatDailyLimit(info.voiceCallDailyMinutes)}</li>
+                  <li>画面共有: {formatPlanDailyLimit(info.screenShareDailyMinutes)}</li>
+                  <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
+                  <li>音声通話: {formatPlanDailyLimit(info.voiceCallDailyMinutes)}</li>
                   <li>チャット・画像履歴の保管期間: {info.historyRetentionLabel}</li>
-                  <li>
-                    ルーム作成:{" "}
-                    {info.roomCreation === "template-or-original"
-                      ? "テンプレート＋オリジナル作成可"
-                      : "テンプレートのみ"}
-                  </li>
+                  <li>ルーム: {formatPlanRoomLabel(info.roomCreation)}</li>
                 </ul>
                 <button
                   disabled
@@ -157,8 +146,8 @@ export default function BillingPanel({
                   </p>
                   <ul className="mb-4 flex-1 space-y-1 text-[11px] text-slate-600">
                     <li>同時入室: {info.maxPeoplePerRoom}人</li>
-                    <li>画面共有: {formatDailyLimit(info.screenShareDailyMinutes)}</li>
-                    <li>ビデオ通話: {formatDailyLimit(info.videoCallDailyMinutes)}</li>
+                    <li>画面共有: {formatPlanDailyLimit(info.screenShareDailyMinutes)}</li>
+                    <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
                     <li>音声通話: 無制限</li>
                     <li>チャット・画像履歴の保管期間: {info.historyRetentionLabel}</li>
                   </ul>

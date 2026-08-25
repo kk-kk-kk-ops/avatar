@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { PLANS, type PlanId } from "@/lib/types";
+import { PLANS, formatPlanDailyLimit, formatPlanRoomLabel, type PlanId } from "@/lib/types";
 import { startFreeTrial } from "./actions";
 import LogoutButton from "@/components/auth/LogoutButton";
 
@@ -43,27 +43,33 @@ export default function PlanSelector() {
           return (
             <label
               key={planId}
-              className={`flex cursor-pointer items-center justify-between rounded-lg border-2 px-4 py-3 transition-colors ${
+              className={`flex cursor-pointer items-start justify-between gap-3 rounded-lg border-2 px-4 py-3 transition-colors ${
                 selected === planId
                   ? "border-slate-900 bg-slate-50"
                   : "border-slate-200 hover:border-slate-300"
               }`}
             >
-              <span className="flex items-center gap-3">
+              <span className="flex items-start gap-3">
                 <input
                   type="radio"
                   name="plan"
                   value={planId}
                   checked={selected === planId}
                   onChange={() => setSelected(planId)}
+                  className="mt-1"
                 />
                 <span>
                   <span className="block text-sm font-semibold text-slate-800">
                     {plan.label}
                   </span>
-                  <span className="block text-xs text-slate-500">
-                    {plan.subLabel}
-                  </span>
+                  <ul className="mt-1 space-y-0.5 text-xs text-slate-500">
+                    <li>同時入室: {plan.maxPeoplePerRoom}人</li>
+                    <li>画面共有: {formatPlanDailyLimit(plan.screenShareDailyMinutes)}</li>
+                    <li>ビデオ通話: {formatPlanDailyLimit(plan.videoCallDailyMinutes)}</li>
+                    <li>音声通話: {formatPlanDailyLimit(plan.voiceCallDailyMinutes)}</li>
+                    <li>チャット・画像履歴の保管期間: {plan.historyRetentionLabel}</li>
+                    <li>ルーム: {formatPlanRoomLabel(plan.roomCreation)}</li>
+                  </ul>
                 </span>
               </span>
               <span className="shrink-0 text-sm font-bold text-slate-800">
