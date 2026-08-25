@@ -303,6 +303,7 @@ export type MeetingZone = Rect & {
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
 export const MIN_ITEM_SIZE = 40; // これより小さくはできない
+export const MIN_OBSTACLE_WIDTH = 20; // 障害物(壁)は幅だけ半分の細さまで許容する
 
 export const DEFAULT_OBSTACLES: Obstacle[] = [
   {
@@ -422,6 +423,8 @@ export function clampPosition(
 }
 
 // リサイズ時、x,yは変えずに幅・高さがマップの外へはみ出さないよう、かつ最小サイズを下回らないよう制限する
+// minWidth/minHeightを省略した場合はMIN_ITEM_SIZE(通常の最小サイズ)を使う
+// (障害物だけ細い壁を作れるようMIN_OBSTACLE_WIDTHを渡せるようにするため引数化した)。
 export function clampSize(
   x: number,
   y: number,
@@ -429,11 +432,13 @@ export function clampSize(
   height: number,
   mapWidth: number = MAP_WIDTH,
   mapHeight: number = MAP_HEIGHT,
+  minWidth: number = MIN_ITEM_SIZE,
+  minHeight: number = MIN_ITEM_SIZE,
 ): { width: number; height: number } {
-  const maxWidth = Math.max(mapWidth - x, MIN_ITEM_SIZE);
-  const maxHeight = Math.max(mapHeight - y, MIN_ITEM_SIZE);
+  const maxWidth = Math.max(mapWidth - x, minWidth);
+  const maxHeight = Math.max(mapHeight - y, minHeight);
   return {
-    width: Math.min(Math.max(width, MIN_ITEM_SIZE), maxWidth),
-    height: Math.min(Math.max(height, MIN_ITEM_SIZE), maxHeight),
+    width: Math.min(Math.max(width, minWidth), maxWidth),
+    height: Math.min(Math.max(height, minHeight), maxHeight),
   };
 }
