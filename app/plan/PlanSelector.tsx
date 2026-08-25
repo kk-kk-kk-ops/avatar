@@ -37,44 +37,42 @@ export default function PlanSelector() {
 
   return (
     <div>
-      <div className="mb-6 space-y-2">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {PLAN_ORDER.map((planId) => {
           const plan = PLANS[planId];
+          const isSelected = selected === planId;
           return (
             <label
               key={planId}
-              className={`flex cursor-pointer items-start justify-between gap-3 rounded-lg border-2 px-4 py-3 transition-colors ${
-                selected === planId
+              className={`flex cursor-pointer flex-col rounded-xl border-2 bg-white p-4 transition-colors ${
+                isSelected
                   ? "border-slate-900 bg-slate-50"
                   : "border-slate-200 hover:border-slate-300"
               }`}
             >
-              <span className="flex items-start gap-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-bold text-slate-800">
+                  {plan.label}
+                </span>
                 <input
                   type="radio"
                   name="plan"
                   value={planId}
-                  checked={selected === planId}
+                  checked={isSelected}
                   onChange={() => setSelected(planId)}
-                  className="mt-1"
                 />
-                <span>
-                  <span className="block text-sm font-semibold text-slate-800">
-                    {plan.label}
-                  </span>
-                  <ul className="mt-1 space-y-0.5 text-xs text-slate-500">
-                    <li>同時入室: {plan.maxPeoplePerRoom}人</li>
-                    <li>画面共有: {formatPlanDailyLimit(plan.screenShareDailyMinutes)}</li>
-                    <li>ビデオ通話: {formatPlanDailyLimit(plan.videoCallDailyMinutes)}</li>
-                    <li>音声通話: {formatPlanDailyLimit(plan.voiceCallDailyMinutes)}</li>
-                    <li>チャット・画像履歴の保管期間: {plan.historyRetentionLabel}</li>
-                    <li>ルーム: {formatPlanRoomLabel(plan.roomCreation)}</li>
-                  </ul>
-                </span>
-              </span>
-              <span className="shrink-0 text-sm font-bold text-slate-800">
+              </div>
+              <p className="mb-3 text-lg font-bold text-slate-900">
                 {plan.priceLabel}
-              </span>
+              </p>
+              <ul className="flex-1 space-y-1 text-[11px] text-slate-600">
+                <li>同時入室: {plan.maxPeoplePerRoom}人</li>
+                <li>画面共有: {formatPlanDailyLimit(plan.screenShareDailyMinutes)}</li>
+                <li>ビデオ通話: {formatPlanDailyLimit(plan.videoCallDailyMinutes)}</li>
+                <li>音声通話: {formatPlanDailyLimit(plan.voiceCallDailyMinutes)}</li>
+                <li>チャット・画像履歴の保管期間: {plan.historyRetentionLabel}</li>
+                <li>ルーム: {formatPlanRoomLabel(plan.roomCreation)}</li>
+              </ul>
             </label>
           );
         })}

@@ -20,7 +20,7 @@ export default async function PlanPage() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4 py-10">
-      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl">
+      <div className="w-full max-w-3xl rounded-2xl bg-white p-8 shadow-xl">
         <div className="mb-4 flex items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Globy" className="h-6 w-6 object-contain" />
