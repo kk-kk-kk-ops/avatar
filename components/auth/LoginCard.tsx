@@ -9,9 +9,10 @@ type Props = {
   inviteToken: string | null;
   inviterName: string | null;
   errorMessage: string | null;
+  errorCode: string | null;
 };
 
-type Mode = "login" | "signup" | "forgot";
+type Mode = "login" | "signup" | "forgot" | "resend";
 
 // メール/パスワードでのログイン・新規登録・パスワード再設定をまとめた
 // カード。Googleログイン(GoogleLoginButton)と同じ白いカード内に収め、
@@ -21,6 +22,7 @@ export default function LoginCard({
   inviteToken,
   inviterName,
   errorMessage,
+  errorCode,
 }: Props) {
   const searchParams = useSearchParams();
   // props のinviteTokenは初回描画時点のものなので、フォーム操作中に
@@ -28,7 +30,12 @@ export default function LoginCard({
   // しておく(GoogleLoginButtonと同じ取得元)。
   const currentInviteToken = searchParams.get("invite") ?? inviteToken;
 
-  const [mode, setMode] = useState<Mode>("login");
+  // 確認メールのリンクが期限切れ/使用済みだった場合は、最初から
+  // 「確認メールを再送信」の入力欄を出しておく(パスワード再入力を
+  // 求めずに再送できるようにするため)。
+  const [mode, setMode] = useState<Mode>(
+    errorCode === "link_expired" ? "resend" : "login",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -164,12 +171,51 @@ export default function LoginCard({
     }
   };
 
+  const handleResendConfirmation = async () => {
+    if (!email.trim()) {
+      setFormError("メールアドレスを入力してください。");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      if (currentInviteToken) {
+        sessionStorage.setItem("pendingInviteToken", currentInviteToken);
+      } else {
+        sessionStorage.removeItem("pendingInviteToken");
+      }
+      const supabase = createClient();
+      const callbackUrl = new URL("/auth/callback", window.location.origin);
+      if (currentInviteToken) {
+        callbackUrl.searchParams.set("invite", currentInviteToken);
+      }
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: email.trim(),
+        options: { emailRedirectTo: callbackUrl.toString() },
+      });
+      if (error) {
+        setFormError(
+          "送信に失敗しました。時間をおいて再度お試しください。",
+        );
+        setSubmitting(false);
+        return;
+      }
+      setSuccessMessage("確認メールを再送信しました。");
+      setSubmitting(false);
+    } catch {
+      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
     if (mode === "login") handleLogin();
     else if (mode === "signup") handleSignup();
-    else handleForgotPassword();
+    else if (mode === "forgot") handleForgotPassword();
+    else handleResendConfirmation();
   };
 
   return (
@@ -203,7 +249,7 @@ export default function LoginCard({
         <div className="h-px flex-1 bg-slate-200" />
       </div>
 
-      {mode !== "forgot" && (
+      {mode !== "forgot" && mode !== "resend" && (
         <div className="mb-4 flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
           <button
             type="button"
@@ -235,6 +281,11 @@ export default function LoginCard({
           パスワード再設定
         </p>
       )}
+      {mode === "resend" && (
+        <p className="mb-3 text-left text-xs font-semibold text-slate-600">
+          確認メールの再送信
+        </p>
+      )}
 
       {successMessage ? (
         <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
@@ -258,7 +309,7 @@ export default function LoginCard({
             autoComplete="email"
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
-          {mode !== "forgot" && (
+          {mode !== "forgot" && mode !== "resend" && (
             <input
               type="password"
               value={password}
@@ -298,7 +349,9 @@ export default function LoginCard({
                 ? "ログイン"
                 : mode === "signup"
                   ? "登録する"
-                  : "送信する"}
+                  : mode === "resend"
+                    ? "確認メールを再送信する"
+                    : "送信する"}
           </button>
 
           {mode === "login" && (
@@ -310,7 +363,7 @@ export default function LoginCard({
               パスワードをお忘れですか?
             </button>
           )}
-          {mode === "forgot" && (
+          {(mode === "forgot" || mode === "resend") && (
             <button
               type="button"
               onClick={() => resetFormState("login")}

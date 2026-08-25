@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const oauthError = searchParams.get("error");
+  const oauthErrorCode = searchParams.get("error_code");
   // H-3: ログイン失敗時も、元々開いていた招待URLへ(エラー表示付きで)
   // 戻すため、成功時と同じ/auth/completeへの着地経路を使う。招待トークン
   // はsessionStorage側が主で、ここでのクエリはその保険(H-1と同じ考え方)。
@@ -21,8 +22,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(url.toString());
   };
 
-  // ユーザーがGoogle側でログインをキャンセルした場合など
   if (oauthError) {
+    // メール確認/パスワード再設定リンクの有効期限切れ・使用済みの場合、
+    // Supabase(GoTrue)はGoogleログインの「ユーザーがキャンセルした」場合と
+    // 同じerror=access_deniedを返すが、error_code=otp_expiredが付く点で
+    // 区別できる。以前はこれを区別せず一律「ログインがキャンセルされ
+    // ました」と表示していたため、確認メールのリンクが期限切れ/使用済み
+    // だった場合にも同じ誤解を招くメッセージが出てしまっていた
+    // (メール到達確認テスト時に発覚)。
+    if (oauthErrorCode === "otp_expired") {
+      return redirectToComplete("link_expired");
+    }
+    // ユーザーがGoogle側でログインをキャンセルした場合など
     const reason = oauthError === "access_denied" ? "cancelled" : "auth_failed";
     return redirectToComplete(reason);
   }
