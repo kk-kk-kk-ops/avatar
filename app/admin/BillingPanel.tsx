@@ -78,7 +78,7 @@ export default function BillingPanel({
                   <li>画面共有: {formatPlanDailyLimit(info.screenShareDailyMinutes)}</li>
                   <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
                   <li>音声通話: {formatPlanDailyLimit(info.voiceCallDailyMinutes)}</li>
-                  <li>チャット・画像履歴の保管期間: {info.historyRetentionLabel}</li>
+                  <li>チャット履歴保管期間: {info.historyRetentionLabel}</li>
                   <li>ルーム: {formatPlanRoomLabel(info.roomCreation)}</li>
                 </ul>
                 <button
@@ -120,7 +120,7 @@ export default function BillingPanel({
             動作確認用の機能です。
           </p>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {PLAN_DISPLAY_ORDER.map((id) => {
               const info = PLANS[id];
               const isCurrent = plan === id;
@@ -149,7 +149,7 @@ export default function BillingPanel({
                     <li>画面共有: {formatPlanDailyLimit(info.screenShareDailyMinutes)}</li>
                     <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
                     <li>音声通話: 無制限</li>
-                    <li>チャット・画像履歴の保管期間: {info.historyRetentionLabel}</li>
+                    <li>チャット履歴保管期間: {info.historyRetentionLabel}</li>
                   </ul>
                   <button
                     onClick={() => handleDebugSwitch(id)}
