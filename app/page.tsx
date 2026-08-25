@@ -358,7 +358,6 @@ export default async function Home({
         inviteToken={inviteToken ?? null}
         inviterName={inviterName}
         errorMessage={errorMessage}
-        errorCode={searchParams.error ?? null}
       />
     </div>
   );

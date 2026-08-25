@@ -2,15 +2,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { MASTER_EMAILS } from "@/lib/masterEmails";
 
-// Googleログイン、およびメール/パスワード新規登録の確認メールのリンクを
-// 踏んだ後、SupabaseがこのURLへリダイレクトしてくる(どちらもSupabase
-// Auth側でPKCEのコード交換を使うため、同じ仕組みで共通に処理できる)。
-// ここで認可コードをセッションに交換し、プロフィールの作成/更新を行う。
+// Googleログイン(PKCEのコード交換が必要)、およびメール/パスワード
+// 新規登録の6桁OTPコード確認(components/auth/LoginCard.tsxのverifyOtpが
+// クライアント側で完了済み。この時点で既にセッションCookieが確立して
+// いるためcodeは無い)の両方が、最終的にこのURLへ遷移してくる。
+// ここでプロフィールの作成/更新を行う。
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const oauthError = searchParams.get("error");
-  const oauthErrorCode = searchParams.get("error_code");
   // H-3: ログイン失敗時も、元々開いていた招待URLへ(エラー表示付きで)
   // 戻すため、成功時と同じ/auth/completeへの着地経路を使う。招待トークン
   // はsessionStorage側が主で、ここでのクエリはその保険(H-1と同じ考え方)。
@@ -22,45 +22,39 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(url.toString());
   };
 
+  // ユーザーがGoogle側でログインをキャンセルした場合など
   if (oauthError) {
-    // メール確認/パスワード再設定リンクの有効期限切れ・使用済みの場合、
-    // Supabase(GoTrue)はGoogleログインの「ユーザーがキャンセルした」場合と
-    // 同じerror=access_deniedを返すが、error_code=otp_expiredが付く点で
-    // 区別できる。以前はこれを区別せず一律「ログインがキャンセルされ
-    // ました」と表示していたため、確認メールのリンクが期限切れ/使用済み
-    // だった場合にも同じ誤解を招くメッセージが出てしまっていた
-    // (メール到達確認テスト時に発覚)。
-    if (oauthErrorCode === "otp_expired") {
-      return redirectToComplete("link_expired");
-    }
-    // ユーザーがGoogle側でログインをキャンセルした場合など
     const reason = oauthError === "access_denied" ? "cancelled" : "auth_failed";
     return redirectToComplete(reason);
   }
 
-  if (!code) {
-    return redirectToComplete("auth_failed");
-  }
-
   const supabase = createClient();
 
-  let session;
-  try {
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) {
-      const isExpired = /expired/i.test(error.message);
-      return redirectToComplete(isExpired ? "session_expired" : "auth_failed");
+  let user;
+  if (code) {
+    // Googleログイン: PKCEの認可コードをセッションに交換する。
+    try {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) {
+        const isExpired = /expired/i.test(error.message);
+        return redirectToComplete(isExpired ? "session_expired" : "auth_failed");
+      }
+      user = data.session?.user;
+    } catch {
+      return redirectToComplete("network");
     }
-    session = data.session;
-  } catch {
-    return redirectToComplete("network");
+  } else {
+    // メール/パスワード新規登録: LoginCard側でverifyOtpによる確認が
+    // 既に完了しており、その結果のセッションCookieを持ってここへ
+    // 遷移してきているはずなので、そのまま読み出す。
+    const { data } = await supabase.auth.getUser();
+    user = data.user ?? undefined;
   }
 
-  if (!session || !session.user) {
+  if (!user) {
     return redirectToComplete("auth_failed");
   }
 
-  const { user } = session;
   const metadata = user.user_metadata ?? {};
   // メール/パスワードでの新規登録時はGoogleのようなプロフィール情報が
   // 無いため、表示名は「ユーザー」に、アイコンはnullにフォールバックする
@@ -74,8 +68,7 @@ export async function GET(request: NextRequest) {
     (metadata.avatar_url as string | undefined) ?? (metadata.picture as string | undefined) ?? null;
   const email = user.email ?? (metadata.email as string | undefined) ?? null;
   // Supabase Authがログイン方法に応じて自動的に設定する値
-  // ('google' | 'email' 等)をそのまま使う。ハードコードしていた
-  // "google"を、メール/パスワード追加に合わせて動的な値へ変更。
+  // ('google' | 'email' 等)をそのまま使う。
   const provider = (user.app_metadata?.provider as string | undefined) ?? "email";
 
   const { error: upsertError } = await supabase.from("profiles").upsert(

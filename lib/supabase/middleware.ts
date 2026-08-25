@@ -5,14 +5,10 @@ import { SESSION_MAX_AGE } from "./constants";
 // 認証不要でアクセスできるパス("/"はTOPページ。ログイン済みなら
 // page.tsx側でプラン選択/管理画面/ルーム選択へ振り分ける。
 // "/admin/login"はセッションの有無を無視して常にログインカードを
-// 表示する管理者ログイン専用URL。"/auth/reset-password"はパスワード
-// 再設定メールのリンク遷移直後、まだページ側でコード交換(ログイン)を
-// 行う前のタイミングでアクセスされるため、ここで弾くとページ内の
-// exchangeCodeForSessionに辿り着けない)
+// 表示する管理者ログイン専用URL)
 const PUBLIC_PATHS = [
   "/",
   "/auth/callback",
-  "/auth/reset-password",
   "/admin/login",
 ];
 
