@@ -2,7 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { MASTER_EMAILS } from "@/lib/masterEmails";
 
-// Googleログイン後、SupabaseがこのURLへリダイレクトしてくる。
+// Googleログイン、およびメール/パスワード新規登録の確認メールのリンクを
+// 踏んだ後、SupabaseがこのURLへリダイレクトしてくる(どちらもSupabase
+// Auth側でPKCEのコード交換を使うため、同じ仕組みで共通に処理できる)。
 // ここで認可コードをセッションに交換し、プロフィールの作成/更新を行う。
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
@@ -49,6 +51,10 @@ export async function GET(request: NextRequest) {
 
   const { user } = session;
   const metadata = user.user_metadata ?? {};
+  // メール/パスワードでの新規登録時はGoogleのようなプロフィール情報が
+  // 無いため、表示名は「ユーザー」に、アイコンはnullにフォールバックする
+  // (表示名は新規登録フォームで入力された場合のみuser_metadata.full_name
+  // に入っている)。
   const displayName =
     (metadata.full_name as string | undefined) ??
     (metadata.name as string | undefined) ??
@@ -56,11 +62,15 @@ export async function GET(request: NextRequest) {
   const avatarUrl =
     (metadata.avatar_url as string | undefined) ?? (metadata.picture as string | undefined) ?? null;
   const email = user.email ?? (metadata.email as string | undefined) ?? null;
+  // Supabase Authがログイン方法に応じて自動的に設定する値
+  // ('google' | 'email' 等)をそのまま使う。ハードコードしていた
+  // "google"を、メール/パスワード追加に合わせて動的な値へ変更。
+  const provider = (user.app_metadata?.provider as string | undefined) ?? "email";
 
   const { error: upsertError } = await supabase.from("profiles").upsert(
     {
       user_id: user.id,
-      provider: "google",
+      provider,
       display_name: displayName,
       avatar_url: avatarUrl,
       email,
