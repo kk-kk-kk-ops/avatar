@@ -9,20 +9,25 @@ type Props = {
   inviteToken: string | null;
   inviterName: string | null;
   errorMessage: string | null;
-  errorCode: string | null;
 };
 
-type Mode = "login" | "signup" | "forgot" | "resend";
+// 新規登録・パスワード再設定は、いずれも「メールで届いた6桁のコードを
+// 画面に入力する」方式にしている(2026-08-24)。以前はリンクをクリックする
+// 方式だったが、メールアプリやセキュリティ製品がリンクを自動で開いて
+// しまい、実際にユーザーが押す前にリンクが失効してしまう不具合があった
+// ため、リンクを介さないOTP方式へ切り替えた。
+type Mode =
+  | "login"
+  | "signup"
+  | "signup-code"
+  | "forgot"
+  | "forgot-code"
+  | "forgot-new-password";
 
-// メール/パスワードでのログイン・新規登録・パスワード再設定をまとめた
-// カード。Googleログイン(GoogleLoginButton)と同じ白いカード内に収め、
-// 招待URL経由の場合の案内文・エラー表示はTOPページ(サーバー
-// コンポーネント側)から props で受け取る。
 export default function LoginCard({
   inviteToken,
   inviterName,
   errorMessage,
-  errorCode,
 }: Props) {
   const searchParams = useSearchParams();
   // props のinviteTokenは初回描画時点のものなので、フォーム操作中に
@@ -30,16 +35,12 @@ export default function LoginCard({
   // しておく(GoogleLoginButtonと同じ取得元)。
   const currentInviteToken = searchParams.get("invite") ?? inviteToken;
 
-  // 確認メールのリンクが期限切れ/使用済みだった場合は、最初から
-  // 「確認メールを再送信」の入力欄を出しておく(パスワード再入力を
-  // 求めずに再送できるようにするため)。
-  const [mode, setMode] = useState<Mode>(
-    errorCode === "link_expired" ? "resend" : "login",
-  );
+  const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [otpCode, setOtpCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -50,6 +51,7 @@ export default function LoginCard({
     setSuccessMessage(null);
     setPassword("");
     setConfirmPassword("");
+    setOtpCode("");
   };
 
   const handleLogin = async () => {
@@ -80,6 +82,17 @@ export default function LoginCard({
     }
   };
 
+  // 招待トークンをsessionStorageに保存する(OAuthと同じH-1対応の考え方。
+  // OTPコード確認後に/auth/callbackへ遷移する際、URLクエリだけに頼らず
+  // 確実に引き継ぐため)。
+  const stashInviteToken = () => {
+    if (currentInviteToken) {
+      sessionStorage.setItem("pendingInviteToken", currentInviteToken);
+    } else {
+      sessionStorage.removeItem("pendingInviteToken");
+    }
+  };
+
   const handleSignup = async () => {
     if (!email.trim() || !password) {
       setFormError("メールアドレスとパスワードを入力してください。");
@@ -96,31 +109,19 @@ export default function LoginCard({
     setSubmitting(true);
     setFormError(null);
     try {
-      // OAuth(GoogleLoginButton)と同じ理由で、招待トークンはURLの
-      // クエリだけに頼らずsessionStorageにも保存しておく(H-1対応と
-      // 同じ考え方。確認メールのリンク経由での遷移でも失われない)。
-      if (currentInviteToken) {
-        sessionStorage.setItem("pendingInviteToken", currentInviteToken);
-      } else {
-        sessionStorage.removeItem("pendingInviteToken");
-      }
+      stashInviteToken();
       const supabase = createClient();
-      const callbackUrl = new URL("/auth/callback", window.location.origin);
-      if (currentInviteToken) {
-        callbackUrl.searchParams.set("invite", currentInviteToken);
-      }
       const { error } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
-          emailRedirectTo: callbackUrl.toString(),
           data: displayName.trim() ? { full_name: displayName.trim() } : undefined,
         },
       });
       // 既に登録済みのメールアドレスの場合、Supabase側はアカウントの
-      // 有無を外部から探られないよう、エラーを返さず「確認メールを
+      // 有無を外部から探られないよう、エラーを返さず「確認コードを
       // 送信しました」風の応答のみを返す(実際にはメール送信しない)。
-      // そのため成功・重複いずれの場合も同じ案内で統一する。
+      // そのため成功・重複いずれの場合も同じ案内・同じ次の画面で統一する。
       if (error) {
         setFormError(
           "登録に失敗しました。入力内容をご確認のうえ、時間をおいて再度お試しください。",
@@ -128,9 +129,8 @@ export default function LoginCard({
         setSubmitting(false);
         return;
       }
-      setSuccessMessage(
-        "確認メールを送信しました。メール内のリンクから登録を完了してください。",
-      );
+      setOtpCode("");
+      setMode("signup-code");
       setSubmitting(false);
     } catch {
       setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
@@ -138,71 +138,170 @@ export default function LoginCard({
     }
   };
 
-  const handleForgotPassword = async () => {
-    if (!email.trim()) {
-      setFormError("メールアドレスを入力してください。");
+  const handleVerifySignupCode = async () => {
+    if (!otpCode.trim()) {
+      setFormError("確認コードを入力してください。");
       return;
     }
     setSubmitting(true);
     setFormError(null);
     try {
       const supabase = createClient();
-      const redirectUrl = new URL(
-        "/auth/reset-password",
-        window.location.origin,
-      );
-      const { error } = await supabase.auth.resetPasswordForEmail(
-        email.trim(),
-        { redirectTo: redirectUrl.toString() },
-      );
-      if (error) {
-        setFormError(
-          "送信に失敗しました。時間をおいて再度お試しください。",
-        );
-        setSubmitting(false);
-        return;
-      }
-      // こちらも同様に、登録の有無に関わらず同じ案内で統一する。
-      setSuccessMessage("パスワード再設定用のメールを送信しました。");
-      setSubmitting(false);
-    } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
-      setSubmitting(false);
-    }
-  };
-
-  const handleResendConfirmation = async () => {
-    if (!email.trim()) {
-      setFormError("メールアドレスを入力してください。");
-      return;
-    }
-    setSubmitting(true);
-    setFormError(null);
-    try {
-      if (currentInviteToken) {
-        sessionStorage.setItem("pendingInviteToken", currentInviteToken);
-      } else {
-        sessionStorage.removeItem("pendingInviteToken");
-      }
-      const supabase = createClient();
-      const callbackUrl = new URL("/auth/callback", window.location.origin);
-      if (currentInviteToken) {
-        callbackUrl.searchParams.set("invite", currentInviteToken);
-      }
-      const { error } = await supabase.auth.resend({
-        type: "signup",
+      const { error } = await supabase.auth.verifyOtp({
         email: email.trim(),
-        options: { emailRedirectTo: callbackUrl.toString() },
+        token: otpCode.trim(),
+        type: "signup",
       });
       if (error) {
         setFormError(
+          "コードが正しくないか、有効期限が切れています。再送信してもう一度お試しください。",
+        );
+        setSubmitting(false);
+        return;
+      }
+      // 確認成功。この時点でセッションCookieが確立済みなので、
+      // /auth/callbackへ遷移してプロフィール作成・招待URLの解決などの
+      // 共通処理(Googleログインと共用)を行わせる。
+      window.location.href = "/auth/callback";
+    } catch {
+      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setSubmitting(false);
+    }
+  };
+
+  const handleResendSignupCode = async () => {
+    if (!email.trim()) return;
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      stashInviteToken();
+      const supabase = createClient();
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: email.trim(),
+      });
+      if (error) {
+        setFormError("再送信に失敗しました。時間をおいて再度お試しください。");
+        setSubmitting(false);
+        return;
+      }
+      setFormError(null);
+      setSuccessMessage("確認コードを再送信しました。");
+      setSubmitting(false);
+    } catch {
+      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setSubmitting(false);
+    }
+  };
+
+  const handleRequestPasswordReset = async () => {
+    if (!email.trim()) {
+      setFormError("メールアドレスを入力してください。");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        email.trim(),
+      );
+      // 登録の有無に関わらず同じ案内・同じ次の画面で統一する
+      // (アカウントの有無を外部から探られないようにするため)。
+      if (error) {
+        setFormError(
           "送信に失敗しました。時間をおいて再度お試しください。",
         );
         setSubmitting(false);
         return;
       }
-      setSuccessMessage("確認メールを再送信しました。");
+      setOtpCode("");
+      setMode("forgot-code");
       setSubmitting(false);
+    } catch {
+      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setSubmitting(false);
+    }
+  };
+
+  const handleVerifyResetCode = async () => {
+    if (!otpCode.trim()) {
+      setFormError("確認コードを入力してください。");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: otpCode.trim(),
+        type: "recovery",
+      });
+      if (error) {
+        setFormError(
+          "コードが正しくないか、有効期限が切れています。再送信してもう一度お試しください。",
+        );
+        setSubmitting(false);
+        return;
+      }
+      // 確認成功。セッションが確立された状態のまま、続けて新しい
+      // パスワードを入力してもらう(別ページへの遷移は不要)。
+      setPassword("");
+      setConfirmPassword("");
+      setMode("forgot-new-password");
+      setSubmitting(false);
+    } catch {
+      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setSubmitting(false);
+    }
+  };
+
+  const handleResendResetCode = async () => {
+    if (!email.trim()) return;
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        email.trim(),
+      );
+      if (error) {
+        setFormError("再送信に失敗しました。時間をおいて再度お試しください。");
+        setSubmitting(false);
+        return;
+      }
+      setFormError(null);
+      setSuccessMessage("確認コードを再送信しました。");
+      setSubmitting(false);
+    } catch {
+      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setSubmitting(false);
+    }
+  };
+
+  const handleSetNewPassword = async () => {
+    if (password.length < 6) {
+      setFormError("パスワードは6文字以上で入力してください。");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setFormError("パスワードが一致しません。");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        setFormError("更新に失敗しました。時間をおいて再度お試しください。");
+        setSubmitting(false);
+        return;
+      }
+      setSuccessMessage("パスワードを更新しました。");
+      setSubmitting(false);
+      setTimeout(() => window.location.reload(), 1200);
     } catch {
       setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
       setSubmitting(false);
@@ -212,11 +311,23 @@ export default function LoginCard({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    if (mode === "login") handleLogin();
-    else if (mode === "signup") handleSignup();
-    else if (mode === "forgot") handleForgotPassword();
-    else handleResendConfirmation();
+    switch (mode) {
+      case "login":
+        return handleLogin();
+      case "signup":
+        return handleSignup();
+      case "signup-code":
+        return handleVerifySignupCode();
+      case "forgot":
+        return handleRequestPasswordReset();
+      case "forgot-code":
+        return handleVerifyResetCode();
+      case "forgot-new-password":
+        return handleSetNewPassword();
+    }
   };
+
+  const showTabs = mode === "login" || mode === "signup";
 
   return (
     <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-xl">
@@ -241,15 +352,18 @@ export default function LoginCard({
         </p>
       )}
 
-      <GoogleLoginButton />
+      {showTabs && (
+        <>
+          <GoogleLoginButton />
+          <div className="my-4 flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-[11px] text-slate-400">または</span>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+        </>
+      )}
 
-      <div className="my-4 flex items-center gap-3">
-        <div className="h-px flex-1 bg-slate-200" />
-        <span className="text-[11px] text-slate-400">または</span>
-        <div className="h-px flex-1 bg-slate-200" />
-      </div>
-
-      {mode !== "forgot" && mode !== "resend" && (
+      {showTabs && (
         <div className="mb-4 flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
           <button
             type="button"
@@ -276,31 +390,40 @@ export default function LoginCard({
         </div>
       )}
 
+      {mode === "signup-code" && (
+        <p className="mb-3 text-left text-xs text-slate-600">
+          <span className="font-semibold">{email}</span>{" "}
+          宛に確認コードを送信しました。メールに記載の6桁のコードを入力してください。
+        </p>
+      )}
       {mode === "forgot" && (
         <p className="mb-3 text-left text-xs font-semibold text-slate-600">
           パスワード再設定
         </p>
       )}
-      {mode === "resend" && (
+      {mode === "forgot-code" && (
+        <p className="mb-3 text-left text-xs text-slate-600">
+          <span className="font-semibold">{email}</span>{" "}
+          宛に確認コードを送信しました。メールに記載の6桁のコードを入力してください。
+        </p>
+      )}
+      {mode === "forgot-new-password" && (
         <p className="mb-3 text-left text-xs font-semibold text-slate-600">
-          確認メールの再送信
+          新しいパスワードを設定
         </p>
       )}
 
-      {successMessage ? (
-        <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-          {successMessage}
-        </p>
-      ) : (
-        <form onSubmit={handleSubmit} className="space-y-3 text-left">
-          {mode === "signup" && (
-            <input
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="表示名(任意)"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-            />
-          )}
+      <form onSubmit={handleSubmit} className="space-y-3 text-left">
+        {mode === "signup" && (
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="表示名(任意)"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          />
+        )}
+
+        {(mode === "login" || mode === "signup" || mode === "forgot") && (
           <input
             type="email"
             value={email}
@@ -309,71 +432,133 @@ export default function LoginCard({
             autoComplete="email"
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
-          {mode !== "forgot" && mode !== "resend" && (
+        )}
+
+        {(mode === "login" || mode === "signup") && (
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="パスワード"
+            autoComplete={mode === "signup" ? "new-password" : "current-password"}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          />
+        )}
+        {mode === "signup" && (
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="パスワード(確認用)"
+            autoComplete="new-password"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          />
+        )}
+
+        {(mode === "signup-code" || mode === "forgot-code") && (
+          <input
+            value={otpCode}
+            onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="6桁のコード"
+            inputMode="numeric"
+            maxLength={6}
+            autoFocus
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-center text-lg tracking-[0.5em] outline-none focus:border-slate-500"
+          />
+        )}
+
+        {mode === "forgot-new-password" && (
+          <>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="パスワード"
-              autoComplete={
-                mode === "signup" ? "new-password" : "current-password"
-              }
+              placeholder="新しいパスワード"
+              autoComplete="new-password"
+              autoFocus
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
             />
-          )}
-          {mode === "signup" && (
             <input
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="パスワード(確認用)"
+              placeholder="新しいパスワード(確認用)"
               autoComplete="new-password"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
             />
-          )}
+          </>
+        )}
 
-          {formError && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
-              {formError}
-            </p>
-          )}
+        {successMessage && (
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            {successMessage}
+          </p>
+        )}
+        {formError && (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+            {formError}
+          </p>
+        )}
 
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+        >
+          {submitting
+            ? "処理中..."
+            : mode === "login"
+              ? "ログイン"
+              : mode === "signup"
+                ? "登録する"
+                : mode === "signup-code" || mode === "forgot-code"
+                  ? "確認する"
+                  : mode === "forgot"
+                    ? "送信する"
+                    : "更新する"}
+        </button>
+
+        {mode === "login" && (
           <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+            type="button"
+            onClick={() => resetFormState("forgot")}
+            className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
           >
-            {submitting
-              ? "処理中..."
-              : mode === "login"
-                ? "ログイン"
-                : mode === "signup"
-                  ? "登録する"
-                  : mode === "resend"
-                    ? "確認メールを再送信する"
-                    : "送信する"}
+            パスワードをお忘れですか?
           </button>
-
-          {mode === "login" && (
-            <button
-              type="button"
-              onClick={() => resetFormState("forgot")}
-              className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
-            >
-              パスワードをお忘れですか?
-            </button>
-          )}
-          {(mode === "forgot" || mode === "resend") && (
-            <button
-              type="button"
-              onClick={() => resetFormState("login")}
-              className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
-            >
-              ログインに戻る
-            </button>
-          )}
-        </form>
-      )}
+        )}
+        {mode === "signup-code" && (
+          <button
+            type="button"
+            onClick={handleResendSignupCode}
+            disabled={submitting}
+            className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
+          >
+            コードが届かない場合は再送信
+          </button>
+        )}
+        {mode === "forgot-code" && (
+          <button
+            type="button"
+            onClick={handleResendResetCode}
+            disabled={submitting}
+            className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
+          >
+            コードが届かない場合は再送信
+          </button>
+        )}
+        {(mode === "forgot" ||
+          mode === "signup-code" ||
+          mode === "forgot-code") && (
+          <button
+            type="button"
+            onClick={() => resetFormState("login")}
+            className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
+          >
+            ログインに戻る
+          </button>
+        )}
+      </form>
     </div>
   );
 }
