@@ -87,12 +87,12 @@ export default function PlanSelector() {
       <button
         onClick={handleNext}
         disabled={pending}
-        className="w-full rounded-lg bg-slate-900 py-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+        className="mx-auto block w-1/3 min-w-[160px] rounded-lg bg-slate-900 py-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
       >
         {pending ? "処理中..." : "次へ"}
       </button>
 
-      <LogoutButton className="mt-3 w-full rounded-lg border border-slate-300 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50" />
+      <LogoutButton className="mx-auto mt-3 block w-1/3 min-w-[160px] rounded-lg border border-slate-300 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50" />
     </div>
   );
 }
