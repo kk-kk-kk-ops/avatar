@@ -29,12 +29,12 @@ export default function AvatarPicker({ selected, onSelect }: Props) {
           key={image}
           type="button"
           onClick={() => onSelect(image)}
-          className={`flex aspect-square items-center justify-center rounded-lg border-2 bg-slate-100 p-1 transition-colors ${
+          className={`flex aspect-square items-center justify-center rounded-lg bg-slate-100 p-1 transition-colors ${
             USE_SCROLL_LAYOUT ? "w-full shrink-0" : ""
           } ${
             selected === image
-              ? "border-slate-900"
-              : "border-transparent hover:border-slate-300"
+              ? "border-[3px] border-emerald-500"
+              : "border-2 border-transparent hover:border-slate-300"
           }`}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
