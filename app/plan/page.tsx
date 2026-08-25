@@ -28,14 +28,9 @@ export default async function PlanPage() {
             Globy
           </span>
         </div>
-        <h1 className="mb-1 text-lg font-bold text-slate-800">
+        <h1 className="mb-6 text-lg font-bold text-slate-800">
           プランを選択
         </h1>
-        <p className="mb-6 text-sm text-slate-500">
-          まずは無料でお試しください
-          <br />
-          7日間じっくり体験してから、ご希望のプランをお選びいただけます。
-        </p>
         <PlanSelector />
       </div>
     </div>

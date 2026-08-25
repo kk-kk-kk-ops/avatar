@@ -167,7 +167,7 @@ export const PLANS: Record<
     label: "無料",
     subLabel:
       "（ミーティングルーム1つ　人数上限：5名／画面共有・ビデオ通話：1日5分まで／音声通話：1日45分まで）",
-    priceLabel: "無料",
+    priceLabel: "0円/月",
     priceYen: 0,
     maxRooms: 1,
     maxPeoplePerRoom: 5,
