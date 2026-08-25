@@ -4440,6 +4440,18 @@ export default function AvatarSpace({
           >
             入室
           </button>
+
+          {/* ログインフロー統一(2026-08-24): 管理者は/adminへ自動転送
+              されなくなったため、ロビー画面からも管理画面へ行けるように
+              する(入室後の設定タブ内の同種リンクは既存のまま維持)。 */}
+          {isAccountAdmin && (
+            <Link
+              href="/admin"
+              className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
+            >
+              管理画面へ
+            </Link>
+          )}
         </div>
       </div>
     );

@@ -324,7 +324,10 @@ export default async function Home({
     const state = await resolveUserRouteState(supabase, user.id);
     if (state.isMaster) redirect("/master");
     if (state.type === "no-account") redirect("/plan");
-    if (state.type === "admin") redirect("/admin");
+    // ログインフロー統一(2026-08-24): 以前はここで管理者を/adminへ
+    // 自動転送していたが、招待URL経由(自分自身の招待URL)の場合と
+    // 同じロビー画面(renderRoomJoin)に合流させる。管理画面への導線は
+    // ロビー画面上の「管理画面へ」リンクに委ねる。
     return renderRoomJoin(supabase, user, state);
   }
 
@@ -347,15 +350,9 @@ export default async function Home({
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4">
       <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
-        <span
-          className={`mb-4 inline-block rounded-full px-3 py-1 text-xs font-semibold ${
-            inviteToken
-              ? "bg-emerald-50 text-emerald-700"
-              : "bg-slate-100 text-slate-600"
-          }`}
-        >
-          {inviteToken ? "ゲスト用ログイン" : "管理者用ログイン"}
-        </span>
+        {/* ログインフロー統一(2026-08-24): 管理者用/ゲスト用のバッジ・
+            文言出し分けを廃止し、常に同じログイン画面にする。招待URL
+            経由の場合の招待者名表示だけは引き続き案内として残す。 */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src="/logo.png"
@@ -370,7 +367,7 @@ export default async function Home({
             ? inviterName
               ? `${inviterName}さんからの招待`
               : "招待されたルームにゲストとして参加します"
-            : "管理者・マスター権限をお持ちの方はこちらからログインしてください"}
+            : "Googleアカウントでログインしてください"}
         </p>
 
         {errorMessage && (
