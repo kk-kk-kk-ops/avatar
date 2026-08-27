@@ -10,8 +10,9 @@ import ServerResourceTable from "./ServerResourceTable";
 import TemplateManager from "./TemplateManager";
 import AvatarSettingsPanel from "./AvatarSettingsPanel";
 import AccountServerAssignment from "./AccountServerAssignment";
+import MfaSettingsPanel from "./MfaSettingsPanel";
 
-type Tab = "dashboard" | "templates" | "avatar" | "accounts";
+type Tab = "dashboard" | "templates" | "avatar" | "accounts" | "security";
 
 export default function MasterDashboard({
   planCounts,
@@ -139,6 +140,16 @@ export default function MasterDashboard({
           >
             アカウント
           </button>
+          <button
+            onClick={() => selectTab("security")}
+            className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
+              tab === "security"
+                ? "bg-red-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            セキュリティ
+          </button>
         </nav>
 
         <div className="space-y-2 border-t border-slate-800 p-3">
@@ -219,6 +230,8 @@ export default function MasterDashboard({
         {tab === "accounts" && (
           <AccountServerAssignment accounts={accounts} />
         )}
+
+        {tab === "security" && <MfaSettingsPanel />}
       </main>
     </div>
   );

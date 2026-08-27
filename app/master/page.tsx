@@ -27,6 +27,15 @@ export default async function MasterPage() {
   const state = await resolveUserRouteState(supabase, user.id);
   if (!state.isMaster) redirect("/");
 
+  // 2段階認証(MFA)を設定済みのマスターアカウントは、このセッションで
+  // まだ確認コードの入力(aal2への昇格)を済ませていなければ
+  // チャレンジ画面へ回す。MFA自体は任意設定のため、未設定なら
+  // nextLevelもaal1のままでここはスキップされる。
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+    redirect("/master/mfa-challenge");
+  }
+
   // 「ルームへ」リンク用。通常の"/"はログイン済みマスターを/masterへ
   // 戻してしまうため、自分自身の招待URL経由でルーム入室画面へ進む
   // (F-3で、自分自身の招待URLは常にルーム入室画面へ遷移するようになった
