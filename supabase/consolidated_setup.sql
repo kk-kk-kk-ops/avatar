@@ -1947,6 +1947,31 @@ create trigger accounts_prevent_privileged_self_write
   execute function public.prevent_privileged_column_self_write();
 
 
+-- ------------------------------------------------------------
+-- 17. login_lockouts: 通常ログイン(メール/パスワード)の総当たり対策。
+--     メールアドレス単位・IPアドレス単位それぞれで、直近15分以内に
+--     10回失敗したら15分間ロックする(しきい値・時間は
+--     components/auth/actions.tsのMAX_ATTEMPTS/LOCK_WINDOW_MSと
+--     揃えること)。クライアントからは一切アクセスさせず(RLS有効・
+--     ポリシーなし)、Server Action内のservice_roleクライアントからのみ
+--     読み書きする。
+--
+--     これはうちのログイン画面を経由した総当たりへの対策であり、
+--     anonキーでSupabaseの認証APIを直接叩く攻撃までは防げない
+--     (そちらはSupabase Auth基盤側のレート制限が本質的な防波堤)。
+-- ------------------------------------------------------------
+create table if not exists public.login_lockouts (
+  id text primary key, -- 'email:<lowercased email>' または 'ip:<ip>'
+  failed_count integer not null default 0,
+  locked_until timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.login_lockouts enable row level security;
+-- 直接のSELECT/INSERT/UPDATE/DELETEポリシーは用意しない
+-- (service_role以外は一切アクセスできない)。
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。
