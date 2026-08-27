@@ -27,6 +27,14 @@ async function requireMaster() {
     .maybeSingle();
   if (!profile?.is_master) redirect("/");
 
+  // /master/page.tsxのページ表示をバイパスしてServer Actionを直接
+  // 呼ばれた場合(盗まれたセッションCookie等)にも備え、MFA設定済み
+  // アカウントはここでもaal2を要求する。
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+    redirect("/master/mfa-challenge");
+  }
+
   return { supabase };
 }
 
