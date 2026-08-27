@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { loginWithPassword } from "./actions";
 import GoogleLoginButton from "./GoogleLoginButton";
 
 type Props = {
@@ -62,13 +63,12 @@ export default function LoginCard({
     setSubmitting(true);
     setFormError(null);
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error) {
-        setFormError("メールアドレスまたはパスワードが正しくありません。");
+      // ログイン失敗回数によるロック(components/auth/actions.ts)を
+      // 効かせるため、ブラウザから直接signInWithPasswordを呼ばず
+      // Server Action経由にする。
+      const result = await loginWithPassword(email.trim(), password);
+      if (!result.ok) {
+        setFormError(result.error);
         setSubmitting(false);
         return;
       }
