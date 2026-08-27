@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "./supabase/serviceRole";
 
 export type JoinInviteResult =
   | { ok: true; isOwnAccount: boolean; viewOnly: boolean }
@@ -65,7 +66,11 @@ export async function joinAccountViaInvite(
   }
 
   if (existingProfile?.account_id !== account.id) {
-    const { error } = await supabase
+    // roleは本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
+    // 対象列のため、service_roleクライアントで更新する(招待トークンの
+    // 検証は直前のlookup_account_by_invite_tokenで完了済みなので、この
+    // 1回の書き込みに限りRLS/トリガーをバイパスしても安全)。
+    const { error } = await createServiceRoleClient()
       .from("profiles")
       .update({ account_id: account.id, role: "guest" })
       .eq("user_id", userId);

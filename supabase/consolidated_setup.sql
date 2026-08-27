@@ -1880,6 +1880,73 @@ $$;
 grant execute on function public.list_banned_participants(uuid) to authenticated;
 
 
+-- ------------------------------------------------------------
+-- 16. 権限昇格防止トリガー: profiles.role/is_master、accounts.planは
+--     「本人の行である」ことしかRLSで表現できておらず(列単位の制限が
+--     できない)、ログイン済みユーザーがSupabaseのREST APIを直接叩けば
+--     自分のrole/is_master/planを書き換えられてしまう問題があった
+--     (2026-08 Tech Lead確認依頼その25で発覚)。
+--
+--     service_role以外からのこれらの列の変更を一律拒否する。UPDATE
+--     だけでなくINSERTも対象にし、最初からis_master=true・plan='pro'
+--     で行を作る形での迂回も防ぐ。
+--
+--     正規の変更(招待経由のrole付与、無料お試し開始時のrole付与、
+--     マスターメール判定によるis_master付与、デバッグ用プラン切替)は
+--     すべてアプリ側でservice_roleクライアント(lib/supabase/serviceRole.ts)
+--     に切り替え済み。Supabaseダッシュボード(SQL Editor等)からの直接
+--     操作はpostgresロール(スーパーユーザー)扱いのため、is_superuser
+--     判定でも別途バイパスできるようにしておく。
+-- ------------------------------------------------------------
+create or replace function public.prevent_privileged_column_self_write()
+returns trigger
+language plpgsql
+as $$
+begin
+  if auth.role() = 'service_role' or current_setting('is_superuser', true) = 'on' then
+    return new;
+  end if;
+
+  if tg_table_name = 'profiles' then
+    if tg_op = 'INSERT' then
+      if new.role is not null or new.is_master is true then
+        raise exception 'role/is_masterはこの経路からは設定できません';
+      end if;
+    elsif tg_op = 'UPDATE' then
+      if new.role is distinct from old.role
+         or new.is_master is distinct from old.is_master then
+        raise exception 'role/is_masterはこの経路からは変更できません';
+      end if;
+    end if;
+  elsif tg_table_name = 'accounts' then
+    if tg_op = 'INSERT' then
+      if new.plan is distinct from 'free' then
+        raise exception '新規契約はfreeプランでのみ作成できます';
+      end if;
+    elsif tg_op = 'UPDATE' then
+      if new.plan is distinct from old.plan then
+        raise exception 'planはこの経路からは変更できません';
+      end if;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_prevent_privileged_self_write on public.profiles;
+create trigger profiles_prevent_privileged_self_write
+  before insert or update on public.profiles
+  for each row
+  execute function public.prevent_privileged_column_self_write();
+
+drop trigger if exists accounts_prevent_privileged_self_write on public.accounts;
+create trigger accounts_prevent_privileged_self_write
+  before insert or update on public.accounts
+  for each row
+  execute function public.prevent_privileged_column_self_write();
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。

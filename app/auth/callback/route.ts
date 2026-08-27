@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { MASTER_EMAILS } from "@/lib/masterEmails";
 
 // Googleログイン(PKCEのコード交換が必要)、およびメール/パスワード
@@ -89,9 +90,14 @@ export async function GET(request: NextRequest) {
   }
 
   // マスター権限メールのリストに載っていれば、毎回ログイン時に
-  // is_masterを付与しておく(既にtrueなら実質no-op)。
+  // is_masterを付与しておく(既にtrueなら実質no-op)。is_masterは
+  // 本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
+  // 対象列のため、通常のセッションクライアントではなくservice_role
+  // クライアントで更新する(ここでのMASTER_EMAILS判定はサーバー側の
+  // 信頼できるコードで行っているため、この1呼び出しに限りRLS/トリガーを
+  // バイパスしても安全)。
   if (email && MASTER_EMAILS.includes(email)) {
-    const { error: masterError } = await supabase
+    const { error: masterError } = await createServiceRoleClient()
       .from("profiles")
       .update({ is_master: true })
       .eq("user_id", user.id);
