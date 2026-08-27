@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { PLANS, type PlanId } from "@/lib/types";
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
@@ -288,7 +289,11 @@ export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
     .maybeSingle();
   if (!account) return { ok: false, error: "アカウントが見つかりません" };
 
-  const { error } = await supabase
+  // planは本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
+  // 対象列のため、service_roleクライアントで更新する(直前にDEBUG_PLAN_SWITCH_EMAIL
+  // でのメール照合を済ませているので、この1回の書き込みに限りRLS/トリガーを
+  // バイパスしても安全)。
+  const { error } = await createServiceRoleClient()
     .from("accounts")
     .update({ plan: planId })
     .eq("id", account.id);

@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { FREE_TRIAL_DAYS } from "@/lib/types";
 import { LIVEKIT_SERVERS } from "@/lib/livekitServers";
 
@@ -80,7 +81,11 @@ export async function startFreeTrial(): Promise<ActionResult> {
     return { ok: false, error: "アカウントの作成に失敗しました" };
   }
 
-  const { error: profileError } = await supabase
+  // roleは本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
+  // 対象列のため、service_roleクライアントで更新する(直前に自分がowner_user_id
+  // として新規accountsを作成できたこと自体がここまでの正規フローの証跡なので、
+  // この1回の書き込みに限りRLS/トリガーをバイパスしても安全)。
+  const { error: profileError } = await createServiceRoleClient()
     .from("profiles")
     .update({ account_id: account.id, role: "admin" })
     .eq("user_id", user.id);
