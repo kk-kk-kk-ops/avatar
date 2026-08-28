@@ -40,6 +40,13 @@ async function fetchNodeExporterMetrics(): Promise<
   const authUser = process.env.METRICS_BASIC_AUTH_USER;
   const authPass = process.env.METRICS_BASIC_AUTH_PASSWORD;
   if (!url || !authUser || !authPass) {
+    // 原因切り分け用(2026-08、target-pro移行時に発生した「取得できません」
+    // 問題の調査で追加)。値そのものは出さず、設定漏れの有無だけ分かるようにする。
+    console.error("METRICS_URL等の環境変数が不足しています", {
+      hasUrl: !!url,
+      hasAuthUser: !!authUser,
+      hasAuthPass: !!authPass,
+    });
     return { error: "メトリクスの設定が不足しています" };
   }
 
@@ -53,12 +60,20 @@ async function fetchNodeExporterMetrics(): Promise<
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {
+      // 原因切り分け用(2026-08、同上)。レスポンス本文の先頭だけ添える
+      // (basic_authの401等、原因を示すヘッダー/本文が短いため)。
+      const bodySnippet = await res.text().catch(() => "");
+      console.error("node_exporterからの応答が異常です", {
+        status: res.status,
+        url,
+        bodySnippet: bodySnippet.slice(0, 200),
+      });
       return { error: `node_exporterからの応答が異常です(${res.status})` };
     }
     const text = await res.text();
     return parsePrometheusText(text);
   } catch (err) {
-    console.error("node_exporterへの接続に失敗しました", err);
+    console.error("node_exporterへの接続に失敗しました", { url, err });
     return { error: "node_exporterに接続できません" };
   }
 }
