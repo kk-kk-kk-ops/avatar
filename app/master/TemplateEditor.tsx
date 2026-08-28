@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
 import {
@@ -96,6 +96,11 @@ export default function TemplateEditor({
     template.backgroundImageUrl,
   );
   const [saving, setSaving] = useState(false);
+  // router.refresh()(サーバー側の最新データの反映)が完了するまで
+  // onClose()を遅らせるためのフラグ。refreshingがfalseに戻った時点で
+  // 一覧側propsが最新化されたとみなして画面遷移する。
+  const [refreshing, startRefreshTransition] = useTransition();
+  const pendingCloseRef = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState(template.name);
@@ -574,33 +579,46 @@ export default function TemplateEditor({
   const removeMeetingZone = (id: string) =>
     setMeetingZones((prev) => prev.filter((z) => z.id !== id));
 
+  // router.refresh()完了後にonClose()する(refreshingがfalseに戻った
+  // タイミングで実行)。
+  useEffect(() => {
+    if (pendingCloseRef.current && !refreshing) {
+      pendingCloseRef.current = false;
+      setSaving(false);
+      onClose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshing]);
+
   const handleSaveAndClose = async () => {
     setError(null);
     setSaving(true);
-    try {
-      const result = await updateTemplateLayout(
-        template.id,
-        obstacles,
-        meetingZones,
-        mapWidth,
-        mapHeight,
-        spawnPoint,
-      );
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      // revalidatePath("/master")はサーバー側のキャッシュを無効化する
-      // だけで、既に開いている(ナビゲーションを伴わない)このページの
-      // テンプレート一覧props(TemplateManagerのtemplates)には自動反映
-      // されない。router.refresh()を呼ばないと、保存直後に同じテンプレ
-      // ートを開き直した際に保存前の古いobstaclesから再スタートして
-      // しまい、そのまま保存すると直前の変更が消えてしまう不具合があった。
-      router.refresh();
-      onClose();
-    } finally {
+    const result = await updateTemplateLayout(
+      template.id,
+      obstacles,
+      meetingZones,
+      mapWidth,
+      mapHeight,
+      spawnPoint,
+    );
+    if (!result.ok) {
+      setError(result.error);
       setSaving(false);
+      return;
     }
+    // revalidatePath("/master")はサーバー側のキャッシュを無効化する
+    // だけで、既に開いている(ナビゲーションを伴わない)このページの
+    // テンプレート一覧props(TemplateManagerのtemplates)には自動反映
+    // されない。router.refresh()が必要だが、これは呼び出し側で完了を
+    // 待てない(Promiseを返さない)ため、useTransitionのpending状態が
+    // falseに戻るまでonClose()を遅らせる。そうしないと、保存直後に
+    // 同じテンプレートを開き直した際に保存前の古いobstaclesから再
+    // スタートしてしまい、そのまま保存すると直前の変更が消えてしまう
+    // (「保存中...」の表示のまま、反映が終わるまで画面遷移しない)。
+    pendingCloseRef.current = true;
+    startRefreshTransition(() => {
+      router.refresh();
+    });
   };
 
   const handleRename = async () => {
