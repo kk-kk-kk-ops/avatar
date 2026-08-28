@@ -808,10 +808,7 @@ export default function TemplateEditor({
           <div>
             <p className="font-semibold text-slate-700">【壁】</p>
             <p>・通ることができないエリア</p>
-            <p>
-              ・上の丸いハンドルをドラッグで回転(Shift押下で15度単位)、
-              下の数値欄で角度を直接入力できます
-            </p>
+            <p>・上の丸いハンドルをドラッグで回転(Shift押下で15度単位)</p>
           </div>
           <div>
             <p className="font-semibold text-slate-700">【ミーティングエリア】</p>
@@ -966,24 +963,6 @@ export default function TemplateEditor({
                   }
                   title="ドラッグで回転(Shiftで15度単位)"
                   className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
-                />
-                {/* 角度の数値入力(ドラッグ操作が苦手でも正確な角度を指定できる)。 */}
-                <input
-                  type="number"
-                  min={0}
-                  max={359}
-                  value={Math.round(o.rotation ?? 0)}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
-                    const next = ((Number(e.target.value) || 0) % 360 + 360) % 360;
-                    setObstacles((prev) =>
-                      prev.map((item) =>
-                        item.id === o.id ? { ...item, rotation: next } : item,
-                      ),
-                    );
-                  }}
-                  className="absolute -bottom-5 left-1/2 h-4 w-10 -translate-x-1/2 rounded border border-slate-300 bg-white px-0.5 text-[9px] text-slate-700"
                 />
                 <div
                   onPointerDown={(e) =>
