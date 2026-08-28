@@ -155,13 +155,20 @@ export default function TemplateEditor({
   // 画面(特に縦幅が小さいノートPCなど)にマップ全体が収まるよう、
   // 「横幅に入る幅」「縦幅に入る高さ」を実測しておく(依存はマウント時の
   // リサイズだけで、マップサイズが変わったときの再計算はfitScale側で
-  // 都度行う)。
+  // 都度行う)。高さは画面の一定割合(0.75)ではなく、キャンバス自体が
+  // 画面上で始まる位置(getBoundingClientRect().top)を実測し、そこから
+  // 画面下端までの残り高さいっぱいを使う(サイドバーと同じく画面高さ
+  // いっぱいまで広がるようにするため)。
   useEffect(() => {
     const el = measureRef.current;
     if (!el) return;
+    const BOTTOM_MARGIN = 24;
     const recompute = () => {
       setAvailableWidth(el.clientWidth);
-      setAvailableHeight(window.innerHeight * 0.75);
+      const top = el.getBoundingClientRect().top;
+      setAvailableHeight(
+        Math.max(300, window.innerHeight - top - BOTTOM_MARGIN),
+      );
     };
     recompute();
     const observer = new ResizeObserver(recompute);
