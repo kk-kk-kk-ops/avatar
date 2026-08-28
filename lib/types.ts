@@ -282,7 +282,10 @@ export const PROXIMITY_RADIUS = 98; // 近くにいる人だけ会話できる�
 export type Rect = { x: number; y: number; width: number; height: number };
 
 // マップ上の障害物(机・観葉植物・棚など)。歩いて通り抜けられないようにする。
-export type Obstacle = Rect & { id: string; label: string };
+// rotation: 中心を軸にした回転角度(度数法、時計回り)。未設定/0は回転なし
+// (既存データにはこのキーが無いが、読み出し側で ?? 0 として扱うため
+// マイグレーション不要)。
+export type Obstacle = Rect & { id: string; label: string; rotation?: number };
 
 // ミーティングエリア(複数設置可能。同じエリアIDにいる人同士だけ自動で音声接続される)。
 // kind: "meeting"(デフォルト、省略時もこれと同じ扱い)はバーチャル空間内でも
@@ -388,17 +391,68 @@ export function rectIntersectsRect(
   );
 }
 
+// 矩形(アバターの当たり判定)と障害物(壁)が重なっているかを判定する。
+// 壁が回転している場合はSAT(分離軸定理)で厳密な矩形×矩形判定を行う
+// (アバターの当たり判定自体も矩形のため、壁を逆回転させてアバターの
+// 中心点だけをAABB判定する近似だと、壁の角付近でアバター側の矩形の
+// 傾きを無視してしまいすり抜け/引っかかりが起きうる。壁の枚数は多くても
+// 数百枚程度を想定しており、三角関数・内積を数回追加する程度のコストは
+// 無視できる)。回転なし(未設定/0)の場合は既存のrectIntersectsRectに
+// 委譲し、非回転の壁の挙動を完全に維持する。
+export function rectIntersectsObstacle(
+  cx: number,
+  cy: number,
+  halfWidth: number,
+  halfHeight: number,
+  obstacle: Obstacle,
+): boolean {
+  const rotation = obstacle.rotation ?? 0;
+  if (rotation === 0) {
+    return rectIntersectsRect(cx, cy, halfWidth, halfHeight, obstacle);
+  }
+
+  const rad = (rotation * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+
+  const obstacleCenterX = obstacle.x + obstacle.width / 2;
+  const obstacleCenterY = obstacle.y + obstacle.height / 2;
+  const obstacleHalfWidth = obstacle.width / 2;
+  const obstacleHalfHeight = obstacle.height / 2;
+
+  const dx = obstacleCenterX - cx;
+  const dy = obstacleCenterY - cy;
+
+  // 判定軸4本: アバター側(X軸・Y軸)、壁側(回転後のローカルX軸・Y軸)
+  const axes = [
+    { x: 1, y: 0 },
+    { x: 0, y: 1 },
+    { x: cos, y: sin },
+    { x: -sin, y: cos },
+  ];
+
+  return axes.every((axis) => {
+    const centerDistance = Math.abs(dx * axis.x + dy * axis.y);
+    const avatarExtent =
+      halfWidth * Math.abs(axis.x) + halfHeight * Math.abs(axis.y);
+    const obstacleExtent =
+      obstacleHalfWidth * Math.abs(cos * axis.x + sin * axis.y) +
+      obstacleHalfHeight * Math.abs(-sin * axis.x + cos * axis.y);
+    return centerDistance <= avatarExtent + obstacleExtent;
+  });
+}
+
 // 指定した位置(x, y)が障害物と重なっていた場合、その障害物の上端のすぐ上へ押し出した位置を返す。
 // 重なっていなければそのままの位置を返す。
 export function resolveSpawnPosition(
   x: number,
   y: number,
-  obstaclesList: Rect[],
+  obstaclesList: Obstacle[],
   halfWidth: number = AVATAR_HITBOX_WIDTH / 2,
   halfHeight: number = AVATAR_HITBOX_HEIGHT / 2,
 ): { x: number; y: number } {
   const hit = obstaclesList.find((o) =>
-    rectIntersectsRect(x, y, halfWidth, halfHeight, o),
+    rectIntersectsObstacle(x, y, halfWidth, halfHeight, o),
   );
   if (!hit) return { x, y };
   const adjustedY = Math.max(hit.y - halfHeight, halfHeight);

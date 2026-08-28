@@ -11,6 +11,7 @@ import {
   clampPosition,
   clampSize,
   randomItemId,
+  rectIntersectsObstacle,
   rectIntersectsRect,
 } from "@/lib/types";
 import {
@@ -42,6 +43,20 @@ type DragState =
       startY: number;
       originWidth: number;
       originHeight: number;
+      // リサイズハンドルのドラッグ量(画面/マップ座標系)を、回転した壁
+      // 自身のローカル座標系(=幅・高さの増減方向)へ変換するために使う。
+      // 壁以外(ミーティングエリア等)は常に0。
+      rotationDeg: number;
+    }
+  | {
+      // 壁の回転ドラッグ。中心からポインタへの角度の変化量を回転角へ反映する。
+      mode: "rotate";
+      itemType: "obstacle";
+      id: string;
+      centerX: number;
+      centerY: number;
+      startAngleDeg: number;
+      originRotationDeg: number;
     };
 
 const MAX_DISPLAY_WIDTH = 1200;
@@ -199,7 +214,38 @@ export default function TemplateEditor({
             startY: e.clientY,
             originWidth: item.width,
             originHeight: item.height,
+            rotationDeg:
+              itemType === "obstacle" ? (item as Obstacle).rotation ?? 0 : 0,
           };
+  };
+
+  // 壁の回転ハンドルのドラッグ開始。ハンドルの親要素(壁本体のdiv、CSSで
+  // 既に回転済み)のgetBoundingClientRectは回転しても中心位置が変わらない
+  // ため、それを壁の中心(画面座標)としてそのまま使える。以降はスクロール
+  // やズームのスケール換算を挟まず、画面座標上の角度の変化量だけで回転量
+  // を計算する。
+  const handleRotatePointerDown = (
+    e: React.PointerEvent,
+    id: string,
+    rotation: number,
+  ) => {
+    e.stopPropagation();
+    const wallEl = (e.currentTarget as HTMLElement).parentElement;
+    if (!wallEl) return;
+    const rect = wallEl.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    dragState.current = {
+      mode: "rotate",
+      itemType: "obstacle",
+      id,
+      centerX,
+      centerY,
+      startAngleDeg:
+        (Math.atan2(e.clientY - centerY, e.clientX - centerX) * 180) /
+        Math.PI,
+      originRotationDeg: rotation,
+    };
   };
 
   // Obstacle/MeetingZoneのどちらであっても位置・サイズの計算内容は同じだが、
@@ -226,11 +272,18 @@ export default function TemplateEditor({
         );
         return { ...item, ...pos };
       }
+      if (drag.mode !== "resize") return item;
+      // リサイズハンドルのドラッグ量(画面/マップ座標系)を、壁自身が
+      // 回転しているローカル座標系(幅・高さの増減方向)へ逆回転させて
+      // 変換する。回転していなければrotationDeg=0なのでdx,dyそのまま。
+      const rad = (drag.rotationDeg * Math.PI) / 180;
+      const localDx = dx * Math.cos(rad) + dy * Math.sin(rad);
+      const localDy = -dx * Math.sin(rad) + dy * Math.cos(rad);
       const size = clampSize(
         item.x,
         item.y,
-        drag.originWidth + dx,
-        drag.originHeight + dy,
+        drag.originWidth + localDx,
+        drag.originHeight + localDy,
         mapWidth,
         mapHeight,
         minWidth,
@@ -245,7 +298,7 @@ export default function TemplateEditor({
     const halfW = AVATAR_HITBOX_WIDTH / 2;
     const halfH = AVATAR_HITBOX_HEIGHT / 2;
     return (
-      obstacles.some((o) => rectIntersectsRect(x, y, halfW, halfH, o)) ||
+      obstacles.some((o) => rectIntersectsObstacle(x, y, halfW, halfH, o)) ||
       meetingZones.some((z) => rectIntersectsRect(x, y, halfW, halfH, z))
     );
   };
@@ -268,6 +321,22 @@ export default function TemplateEditor({
     }
     const drag = dragState.current;
     if (!drag) return;
+    if (drag.mode === "rotate") {
+      const angleDeg =
+        (Math.atan2(e.clientY - drag.centerY, e.clientX - drag.centerX) *
+          180) /
+        Math.PI;
+      let rotation =
+        (drag.originRotationDeg + (angleDeg - drag.startAngleDeg) + 360) %
+        360;
+      // Shift押下中は15度単位にスナップし、意図しない中途半端な角度に
+      // なりにくくする。
+      if (e.shiftKey) rotation = Math.round(rotation / 15) * 15;
+      setObstacles((prev) =>
+        prev.map((o) => (o.id === drag.id ? { ...o, rotation } : o)),
+      );
+      return;
+    }
     const dx = (e.clientX - drag.startX) / scale;
     const dy = (e.clientY - drag.startY) / scale;
     if (drag.itemType === "obstacle") {
@@ -739,6 +808,10 @@ export default function TemplateEditor({
           <div>
             <p className="font-semibold text-slate-700">【壁】</p>
             <p>・通ることができないエリア</p>
+            <p>
+              ・上の丸いハンドルをドラッグで回転(Shift押下で15度単位)、
+              下の数値欄で角度を直接入力できます
+            </p>
           </div>
           <div>
             <p className="font-semibold text-slate-700">【ミーティングエリア】</p>
@@ -873,6 +946,8 @@ export default function TemplateEditor({
                   top: o.y * scale,
                   width: o.width * scale,
                   height: o.height * scale,
+                  transform: `rotate(${o.rotation ?? 0}deg)`,
+                  transformOrigin: "50% 50%",
                 }}
               >
                 🧱 壁
@@ -883,6 +958,33 @@ export default function TemplateEditor({
                 >
                   ×
                 </button>
+                {/* 回転ハンドル: ドラッグで自由回転(Shift押下で15度単位スナップ)。
+                    壁本体と一緒に回転するので、常に壁から見て「真上」に付いてくる。 */}
+                <div
+                  onPointerDown={(e) =>
+                    handleRotatePointerDown(e, o.id, o.rotation ?? 0)
+                  }
+                  title="ドラッグで回転(Shiftで15度単位)"
+                  className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
+                />
+                {/* 角度の数値入力(ドラッグ操作が苦手でも正確な角度を指定できる)。 */}
+                <input
+                  type="number"
+                  min={0}
+                  max={359}
+                  value={Math.round(o.rotation ?? 0)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    const next = ((Number(e.target.value) || 0) % 360 + 360) % 360;
+                    setObstacles((prev) =>
+                      prev.map((item) =>
+                        item.id === o.id ? { ...item, rotation: next } : item,
+                      ),
+                    );
+                  }}
+                  className="absolute -bottom-5 left-1/2 h-4 w-10 -translate-x-1/2 rounded border border-slate-300 bg-white px-0.5 text-[9px] text-slate-700"
+                />
                 <div
                   onPointerDown={(e) =>
                     handlePointerDown(e, "obstacle", o.id, "resize")

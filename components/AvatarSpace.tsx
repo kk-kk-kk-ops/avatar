@@ -27,6 +27,7 @@ import {
   MOVE_SPEED,
   MESSAGE_MAX_LENGTH,
   findMeetingZoneId,
+  rectIntersectsObstacle,
   rectIntersectsRect,
   resolveSpawnPosition,
   PROXIMITY_RADIUS,
@@ -2358,6 +2359,7 @@ export default function AvatarSpace({
             width: o.width ?? NEW_ITEM_SIZE,
             height: o.height ?? NEW_ITEM_SIZE,
             label: o.label ?? "🧱 壁",
+            rotation: o.rotation ?? 0,
           }),
         );
         setObstacles(loadedObstacles);
@@ -3270,10 +3272,10 @@ export default function AvatarSpace({
           // 障害物との当たり判定(矩形どうし)。X軸・Y軸を別々に判定することで、
           // 障害物に斜めから近づいても壁沿いに滑るように移動できる。
           let blockedX = obstaclesRef.current.some((o) =>
-            rectIntersectsRect(nextX, self.y, halfW, halfH, o),
+            rectIntersectsObstacle(nextX, self.y, halfW, halfH, o),
           );
           let blockedY = obstaclesRef.current.some((o) =>
-            rectIntersectsRect(self.x, nextY, halfW, halfH, o),
+            rectIntersectsObstacle(self.x, nextY, halfW, halfH, o),
           );
 
           // 会議室(conference)ゾーンの入室確認・施錠判定。

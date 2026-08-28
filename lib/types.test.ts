@@ -4,6 +4,7 @@ import {
   clampPosition,
   clampSize,
   findMeetingZoneId,
+  rectIntersectsObstacle,
   rectIntersectsRect,
   resolveSpawnPosition,
 } from "./types";
@@ -92,14 +93,75 @@ describe("findMeetingZoneId", () => {
 
 describe("resolveSpawnPosition", () => {
   it("障害物と重ならなければそのままの位置を返す", () => {
-    const obstacles = [{ x: 500, y: 500, width: 50, height: 50 }];
+    const obstacles = [
+      { id: "o1", label: "壁", x: 500, y: 500, width: 50, height: 50 },
+    ];
     expect(resolveSpawnPosition(0, 0, obstacles)).toEqual({ x: 0, y: 0 });
   });
 
   it("障害物と重なる場合は上端のすぐ上へ押し出す", () => {
-    const obstacles = [{ x: 90, y: 90, width: 50, height: 50 }];
+    const obstacles = [
+      { id: "o1", label: "壁", x: 90, y: 90, width: 50, height: 50 },
+    ];
     const result = resolveSpawnPosition(100, 100, obstacles, 10, 10);
     expect(result.x).toBe(100);
     expect(result.y).toBeLessThan(100);
+  });
+});
+
+describe("rectIntersectsObstacle", () => {
+  const straightObstacle = {
+    id: "o1",
+    label: "壁",
+    x: 100,
+    y: 100,
+    width: 50,
+    height: 50,
+  };
+
+  it("rotation未設定はrectIntersectsRectと同じ結果になる(回帰確認)", () => {
+    expect(rectIntersectsObstacle(110, 110, 10, 10, straightObstacle)).toBe(
+      rectIntersectsRect(110, 110, 10, 10, straightObstacle),
+    );
+    expect(rectIntersectsObstacle(500, 500, 10, 10, straightObstacle)).toBe(
+      rectIntersectsRect(500, 500, 10, 10, straightObstacle),
+    );
+  });
+
+  it("rotation:0も同様に既存判定と一致する", () => {
+    const obstacle = { ...straightObstacle, rotation: 0 };
+    expect(rectIntersectsObstacle(110, 110, 10, 10, obstacle)).toBe(true);
+    expect(rectIntersectsObstacle(500, 500, 10, 10, obstacle)).toBe(false);
+  });
+
+  it("45度回転した壁: 回転前AABBの内側だが菱形の外側にある点はfalse", () => {
+    // 中心(125,125)・半幅25の正方形を45度回転させると、対角線方向の
+    // 半径は約17.7pxまで縮む。回転前の角(100,100)付近は回転後は
+    // 壁の外側になる。
+    const obstacle = {
+      id: "o1",
+      label: "壁",
+      x: 100,
+      y: 100,
+      width: 50,
+      height: 50,
+      rotation: 45,
+    };
+    expect(rectIntersectsObstacle(102, 102, 2, 2, obstacle)).toBe(false);
+  });
+
+  it("45度回転した壁: 回転後の長軸方向はAABB外でも重なる", () => {
+    // 中心(125,125)から真上(x軸方向)へ35px(元のAABBの外)進んだ点は、
+    // 45度回転後は壁の対角線方向に伸びた辺と重なる。
+    const obstacle = {
+      id: "o1",
+      label: "壁",
+      x: 100,
+      y: 100,
+      width: 50,
+      height: 50,
+      rotation: 45,
+    };
+    expect(rectIntersectsObstacle(125, 90, 3, 3, obstacle)).toBe(true);
   });
 });
