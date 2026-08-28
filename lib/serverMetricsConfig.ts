@@ -2,35 +2,35 @@
 // 行を追加するだけで表にサーバーを増やせるように、種別ごとに必要な
 // 情報だけを持つ配列にしている。
 //
-// - "redis-tcp": Redisの稼働状況を、prod-1(grovina-livekit-prod)のnode_exporter
-//   経由で取得する(redis_upというtextfile collectorメトリクス。cronで
-//   grovina-livekit-prod上のcheck-redis.shが1分おきに書き出す)。
-//   VercelからRedis(161.34.34.53:6379)へ直接TCP接続する方式だったが、
-//   WebARENA Indigo側のネットワークで外部からの到達がブロックされており
-//   常に「停止中」に誤表示される不具合があったため、実際にRedisへ到達
-//   できているgrovina-livekit-prod経由の間接確認に切り替えた
-//   (2026-08、詳細はマスター画面の調査経緯を参照)。kind名は元のまま
-//   残しているが、直接のTCP接続は行っていない点に注意。
-// - "node-exporter": 既存のMETRICS_URL / METRICS_BASIC_AUTH_USER /
-//   METRICS_BASIC_AUTH_PASSWORD(grovina-livekit-prod用)からフル指標を取得する。
-//   prod②等を追加する場合は、サーバーごとに環境変数を分けたうえで
-//   app/api/master/server-metrics/route.tsのnode-exporter取得処理をidで
-//   分岐させる必要がある(今回はprod①のみのため分岐は未実装)。redis-tcp行も
-//   現状この唯一のnode-exporter取得結果からredis_upを読み取っているため、
-//   prod②を追加する場合はredis-tcp側の参照先も合わせて見直すこと。
+// 2026-08、本番LiveKitサーバーをWebARENA Indigo(grovina-livekit-prod、
+// 解約済み)からIndigoPro(target-pro、grovina-livekit-pro①)へ移行。
+// 旧prod上で動いていたnode_exporter・check-redis.shはtarget-pro上に
+// 作り直した(deploy/livekit/LOAD_TEST_PLAN.md参照)。
+//
+// - "redis-tcp": Redis(grovina-livekit-redis)の稼働状況を、pro-1
+//   (target-pro)のnode_exporter経由で取得する種別(redis_upという
+//   textfile collectorメトリクス。target-pro上のcheck-redis.shが1分
+//   おきに書き出す。cron自体は将来の複数ノード構成に備えて稼働継続中)。
+//   2026-08時点、target-pro自体のlivekit.yamlはRedis未設定(単一ノード
+//   構成のため実運用上Redisに依存していない)上、Redis側ファイア
+//   ウォールがtarget-proの新IPをまだ許可しておらず疎通できないため、
+//   誤解を招く「停止中」表示を避けるべくSERVER_ROWSから行自体を削除
+//   している。複数ノード構成でRedisを実際に使うようになったら、
+//   ファイアウォール更新とあわせて行を復活させること。
+// - "node-exporter": METRICS_URL / METRICS_BASIC_AUTH_USER /
+//   METRICS_BASIC_AUTH_PASSWORD(target-pro用に発行し直した認証情報)から
+//   フル指標を取得する。pro②等を追加する場合は、サーバーごとに環境変数を
+//   分けたうえでapp/api/master/server-metrics/route.tsのnode-exporter
+//   取得処理をidで分岐させる必要がある(今回はpro①のみのため分岐は
+//   未実装)。
 export type ServerRowConfig =
   | { id: string; name: string; kind: "redis-tcp" }
   | { id: string; name: string; kind: "node-exporter" };
 
 export const SERVER_ROWS: ServerRowConfig[] = [
   {
-    id: "redis-1",
-    name: "grovina-livekit-redis①",
-    kind: "redis-tcp",
-  },
-  {
-    id: "prod-1",
-    name: "grovina-livekit-prod①",
+    id: "pro-1",
+    name: "grovina-livekit-pro①",
     kind: "node-exporter",
   },
 ];

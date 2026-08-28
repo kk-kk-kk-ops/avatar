@@ -21,7 +21,12 @@ export type LivekitServerConfig = {
 export const LIVEKIT_SERVERS: LivekitServerConfig[] = [
   {
     id: "node-1",
-    label: "grovina-livekit-prod①",
+    // 2026-08、WebARENA Indigo(grovina-livekit-prod)からIndigoPro
+    // (target-pro)へ本番移行済み。負荷検証の結果、1台での安全な収容力は
+    // プロプラン(30人)顧客4組(120接続)まで(deploy/livekit/LOAD_TEST_PLAN.md
+    // 参照)。旧Indigoサーバーは解約済みのため、このidを増やす際は新しい
+    // 物理サーバーとして扱う。
+    label: "grovina-livekit-pro①",
     urlEnv: "LIVEKIT_URL",
     apiKeyEnv: "LIVEKIT_API_KEY",
     apiSecretEnv: "LIVEKIT_API_SECRET",
