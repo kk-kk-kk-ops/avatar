@@ -6,6 +6,7 @@ import {
   NEW_ITEM_SIZE,
   MIN_ITEM_SIZE,
   MIN_OBSTACLE_WIDTH,
+  MIN_OBSTACLE_HEIGHT,
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
   clampPosition,
@@ -258,6 +259,7 @@ export default function TemplateEditor({
     dx: number,
     dy: number,
     minWidth: number = MIN_ITEM_SIZE,
+    minHeight: number = MIN_ITEM_SIZE,
   ): T[] =>
     prev.map((item) => {
       if (item.id !== drag.id) return item;
@@ -287,6 +289,7 @@ export default function TemplateEditor({
         mapWidth,
         mapHeight,
         minWidth,
+        minHeight,
       );
       return { ...item, ...size };
     });
@@ -340,7 +343,9 @@ export default function TemplateEditor({
     const dx = (e.clientX - drag.startX) / scale;
     const dy = (e.clientY - drag.startY) / scale;
     if (drag.itemType === "obstacle") {
-      setObstacles((prev) => applyDrag(prev, drag, dx, dy, MIN_OBSTACLE_WIDTH));
+      setObstacles((prev) =>
+        applyDrag(prev, drag, dx, dy, MIN_OBSTACLE_WIDTH, MIN_OBSTACLE_HEIGHT),
+      );
     } else {
       setMeetingZones((prev) => applyDrag(prev, drag, dx, dy));
     }

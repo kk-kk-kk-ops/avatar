@@ -306,7 +306,12 @@ export type MeetingZone = Rect & {
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
 export const MIN_ITEM_SIZE = 40; // これより小さくはできない
-export const MIN_OBSTACLE_WIDTH = 20; // 障害物(壁)は幅だけ半分の細さまで許容する
+// 障害物(壁)は幅・高さともに、これまでの最小値からさらに半分の細さ
+// まで許容する(幅: 20→10、高さ: 40→20)。自由回転に対応したことで、
+// 細く絞った壁を回転させれば見た目上は高さが細い壁にもなるため、幅・
+// 高さどちらの最小値も一緒に縮小できるようにしている。
+export const MIN_OBSTACLE_WIDTH = 10;
+export const MIN_OBSTACLE_HEIGHT = 20;
 
 export const DEFAULT_OBSTACLES: Obstacle[] = [
   {
