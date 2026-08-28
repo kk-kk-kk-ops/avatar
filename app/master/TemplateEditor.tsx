@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
 import {
   NEW_ITEM_SIZE,
@@ -81,6 +82,7 @@ export default function TemplateEditor({
   avatarSizePx: number;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const [obstacles, setObstacles] = useState<Obstacle[]>(template.obstacles);
   const [meetingZones, setMeetingZones] = useState<MeetingZone[]>(
     template.meetingZones,
@@ -588,6 +590,13 @@ export default function TemplateEditor({
         setError(result.error);
         return;
       }
+      // revalidatePath("/master")はサーバー側のキャッシュを無効化する
+      // だけで、既に開いている(ナビゲーションを伴わない)このページの
+      // テンプレート一覧props(TemplateManagerのtemplates)には自動反映
+      // されない。router.refresh()を呼ばないと、保存直後に同じテンプレ
+      // ートを開き直した際に保存前の古いobstaclesから再スタートして
+      // しまい、そのまま保存すると直前の変更が消えてしまう不具合があった。
+      router.refresh();
       onClose();
     } finally {
       setSaving(false);
@@ -610,6 +619,7 @@ export default function TemplateEditor({
       }
       setName(trimmed);
       setEditingName(false);
+      router.refresh();
     } finally {
       setRenaming(false);
     }
@@ -628,6 +638,7 @@ export default function TemplateEditor({
         return;
       }
       setBackgroundImageUrl(url);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "画像の変更に失敗しました");
     } finally {
