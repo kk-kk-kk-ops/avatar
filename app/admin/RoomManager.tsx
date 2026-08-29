@@ -103,9 +103,7 @@ export default function RoomManager({
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <p className="text-xs text-slate-500">
-          {rooms.length} / {maxRooms} ルーム作成済み
-        </p>
+        <p className="text-xs text-slate-500">現在適用中ルーム</p>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -193,50 +191,56 @@ export default function RoomManager({
         ) : (
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
             {templates.map((t) => (
-              <button
+              <div
                 key={t.id}
-                type="button"
-                onClick={() => setSelectedDesignId(t.id)}
-                disabled={pending}
-                className={`overflow-hidden rounded-lg border-2 bg-slate-100 text-left transition-colors disabled:opacity-60 ${
+                className={`relative overflow-hidden rounded-lg border-2 bg-slate-100 transition-colors ${
                   selectedDesignId === t.id
                     ? "border-emerald-500"
                     : "border-transparent hover:border-slate-300"
                 }`}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={t.backgroundImageUrl}
-                  alt={t.name}
-                  className="aspect-video w-full object-cover"
-                />
-                <p className="truncate px-2 py-1.5 text-xs font-semibold text-slate-700">
-                  {t.name}
-                </p>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDesignId(t.id)}
+                  disabled={pending}
+                  className="block w-full text-left disabled:opacity-60"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={t.backgroundImageUrl}
+                    alt={t.name}
+                    className="aspect-video w-full object-cover"
+                  />
+                  <p className="truncate px-2 py-1.5 text-xs font-semibold text-slate-700">
+                    {t.name}
+                  </p>
+                </button>
+                {/* このカードを選んでいる間だけ右下に表示する。他のカードを
+                    選ぶとselectedDesignIdが変わるので自動的に隠れる。 */}
+                {selectedDesignId === t.id && (
+                  <button
+                    type="button"
+                    onClick={handleApply}
+                    disabled={
+                      pending || (!existingRoom && rooms.length >= maxRooms)
+                    }
+                    className="absolute bottom-1.5 right-1.5 rounded bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white shadow hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    {pendingAction?.type === "apply"
+                      ? existingRoom
+                        ? "変更中..."
+                        : "作成中..."
+                      : applied
+                        ? "適用しました"
+                        : existingRoom
+                          ? "変更"
+                          : "作成"}
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
-
-        <button
-          onClick={handleApply}
-          disabled={
-            pending ||
-            !selectedDesignId ||
-            (!existingRoom && rooms.length >= maxRooms)
-          }
-          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-        >
-          {pendingAction?.type === "apply"
-            ? existingRoom
-              ? "変更中..."
-              : "作成中..."
-            : applied
-              ? "適用しました"
-              : existingRoom
-                ? "変更"
-                : "このデザインでルームを作成"}
-        </button>
       </div>
 
       {deleteTarget && (
