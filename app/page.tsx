@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
+import { startFreeTrial } from "@/app/plan/actions";
 import { AUTH_ERROR_MESSAGES } from "@/lib/authErrorMessages";
 import { PLANS, type PlanId, type Room } from "@/lib/types";
 import LoginCard from "@/components/auth/LoginCard";
@@ -323,11 +324,23 @@ export default async function Home({
 
     const state = await resolveUserRouteState(supabase, user.id);
     if (state.isMaster) redirect("/master");
-    if (state.type === "no-account") redirect("/plan");
+    if (state.type === "no-account") {
+      // 直接ログイン(招待URLなし)導線統一(2026-08-29): 以前はここで
+      // プラン選択画面(/plan)へ誘導していたが、有料プランは決済未実装で
+      // 実質「無料プランで始める」の一択だったため、選択画面を挟まず
+      // startFreeTrial()をその場で実行し、そのままロビーへ直行させる。
+      // 招待URL経由の場合はこの分岐に到達しない(上のinviteToken処理で
+      // 既にaccount_idが設定されているため)。
+      const result = await startFreeTrial();
+      if (!result.ok) redirect("/plan");
+      const newState = await resolveUserRouteState(supabase, user.id);
+      if (newState.type === "no-account") redirect("/plan");
+      return renderRoomJoin(supabase, user, newState);
+    }
     // ログインフロー統一(2026-08-24): 以前はここで管理者を/adminへ
     // 自動転送していたが、招待URL経由(自分自身の招待URL)の場合と
     // 同じロビー画面(renderRoomJoin)に合流させる。管理画面への導線は
-    // ロビー画面上の「管理画面へ」リンクに委ねる。
+    // ロビー画面上の「管理者としてログイン」リンクに委ねる。
     return renderRoomJoin(supabase, user, state);
   }
 
