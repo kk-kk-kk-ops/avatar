@@ -190,55 +190,72 @@ export default function RoomManager({
           </p>
         ) : (
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {templates.map((t) => (
-              <div
-                key={t.id}
-                className={`relative overflow-hidden rounded-lg border-2 bg-slate-100 transition-colors ${
-                  selectedDesignId === t.id
-                    ? "border-emerald-500"
-                    : "border-transparent hover:border-slate-300"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => setSelectedDesignId(t.id)}
-                  disabled={pending}
-                  className="block w-full text-left disabled:opacity-60"
+            {templates.map((t) => {
+              // 現在ルームに適用されているデザインかどうか(選択中かとは
+              // 別の概念)。適用中のものはボタンを押しても意味がないため
+              // グレーアウトして押せないようにする。
+              const isApplying = pendingAction?.type === "apply";
+              const isCurrentlyApplied =
+                existingRoom?.templateId === t.id && !isApplying && !applied;
+
+              return (
+                <div
+                  key={t.id}
+                  className={`relative overflow-hidden rounded-lg border-2 bg-slate-100 transition-colors ${
+                    selectedDesignId === t.id
+                      ? "border-emerald-500"
+                      : "border-transparent hover:border-slate-300"
+                  }`}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={t.backgroundImageUrl}
-                    alt={t.name}
-                    className="aspect-video w-full object-cover"
-                  />
-                  <p className="truncate px-2 py-1.5 text-xs font-semibold text-slate-700">
-                    {t.name}
-                  </p>
-                </button>
-                {/* このカードを選んでいる間だけ右下に表示する。他のカードを
-                    選ぶとselectedDesignIdが変わるので自動的に隠れる。 */}
-                {selectedDesignId === t.id && (
                   <button
                     type="button"
-                    onClick={handleApply}
-                    disabled={
-                      pending || (!existingRoom && rooms.length >= maxRooms)
-                    }
-                    className="absolute bottom-1.5 right-1.5 rounded bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white shadow hover:bg-emerald-500 disabled:opacity-60"
+                    onClick={() => setSelectedDesignId(t.id)}
+                    disabled={pending}
+                    className="block w-full text-left disabled:opacity-60"
                   >
-                    {pendingAction?.type === "apply"
-                      ? existingRoom
-                        ? "変更中..."
-                        : "作成中..."
-                      : applied
-                        ? "適用しました"
-                        : existingRoom
-                          ? "変更"
-                          : "作成"}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={t.backgroundImageUrl}
+                      alt={t.name}
+                      className="aspect-video w-full object-cover"
+                    />
+                    <p className="truncate px-2 py-1.5 text-xs font-semibold text-slate-700">
+                      {t.name}
+                    </p>
                   </button>
-                )}
-              </div>
-            ))}
+                  {/* このカードを選んでいる間だけ右下に表示する。他のカードを
+                      選ぶとselectedDesignIdが変わるので自動的に隠れる。 */}
+                  {selectedDesignId === t.id && (
+                    <button
+                      type="button"
+                      onClick={handleApply}
+                      disabled={
+                        pending ||
+                        isCurrentlyApplied ||
+                        (!existingRoom && rooms.length >= maxRooms)
+                      }
+                      className={`absolute bottom-1.5 right-1.5 rounded px-2 py-1 text-[10px] font-semibold shadow disabled:cursor-not-allowed ${
+                        isCurrentlyApplied
+                          ? "bg-slate-300 text-slate-600"
+                          : "bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-60"
+                      }`}
+                    >
+                      {isApplying
+                        ? existingRoom
+                          ? "変更中..."
+                          : "作成中..."
+                        : applied
+                          ? "適用しました"
+                          : isCurrentlyApplied
+                            ? "適用中"
+                            : existingRoom
+                              ? "変更"
+                              : "作成"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
