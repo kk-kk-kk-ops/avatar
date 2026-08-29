@@ -219,40 +219,50 @@ export default function RoomManager({
                       alt={t.name}
                       className="aspect-video w-full object-cover"
                     />
-                    <p className="truncate px-2 py-1.5 text-xs font-semibold text-slate-700">
-                      {t.name}
-                    </p>
                   </button>
-                  {/* このカードを選んでいる間だけ右下に表示する。他のカードを
-                      選ぶとselectedDesignIdが変わるので自動的に隠れる。 */}
-                  {selectedDesignId === t.id && (
+                  {/* ルーム名とボタンは画像の下の帯にセンター揃えで並べる
+                      (以前はボタンを画像に重なる形で絶対配置していたため、
+                      プレビューやルーム名と重なって見えていた)。 */}
+                  <div className="flex items-center justify-between gap-2 px-2 py-2.5">
                     <button
                       type="button"
-                      onClick={handleApply}
-                      disabled={
-                        pending ||
-                        isCurrentlyApplied ||
-                        (!existingRoom && rooms.length >= maxRooms)
-                      }
-                      className={`absolute bottom-1.5 right-1.5 rounded px-2 py-1 text-[10px] font-semibold shadow disabled:cursor-not-allowed ${
-                        isCurrentlyApplied
-                          ? "bg-slate-300 text-slate-600"
-                          : "bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-60"
-                      }`}
+                      onClick={() => setSelectedDesignId(t.id)}
+                      disabled={pending}
+                      className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-slate-700 disabled:opacity-60"
                     >
-                      {isApplying
-                        ? existingRoom
-                          ? "変更中..."
-                          : "作成中..."
-                        : applied
-                          ? "適用しました"
-                          : isCurrentlyApplied
-                            ? "適用中"
-                            : existingRoom
-                              ? "変更"
-                              : "作成"}
+                      {t.name}
                     </button>
-                  )}
+                    {/* このカードを選んでいる間だけ表示する。他のカードを
+                        選ぶとselectedDesignIdが変わるので自動的に隠れる。 */}
+                    {selectedDesignId === t.id && (
+                      <button
+                        type="button"
+                        onClick={handleApply}
+                        disabled={
+                          pending ||
+                          isCurrentlyApplied ||
+                          (!existingRoom && rooms.length >= maxRooms)
+                        }
+                        className={`shrink-0 rounded px-2 py-1 text-[10px] font-semibold disabled:cursor-not-allowed ${
+                          isCurrentlyApplied
+                            ? "bg-slate-300 text-slate-600"
+                            : "bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-60"
+                        }`}
+                      >
+                        {isApplying
+                          ? existingRoom
+                            ? "変更中..."
+                            : "作成中..."
+                          : applied
+                            ? "適用しました"
+                            : isCurrentlyApplied
+                              ? "適用中"
+                              : existingRoom
+                                ? "変更"
+                                : "作成"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
