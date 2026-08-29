@@ -4445,14 +4445,22 @@ export default function AvatarSpace({
 
           {/* ログインフロー統一(2026-08-24): 管理者は/adminへ自動転送
               されなくなったため、ロビー画面からも管理画面へ行けるように
-              する(入室後の設定タブ内の同種リンクは既存のまま維持)。 */}
+              する(入室後の設定タブ内の同種リンクは既存のまま維持)。
+              退室してから遷移する(2026-08-29): ログアウトはせず、handleLeaveRoom
+              (通常の退室ボタンと同じ処理)で入室状態だけ解除してから/admin
+              へ移動する。フルページ遷移にすることで、この画面が確実に
+              アンマウントされ元の部屋に入室したままの状態が残らないようにする。 */}
           {isAccountAdmin && (
-            <Link
-              href="/admin"
+            <button
+              type="button"
+              onClick={() => {
+                handleLeaveRoom();
+                window.location.href = "/admin";
+              }}
               className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
             >
-              管理画面へ
-            </Link>
+              管理者としてログイン
+            </button>
           )}
         </div>
       </div>
@@ -5615,12 +5623,16 @@ export default function AvatarSpace({
                 {(isAccountAdmin || isMaster) && (
                   <div className="space-y-2 border-t border-slate-700 pt-4">
                     {isAccountAdmin && (
-                      <Link
-                        href="/admin"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleLeaveRoom();
+                          window.location.href = "/admin";
+                        }}
                         className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
                       >
-                        管理画面へ
-                      </Link>
+                        管理者としてログイン
+                      </button>
                     )}
                     {isMaster && (
                       <Link
