@@ -1110,19 +1110,15 @@ export default function AvatarSpace({
             },
           ],
         }));
-        channelRef.current?.send({
-          type: "broadcast",
-          event: "dm",
-          payload: {
-            id: data.id,
-            originId: selfId.current,
-            senderUserId: myUserId,
-            recipientUserId: peerUserId,
-            senderName,
-            message: text,
-            createdAt: data.created_at,
-            imagePath,
-          },
+        channelRef.current?.httpSend("dm", {
+          id: data.id,
+          originId: selfId.current,
+          senderUserId: myUserId,
+          recipientUserId: peerUserId,
+          senderName,
+          message: text,
+          createdAt: data.created_at,
+          imagePath,
         });
         return true;
       } finally {
@@ -1178,18 +1174,14 @@ export default function AvatarSpace({
           },
         ],
       }));
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "group-dm",
-        payload: {
-          id: data.id,
-          originId: selfId.current,
-          groupId,
-          senderUserId: myUserId,
-          senderName,
-          message: text,
-          createdAt: data.created_at,
-        },
+      channelRef.current?.httpSend("group-dm", {
+        id: data.id,
+        originId: selfId.current,
+        groupId,
+        senderUserId: myUserId,
+        senderName,
+        message: text,
+        createdAt: data.created_at,
       });
       setChatThreadsRefreshTrigger((n) => n + 1);
     } finally {
@@ -1200,12 +1192,14 @@ export default function AvatarSpace({
   // グループチャット作成モーダルの「作成」ボタン。
   const handleCreateGroup = useCallback(async () => {
     if (createGroupSelectedIds.size === 0 || creatingGroup) return;
+    const myUserId = authUserIdRef.current;
     setCreatingGroup(true);
     setCreateGroupError(null);
     try {
+      const memberUserIds = Array.from(createGroupSelectedIds);
       const { data, error } = await supabase.rpc("create_chat_group", {
         p_room_id: roomId,
-        p_member_user_ids: Array.from(createGroupSelectedIds),
+        p_member_user_ids: memberUserIds,
       });
       if (error || !data) {
         // eslint-disable-next-line no-console
@@ -1222,6 +1216,16 @@ export default function AvatarSpace({
       setSelectedPeerUserId(null);
       setSelectedGroupId(newGroupId);
       setChatThreadsRefreshTrigger((n) => n + 1);
+      // 招待した他のメンバーへ、新規グループ作成をリアルタイムで知らせる
+      // (これが無いと、メッセージが1件も無い間は相手の一覧に表示されず、
+      // 相手が気づかずグループを重複作成してしまう不具合があった)。
+      if (myUserId) {
+        channelRef.current?.httpSend("group-created", {
+          originId: selfId.current,
+          groupId: newGroupId,
+          memberUserIds,
+        });
+      }
     } finally {
       setCreatingGroup(false);
     }
@@ -1655,17 +1659,13 @@ export default function AvatarSpace({
           m.id === messageId ? { ...m, message: trimmed, editedAt } : m,
         ),
       }));
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "dm-edit",
-        payload: {
-          id: messageId,
-          originId: selfId.current,
-          senderUserId: myUserId,
-          recipientUserId: peerUserId,
-          message: trimmed,
-          editedAt,
-        },
+      channelRef.current?.httpSend("dm-edit", {
+        id: messageId,
+        originId: selfId.current,
+        senderUserId: myUserId,
+        recipientUserId: peerUserId,
+        message: trimmed,
+        editedAt,
       });
       setDmEditingMessageId(null);
       setDmInput("");
@@ -1725,16 +1725,12 @@ export default function AvatarSpace({
           (msg) => msg.id !== m.id,
         ),
       }));
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "dm-delete",
-        payload: {
-          id: m.id,
-          originId: selfId.current,
-          senderUserId: myUserId,
-          recipientUserId: peerUserId,
-          deletedAt,
-        },
+      channelRef.current?.httpSend("dm-delete", {
+        id: m.id,
+        originId: selfId.current,
+        senderUserId: myUserId,
+        recipientUserId: peerUserId,
+        deletedAt,
       });
       if (dmEditingMessageId === m.id) {
         setDmEditingMessageId(null);
@@ -2911,6 +2907,26 @@ export default function AvatarSpace({
               },
             ],
           }));
+          setChatThreadsRefreshTrigger((n) => n + 1);
+        })
+        .on("broadcast", { event: "group-created" }, ({ payload }) => {
+          const msg = payload as {
+            originId: string;
+            groupId: string;
+            memberUserIds: string[];
+          };
+          const myUserId = authUserIdRef.current;
+          // broadcast自体は room 内全員に届くため、自分が招待された
+          // メンバーに含まれているかどうかをここで判定して弾く
+          // (group-dmと同じ考え方)。
+          if (
+            msg.originId === selfId.current ||
+            !myUserId ||
+            !msg.memberUserIds.includes(myUserId)
+          ) {
+            return;
+          }
+          myGroupIdsRef.current.add(msg.groupId);
           setChatThreadsRefreshTrigger((n) => n + 1);
         })
         .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
