@@ -1167,13 +1167,38 @@ create policy "chat_groups: select member"
 
 alter table public.chat_group_members enable row level security;
 
+-- 2026-08-30修正: 元々このポリシーはchat_group_members自身を再帰的に
+-- サブクエリしていたため、Postgresが"infinite recursion detected in
+-- policy for relation \"chat_group_members\""(42P17)を返すバグがあった。
+-- chat_messagesのSELECT/INSERTポリシー(9f-3b以降)がグループ判定のために
+-- chat_group_membersをサブクエリする作りになっているため、グループが
+-- 一切関係ない1対1DMのクエリまで巻き添えで500エラーになっていた。
+-- SECURITY DEFINER関数(RLSを経由せずテーブルの所有者権限で読む)経由に
+-- することで自己参照の連鎖を断ち切る。
+create or replace function public.is_chat_group_member(
+  p_group_id uuid,
+  p_user_id uuid default auth.uid()
+)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.chat_group_members
+    where group_id = p_group_id and user_id = p_user_id
+  );
+$$;
+
+revoke all on function public.is_chat_group_member(uuid, uuid) from public;
+grant execute on function public.is_chat_group_member(uuid, uuid) to authenticated;
+
 drop policy if exists "chat_group_members: select same group" on public.chat_group_members;
 create policy "chat_group_members: select same group"
   on public.chat_group_members for select
   using (
-    group_id in (
-      select m2.group_id from public.chat_group_members m2 where m2.user_id = auth.uid()
-    )
+    public.is_chat_group_member(group_id, auth.uid())
   );
 
 create table if not exists public.chat_group_read_state (
