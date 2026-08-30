@@ -432,6 +432,9 @@ export default function AvatarSpace({
     message: string;
     createdAt: string;
     deletedAt: string | null;
+    // 退出通知(「○○が退出しました」)かどうか。trueの場合、通常の吹き
+    // 出しではなく枠なし・赤文字で表示する。
+    isSystem: boolean;
   };
   // 現在サイドバーで開いているグループスレッド。1対1(selectedPeerUserId)
   // とは排他的(どちらか一方だけがnullでない)。
@@ -466,9 +469,9 @@ export default function AvatarSpace({
   const [renameGroupError, setRenameGroupError] = useState<string | null>(
     null,
   );
-  const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
-  const [deletingGroupBusy, setDeletingGroupBusy] = useState(false);
-  const [deleteGroupError, setDeleteGroupError] = useState<string | null>(
+  const [leavingGroupId, setLeavingGroupId] = useState<string | null>(null);
+  const [leavingGroupBusy, setLeavingGroupBusy] = useState(false);
+  const [leaveGroupError, setLeaveGroupError] = useState<string | null>(
     null,
   );
   const [dmInput, setDmInput] = useState("");
@@ -564,6 +567,16 @@ export default function AvatarSpace({
   // スマホの長押し検出用(contextmenuイベントが発火しないiOS Safari向け)。
   const dmLongPressTimerRef = useRef<number | null>(null);
   const dmLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  // グループ一覧の項目(名前変更/退出メニュー)向けの長押し検出用。
+  // DMメッセージの長押しコピー機能とは無関係の、単純な「メニューを開く」
+  // だけの用途のため、部分コピー等の複雑な状態は持たない。
+  const groupLongPressTimerRef = useRef<number | null>(null);
+  const groupLongPressStartRef = useRef<{ x: number; y: number } | null>(
+    null,
+  );
+  // 長押しでメニューを開いた直後、指を離した際にボタンのonClick(スレッド
+  // を開く操作)まで発火してしまうのを防ぐためのフラグ。
+  const groupLongPressFiredRef = useRef(false);
   // 相手ごとの未読件数。参加者一覧の該当行にLINE風のバッジで表示し、
   // そのスレッドを開いたタイミングで0に戻す。
   const [unreadFromPeers, setUnreadFromPeers] = useState<
@@ -857,6 +870,15 @@ export default function AvatarSpace({
       setUnreadFromPeers((prev) =>
         prev[selectedPeerUserId] ? { ...prev, [selectedPeerUserId]: 0 } : prev,
       );
+      // タブの未読合計バッジを、スレッドを開いた時点で即座に反映する
+      // (以前は一覧の再取得タイミング任せで、開いてもすぐには減らなかった)。
+      setChatThreads((prev) =>
+        prev.map((t) =>
+          !t.isGroup && t.threadId === selectedPeerUserId
+            ? { ...t, unreadCount: 0 }
+            : t,
+        ),
+      );
       // 既読位置をサーバー側にも保存する(ログインし直しても未読数が
       // 保持されるようにするため)。chat_read_stateのRLSはuser_id=
       // auth.uid()のみで判定しておりアカウント所属を問わないため、
@@ -894,7 +916,9 @@ export default function AvatarSpace({
     (async () => {
       const { data, error } = await supabase
         .from("chat_messages")
-        .select("id, sender_user_id, sender_name, message, created_at, deleted_at")
+        .select(
+          "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system",
+        )
         .eq("room_id", roomId)
         .eq("group_id", selectedGroupId)
         .order("created_at", { ascending: false })
@@ -915,6 +939,7 @@ export default function AvatarSpace({
         message: string;
         created_at: string;
         deleted_at: string | null;
+        is_system: boolean;
       }>;
       const messages: GroupMessage[] = rows
         .slice()
@@ -928,8 +953,18 @@ export default function AvatarSpace({
           message: row.message,
           createdAt: row.created_at,
           deletedAt: row.deleted_at,
+          isSystem: row.is_system,
         }));
       setGroupThreads((prev) => ({ ...prev, [selectedGroupId]: messages }));
+      // タブの未読合計バッジを、スレッドを開いた時点で即座に反映する
+      // (以前は一覧の再取得タイミング任せで、開いてもすぐには減らなかった)。
+      setChatThreads((prev) =>
+        prev.map((t) =>
+          t.isGroup && t.threadId === selectedGroupId
+            ? { ...t, unreadCount: 0 }
+            : t,
+        ),
+      );
       // chat_group_read_stateのRLSもuser_id=auth.uid()のみで判定して
       // おりアカウント所属を問わないため、viewOnlyでもそのまま呼べる
       // (2026-08-30修正: 前回viewOnly除外にしたのは誤りだった)。
@@ -1204,6 +1239,7 @@ export default function AvatarSpace({
             message: text,
             createdAt: data.created_at,
             deletedAt: null,
+            isSystem: false,
           },
         ],
       }));
@@ -1215,6 +1251,7 @@ export default function AvatarSpace({
         senderName,
         message: text,
         createdAt: data.created_at,
+        isSystem: false,
       });
       setChatThreadsRefreshTrigger((n) => n + 1);
     } finally {
@@ -1234,16 +1271,23 @@ export default function AvatarSpace({
       // profiles.account_idがこのアカウントを指さないため、通常の
       // create_chat_groupでは「このルームへのアクセス権がありません」に
       // なる(2026-08-30修正)。招待トークンを検証する別ルート経由にする。
+      // どちらも、自分を含めた選択メンバーの集合が完全一致する既存の
+      // グループがあれば新規作成せずalready_existed:trueで返す
+      // (2026-08-30追加。重複作成防止)。
       const { data, error } = viewOnlyInviteToken
-        ? await supabase.rpc("create_chat_group_by_invite_token", {
-            token: viewOnlyInviteToken,
-            target_room_id: roomId,
-            p_member_user_ids: memberUserIds,
-          })
-        : await supabase.rpc("create_chat_group", {
-            p_room_id: roomId,
-            p_member_user_ids: memberUserIds,
-          });
+        ? await supabase
+            .rpc("create_chat_group_by_invite_token", {
+              token: viewOnlyInviteToken,
+              target_room_id: roomId,
+              p_member_user_ids: memberUserIds,
+            })
+            .single()
+        : await supabase
+            .rpc("create_chat_group", {
+              p_room_id: roomId,
+              p_member_user_ids: memberUserIds,
+            })
+            .single();
       if (error || !data) {
         // eslint-disable-next-line no-console
         console.error("グループチャットの作成に失敗しました", error);
@@ -1252,7 +1296,12 @@ export default function AvatarSpace({
         );
         return;
       }
-      const newGroupId = data as string;
+      const result = data as { group_id: string; already_existed: boolean };
+      if (result.already_existed) {
+        setCreateGroupError("選択メンバーとのチャットはすでに作成済です");
+        return;
+      }
+      const newGroupId = result.group_id;
       myGroupIdsRef.current.add(newGroupId);
       setShowCreateGroupModal(false);
       setCreateGroupSelectedIds(new Set());
@@ -1305,41 +1354,59 @@ export default function AvatarSpace({
     }
   }, [renamingGroupId, renameGroupInput, renamingGroupSaving, supabase]);
 
-  // グループ削除(作成者のみ可能。サーバー側のRLS/権限チェックで最終的に
-  // 弾かれるが、UI上も作成者以外には「削除」を出さない)。
-  const handleDeleteGroupConfirm = useCallback(async () => {
-    if (!deletingGroupId || deletingGroupBusy) return;
-    setDeletingGroupBusy(true);
-    setDeleteGroupError(null);
+  // グループからの退出(メンバーなら誰でも可能。ハードデリートではなく、
+  // LINE/Teams等と同様「自分の画面から消え、他のメンバーには退出通知
+  // メッセージだけが残る」挙動にする。他のメンバーへは通常のグループ
+  // メッセージ(is_system:true)として配信するため、group-dmイベントを
+  // そのまま使う(専用のgroup-deletedイベントは廃止した)。
+  const handleLeaveGroupConfirm = useCallback(async () => {
+    if (!leavingGroupId || leavingGroupBusy) return;
+    const groupId = leavingGroupId;
+    setLeavingGroupBusy(true);
+    setLeaveGroupError(null);
     try {
-      const { error } = await supabase.rpc("delete_chat_group", {
-        p_group_id: deletingGroupId,
-      });
-      if (error) {
+      const { data, error } = await supabase
+        .rpc("leave_chat_group", { p_group_id: groupId })
+        .single();
+      if (error || !data) {
         // eslint-disable-next-line no-console
-        console.error("グループの削除に失敗しました", error);
-        setDeleteGroupError(
-          "削除に失敗しました(作成者のみ削除できます)。",
+        console.error("グループからの退出に失敗しました", error);
+        setLeaveGroupError(
+          "退出に失敗しました。時間をおいて再度お試しください。",
         );
         return;
       }
-      myGroupIdsRef.current.delete(deletingGroupId);
-      setChatThreads((prev) => prev.filter((t) => t.threadId !== deletingGroupId));
-      if (selectedGroupId === deletingGroupId) {
+      const leftMessage = data as {
+        id: string;
+        created_at: string;
+        message: string;
+        sender_name: string;
+      };
+      channelRef.current?.httpSend("group-dm", {
+        id: leftMessage.id,
+        originId: selfId.current,
+        groupId,
+        senderUserId: authUserIdRef.current,
+        senderName: leftMessage.sender_name,
+        message: leftMessage.message,
+        createdAt: leftMessage.created_at,
+        isSystem: true,
+      });
+      myGroupIdsRef.current.delete(groupId);
+      setChatThreads((prev) => prev.filter((t) => t.threadId !== groupId));
+      setGroupThreads((prev) => {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      });
+      if (selectedGroupId === groupId) {
         setSelectedGroupId(null);
       }
-      // 他のメンバーへ削除をリアルタイムで知らせる(これが無いと、他の
-      // メンバーの一覧・開いたままのスレッドに削除済みグループが残り
-      // 続けてしまっていた)。
-      channelRef.current?.httpSend("group-deleted", {
-        originId: selfId.current,
-        groupId: deletingGroupId,
-      });
-      setDeletingGroupId(null);
+      setLeavingGroupId(null);
     } finally {
-      setDeletingGroupBusy(false);
+      setLeavingGroupBusy(false);
     }
-  }, [deletingGroupId, deletingGroupBusy, selectedGroupId, supabase]);
+  }, [leavingGroupId, leavingGroupBusy, selectedGroupId, supabase]);
 
   // グループの右クリックメニューは、開いている間だけ外側クリック/スクロール
   // で閉じるようにする。
@@ -1912,6 +1979,45 @@ export default function AvatarSpace({
       dmTouchActiveRef.current = false;
     }, 100);
   }, [clearDmLongPressTimer]);
+
+  const clearGroupLongPressTimer = useCallback(() => {
+    if (groupLongPressTimerRef.current !== null) {
+      window.clearTimeout(groupLongPressTimerRef.current);
+      groupLongPressTimerRef.current = null;
+    }
+  }, []);
+
+  // スマホでのグループ一覧項目の長押しで、PCの右クリックと同じメニュー
+  // (名前変更/退出)を開く。
+  const handleGroupTouchStart = useCallback(
+    (e: React.TouchEvent, groupId: string) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      groupLongPressStartRef.current = { x: touch.clientX, y: touch.clientY };
+      groupLongPressTimerRef.current = window.setTimeout(() => {
+        groupLongPressTimerRef.current = null;
+        groupLongPressFiredRef.current = true;
+        setGroupContextMenu({ groupId, x: touch.clientX, y: touch.clientY });
+      }, 500);
+    },
+    [],
+  );
+
+  const handleGroupTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      const start = groupLongPressStartRef.current;
+      const touch = e.touches[0];
+      if (!start || !touch || groupLongPressTimerRef.current === null) return;
+      if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) {
+        clearGroupLongPressTimer();
+      }
+    },
+    [clearGroupLongPressTimer],
+  );
+
+  const handleGroupTouchEnd = useCallback(() => {
+    clearGroupLongPressTimer();
+  }, [clearGroupLongPressTimer]);
 
   // 部分コピーモード:対象メッセージ全文を初期選択し、ユーザーがブラウザ
   // 標準の選択ハンドルでドラッグして範囲を1文字単位で調整できるようにする。
@@ -2939,9 +3045,12 @@ export default function AvatarSpace({
             senderName: string;
             message: string;
             createdAt: string;
+            isSystem?: boolean;
           };
           // broadcast自体はグループメンバー以外にも届くため、自分が
-          // そのグループのメンバーかどうかをここで判定して弾く。
+          // そのグループのメンバーかどうかをここで判定して弾く(退出
+          // した本人は退出時点でmyGroupIdsRefから削除済みのため、この
+          // 判定だけで「退出後は通知が来ない」も自然に満たされる)。
           if (
             msg.originId === selfId.current ||
             !myGroupIdsRef.current.has(msg.groupId)
@@ -2960,6 +3069,7 @@ export default function AvatarSpace({
                 message: msg.message,
                 createdAt: msg.createdAt,
                 deletedAt: null,
+                isSystem: msg.isSystem ?? false,
               },
             ],
           }));
@@ -2984,15 +3094,6 @@ export default function AvatarSpace({
           }
           myGroupIdsRef.current.add(msg.groupId);
           setChatThreadsRefreshTrigger((n) => n + 1);
-        })
-        .on("broadcast", { event: "group-deleted" }, ({ payload }) => {
-          const msg = payload as { originId: string; groupId: string };
-          if (msg.originId === selfId.current) return;
-          myGroupIdsRef.current.delete(msg.groupId);
-          setChatThreads((prev) =>
-            prev.filter((t) => t.threadId !== msg.groupId),
-          );
-          setSelectedGroupId((prev) => (prev === msg.groupId ? null : prev));
         })
         .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
           const msg = payload as {
@@ -5156,6 +5257,13 @@ export default function AvatarSpace({
                             <button
                               type="button"
                               onClick={() => {
+                                // スマホでの長押しでメニューを開いた直後は、
+                                // 指を離した際のclickでスレッドまで開いて
+                                // しまわないようにする。
+                                if (groupLongPressFiredRef.current) {
+                                  groupLongPressFiredRef.current = false;
+                                  return;
+                                }
                                 if (t.isGroup) {
                                   setSelectedPeerUserId(null);
                                   setSelectedGroupId(t.threadId);
@@ -5173,6 +5281,13 @@ export default function AvatarSpace({
                                   y: e.clientY,
                                 });
                               }}
+                              onTouchStart={(e) => {
+                                if (!t.isGroup) return;
+                                handleGroupTouchStart(e, t.threadId);
+                              }}
+                              onTouchMove={handleGroupTouchMove}
+                              onTouchEnd={handleGroupTouchEnd}
+                              onTouchCancel={handleGroupTouchEnd}
                               className="flex w-full items-center gap-2 rounded px-1 py-2 text-left transition-colors hover:bg-white/5"
                             >
                               <div className="min-w-0 flex-1">
@@ -5569,28 +5684,39 @@ export default function AvatarSpace({
                               まだメッセージはありません
                             </p>
                           )}
-                          {thread.map((m) => (
-                            <div
-                              key={m.id}
-                              className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
-                                m.isSelf
-                                  ? "ml-auto bg-emerald-600 text-white"
-                                  : "bg-slate-700 text-slate-100"
-                              }`}
-                            >
-                              {!m.isSelf && (
-                                <p className="mb-0.5 text-[10px] font-semibold text-slate-300">
-                                  {m.senderName}
-                                </p>
-                              )}
-                              <p className="whitespace-pre-wrap break-words">
+                          {thread.map((m) =>
+                            m.isSystem ? (
+                              // 退出通知など。通常の吹き出しとは区別し、
+                              // 枠なし・赤文字のみで中央に表示する。
+                              <p
+                                key={m.id}
+                                className="py-1 text-center text-[11px] text-red-400"
+                              >
                                 {m.message}
                               </p>
-                              <p className="mt-0.5 text-right text-[9px] opacity-70">
-                                {formatDmClockTime(m.createdAt)}
-                              </p>
-                            </div>
-                          ))}
+                            ) : (
+                              <div
+                                key={m.id}
+                                className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                                  m.isSelf
+                                    ? "ml-auto bg-emerald-600 text-white"
+                                    : "bg-slate-700 text-slate-100"
+                                }`}
+                              >
+                                {!m.isSelf && (
+                                  <p className="mb-0.5 text-[10px] font-semibold text-slate-300">
+                                    {m.senderName}
+                                  </p>
+                                )}
+                                <p className="whitespace-pre-wrap break-words">
+                                  {m.message}
+                                </p>
+                                <p className="mt-0.5 text-right text-[9px] opacity-70">
+                                  {formatDmClockTime(m.createdAt)}
+                                </p>
+                              </div>
+                            ),
+                          )}
                         </div>
                       </div>
                       {groupError && (
@@ -6093,13 +6219,13 @@ export default function AvatarSpace({
           <button
             type="button"
             onClick={() => {
-              setDeletingGroupId(groupContextMenu.groupId);
-              setDeleteGroupError(null);
+              setLeavingGroupId(groupContextMenu.groupId);
+              setLeaveGroupError(null);
               setGroupContextMenu(null);
             }}
             className="block w-full border-t border-slate-700 px-3 py-2 text-left text-red-300 hover:bg-slate-700"
           >
-            削除
+            このチャットから退出
           </button>
         </div>
       )}
@@ -6144,33 +6270,34 @@ export default function AvatarSpace({
         </div>
       )}
 
-      {/* グループ削除の確認モーダル */}
-      {deletingGroupId && (
+      {/* グループ退出の確認モーダル */}
+      {leavingGroupId && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
-              このグループチャットを削除しますか?
+              このチャットから退出しますか?
               <br />
-              メッセージも含めて全員から見えなくなります。
+              自分の画面からは履歴が消え、以後の通知も届かなくなります。
+              他のメンバーには退出したことが通知されます。
             </p>
-            {deleteGroupError && (
+            {leaveGroupError && (
               <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
-                {deleteGroupError}
+                {leaveGroupError}
               </p>
             )}
             <div className="flex gap-2">
               <button
-                onClick={() => setDeletingGroupId(null)}
+                onClick={() => setLeavingGroupId(null)}
                 className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
                 キャンセル
               </button>
               <button
-                onClick={handleDeleteGroupConfirm}
-                disabled={deletingGroupBusy}
+                onClick={handleLeaveGroupConfirm}
+                disabled={leavingGroupBusy}
                 className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
               >
-                {deletingGroupBusy ? "削除中..." : "削除する"}
+                {leavingGroupBusy ? "退出中..." : "退出する"}
               </button>
             </div>
           </div>
