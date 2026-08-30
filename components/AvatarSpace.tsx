@@ -435,6 +435,7 @@ export default function AvatarSpace({
     // 退出通知(「○○が退出しました」)かどうか。trueの場合、通常の吹き
     // 出しではなく枠なし・赤文字で表示する。
     isSystem: boolean;
+    imagePath: string | null;
   };
   // 現在サイドバーで開いているグループスレッド。1対1(selectedPeerUserId)
   // とは排他的(どちらか一方だけがnullでない)。
@@ -512,6 +513,22 @@ export default function AvatarSpace({
   };
   const [dmPendingImages, setDmPendingImages] = useState<DmPendingImage[]>([]);
   const [dmDragActive, setDmDragActive] = useState(false);
+  // グループチャットの画像添付(DMと同じ考え方の一時添付状態)。署名付き
+  // URLのキャッシュ(dmImageUrls/dmImageLoadFailed)・拡大プレビュー
+  // (dmLightbox)はメッセージID単位のキーで、DM/グループどちらの画像でも
+  // 共用できるためグループ専用には分けていない。
+  const [groupPendingImages, setGroupPendingImages] = useState<
+    DmPendingImage[]
+  >([]);
+  const [groupImageUploading, setGroupImageUploading] = useState(false);
+  const [groupUploadProgress, setGroupUploadProgress] = useState<{
+    index: number;
+    total: number;
+    percent: number;
+    phase: "uploading" | "compressing";
+  } | null>(null);
+  const groupImageInputRef = useRef<HTMLInputElement | null>(null);
+  const [groupDragActive, setGroupDragActive] = useState(false);
   // 画像の拡大プレビュー(送受信済み画像/送信前プレビューの両方で使う)。
   // messageIdがnullの場合は送信前プレビュー(保存ボタンは出さない)。
   const [dmLightbox, setDmLightbox] = useState<{
@@ -917,7 +934,7 @@ export default function AvatarSpace({
       const { data, error } = await supabase
         .from("chat_messages")
         .select(
-          "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system",
+          "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system, image_path",
         )
         .eq("room_id", roomId)
         .eq("group_id", selectedGroupId)
@@ -940,6 +957,7 @@ export default function AvatarSpace({
         created_at: string;
         deleted_at: string | null;
         is_system: boolean;
+        image_path: string | null;
       }>;
       const messages: GroupMessage[] = rows
         .slice()
@@ -954,6 +972,7 @@ export default function AvatarSpace({
           createdAt: row.created_at,
           deletedAt: row.deleted_at,
           isSystem: row.is_system,
+          imagePath: row.image_path,
         }));
       setGroupThreads((prev) => ({ ...prev, [selectedGroupId]: messages }));
       // タブの未読合計バッジを、スレッドを開いた時点で即座に反映する
@@ -1198,66 +1217,78 @@ export default function AvatarSpace({
   // グループのINSERT RLSはchat_group_members.user_id=auth.uid()のみで
   // 判定しており、profiles経由のアカウント所属は問わないため、viewOnly
   // でもそのままこのINSERTが通る(トークン検証の専用RPCは不要)。
-  const sendGroupMessage = useCallback(async () => {
-    const groupId = selectedGroupId;
-    const text = groupInput.trim();
-    if (!text || !selfState.current || !groupId || groupSending) return;
-    const senderName = selfState.current.name;
-    const myUserId = authUserIdRef.current;
-    if (!myUserId) return;
-    setGroupError(null);
-    setGroupSending(true);
-    setGroupInput("");
-    try {
-      const { data, error } = await supabase
-        .from("chat_messages")
-        .insert({
-          room_id: roomId,
-          sender_user_id: myUserId,
-          group_id: groupId,
-          sender_name: senderName,
-          message: text,
-        })
-        .select("id, created_at")
-        .single();
-      if (error || !data) {
-        // eslint-disable-next-line no-console
-        console.error("グループメッセージの送信に失敗しました", error);
-        setGroupError("送信に失敗しました。時間をおいて再度お試しください。");
-        setGroupInput(text);
-        return;
+  // テキスト送信・画像送信で共通の本体部分(postDmMessageと同じ考え方)。
+  const postGroupMessage = useCallback(
+    async (text: string, imagePath: string | null) => {
+      const groupId = selectedGroupId;
+      if (
+        (!text && !imagePath) ||
+        !selfState.current ||
+        !groupId ||
+        groupSending
+      ) {
+        return false;
       }
-      setGroupThreads((prev) => ({
-        ...prev,
-        [groupId]: [
-          ...(prev[groupId] ?? []),
-          {
-            id: data.id,
-            senderUserId: myUserId,
-            senderName,
-            isSelf: true,
+      const senderName = selfState.current.name;
+      const myUserId = authUserIdRef.current;
+      if (!myUserId) return false;
+      setGroupError(null);
+      setGroupSending(true);
+      try {
+        const { data, error } = await supabase
+          .from("chat_messages")
+          .insert({
+            room_id: roomId,
+            sender_user_id: myUserId,
+            group_id: groupId,
+            sender_name: senderName,
             message: text,
-            createdAt: data.created_at,
-            deletedAt: null,
-            isSystem: false,
-          },
-        ],
-      }));
-      channelRef.current?.httpSend("group-dm", {
-        id: data.id,
-        originId: selfId.current,
-        groupId,
-        senderUserId: myUserId,
-        senderName,
-        message: text,
-        createdAt: data.created_at,
-        isSystem: false,
-      });
-      setChatThreadsRefreshTrigger((n) => n + 1);
-    } finally {
-      setGroupSending(false);
-    }
-  }, [groupInput, groupSending, roomId, selectedGroupId, supabase]);
+            image_path: imagePath,
+          })
+          .select("id, created_at")
+          .single();
+        if (error || !data) {
+          // eslint-disable-next-line no-console
+          console.error("グループメッセージの送信に失敗しました", error);
+          setGroupError("送信に失敗しました。時間をおいて再度お試しください。");
+          return false;
+        }
+        setGroupThreads((prev) => ({
+          ...prev,
+          [groupId]: [
+            ...(prev[groupId] ?? []),
+            {
+              id: data.id,
+              senderUserId: myUserId,
+              senderName,
+              isSelf: true,
+              message: text,
+              createdAt: data.created_at,
+              deletedAt: null,
+              isSystem: false,
+              imagePath,
+            },
+          ],
+        }));
+        channelRef.current?.httpSend("group-dm", {
+          id: data.id,
+          originId: selfId.current,
+          groupId,
+          senderUserId: myUserId,
+          senderName,
+          message: text,
+          createdAt: data.created_at,
+          isSystem: false,
+          imagePath,
+        });
+        setChatThreadsRefreshTrigger((n) => n + 1);
+        return true;
+      } finally {
+        setGroupSending(false);
+      }
+    },
+    [groupSending, roomId, selectedGroupId, supabase],
+  );
 
   // グループチャット作成モーダルの「作成」ボタン。
   const handleCreateGroup = useCallback(async () => {
@@ -1332,11 +1363,13 @@ export default function AvatarSpace({
   // グループ名変更。メンバーなら誰でも変更できる。
   const handleRenameGroupSave = useCallback(async () => {
     if (!renamingGroupId || renamingGroupSaving) return;
+    const groupId = renamingGroupId;
+    const trimmedName = renameGroupInput.trim();
     setRenamingGroupSaving(true);
     setRenameGroupError(null);
     try {
       const { error } = await supabase.rpc("rename_chat_group", {
-        p_group_id: renamingGroupId,
+        p_group_id: groupId,
         p_name: renameGroupInput,
       });
       if (error) {
@@ -1348,7 +1381,25 @@ export default function AvatarSpace({
         return;
       }
       setRenamingGroupId(null);
-      setChatThreadsRefreshTrigger((n) => n + 1);
+      // 他のメンバーへリアルタイムで反映する。空欄保存(=自動生成名に
+      // 戻す)の場合、フォールバック名の計算はサーバー(list_chat_threads)
+      // に委ねるため、自分・相手ともに一覧を再取得させるだけにする。
+      if (trimmedName) {
+        setChatThreads((prev) =>
+          prev.map((t) =>
+            t.isGroup && t.threadId === groupId
+              ? { ...t, threadName: trimmedName }
+              : t,
+          ),
+        );
+      } else {
+        setChatThreadsRefreshTrigger((n) => n + 1);
+      }
+      channelRef.current?.httpSend("group-renamed", {
+        originId: selfId.current,
+        groupId,
+        name: trimmedName || null,
+      });
     } finally {
       setRenamingGroupSaving(false);
     }
@@ -1381,6 +1432,7 @@ export default function AvatarSpace({
         created_at: string;
         message: string;
         sender_name: string;
+        deleted_image_paths: string[] | null;
       };
       channelRef.current?.httpSend("group-dm", {
         id: leftMessage.id,
@@ -1403,6 +1455,25 @@ export default function AvatarSpace({
         setSelectedGroupId(null);
       }
       setLeavingGroupId(null);
+      // 自分が最後のメンバーで、グループごと削除された場合、DBの行は
+      // leave_chat_group側でcascade削除済みだが、添付画像のStorage実体は
+      // SQLのDELETEだけでは消えないため、ここでService Role経由の
+      // 削除APIを呼ぶ(cronの保管期間切れ削除と同じ理由・同じ方針)。
+      if (
+        leftMessage.deleted_image_paths &&
+        leftMessage.deleted_image_paths.length > 0
+      ) {
+        fetch("/api/chat/cleanup-group-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imagePaths: leftMessage.deleted_image_paths,
+          }),
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error("グループ画像のクリーンアップに失敗しました", err);
+        });
+      }
     } finally {
       setLeavingGroupBusy(false);
     }
@@ -1453,8 +1524,13 @@ export default function AvatarSpace({
       const { data: currentCount } = await supabase.rpc(
         "get_daily_image_upload_count",
       );
+      // 1日のアップロード上限はDM・グループ共通(ユーザー単位)のため、
+      // 両方の添付中件数を差し引く。
       let remaining =
-        DAILY_IMAGE_UPLOAD_LIMIT - (currentCount ?? 0) - dmPendingImages.length;
+        DAILY_IMAGE_UPLOAD_LIMIT -
+        (currentCount ?? 0) -
+        dmPendingImages.length -
+        groupPendingImages.length;
 
       setDmError(null);
       // 画像を添付した時点で編集モードは抜ける(「更新」ボタンに送信操作が
@@ -1499,7 +1575,88 @@ export default function AvatarSpace({
         setDmPendingImages((prev) => [...prev, ...staged]);
       }
     },
-    [dmImageUploading, dmPendingImages.length, dmEditingMessageId, supabase],
+    [
+      dmImageUploading,
+      dmPendingImages.length,
+      groupPendingImages.length,
+      dmEditingMessageId,
+      supabase,
+    ],
+  );
+
+  const cancelGroupPendingImage = useCallback((id: string) => {
+    setGroupPendingImages((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.id !== id);
+    });
+  }, []);
+
+  const cancelAllGroupPendingImages = useCallback(() => {
+    setGroupPendingImages((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      return [];
+    });
+  }, []);
+
+  // グループチャット版の添付処理(stageDmImagesと同じ考え方。1日の上限は
+  // DM・グループ共通のため、両方の添付中件数を差し引いて判定する)。
+  const stageGroupImages = useCallback(
+    async (files: File[]) => {
+      if (groupImageUploading || files.length === 0) return;
+
+      const { data: currentCount } = await supabase.rpc(
+        "get_daily_image_upload_count",
+      );
+      let remaining =
+        DAILY_IMAGE_UPLOAD_LIMIT -
+        (currentCount ?? 0) -
+        dmPendingImages.length -
+        groupPendingImages.length;
+
+      setGroupError(null);
+
+      const staged: DmPendingImage[] = [];
+      for (const file of files) {
+        const validationError = validateChatImageFile(file);
+        if (validationError) {
+          setGroupError(validationError);
+          break;
+        }
+        if (remaining <= 0) {
+          setGroupError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
+          break;
+        }
+        const previewUrl = URL.createObjectURL(file);
+        const dims = await new Promise<
+          { width: number; height: number } | null
+        >((resolve) => {
+          const img = new window.Image();
+          img.onload = () =>
+            resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => resolve(null);
+          img.src = previewUrl;
+        });
+        staged.push({
+          id: crypto.randomUUID(),
+          file,
+          previewUrl,
+          width: dims?.width,
+          height: dims?.height,
+        });
+        remaining -= 1;
+      }
+
+      if (staged.length > 0) {
+        setGroupPendingImages((prev) => [...prev, ...staged]);
+      }
+    },
+    [
+      groupImageUploading,
+      dmPendingImages.length,
+      groupPendingImages.length,
+      supabase,
+    ],
   );
 
   // 相手を切り替えたら、添付中の画像は宛先違いの誤送信を避けるため破棄する。
@@ -1507,6 +1664,121 @@ export default function AvatarSpace({
     cancelAllDmPendingImages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPeerUserId]);
+
+  // グループを切り替えたら同様に破棄する。
+  useEffect(() => {
+    cancelAllGroupPendingImages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGroupId]);
+
+  const sendGroupMessage = useCallback(async () => {
+    const text = groupInput.trim();
+    const pending = groupPendingImages;
+    if (
+      (!text && pending.length === 0) ||
+      groupSending ||
+      groupImageUploading
+    ) {
+      return;
+    }
+
+    setGroupInput("");
+    setGroupError(null);
+
+    // 複数画像は、chat_messagesのスキーマ上1メッセージにつき画像は1枚のため、
+    // 1枚ずつ順番にメッセージとして送る(sendDmMessageと同じ考え方)。
+    const imagePaths: string[] = [];
+    if (pending.length > 0) {
+      const myUserId = authUserIdRef.current;
+      if (!myUserId) return;
+      setGroupImageUploading(true);
+      try {
+        for (let i = 0; i < pending.length; i++) {
+          const p = pending[i];
+          setGroupUploadProgress({
+            index: i,
+            total: pending.length,
+            percent: 0,
+            phase: "uploading",
+          });
+          const rawPath = await uploadRawChatImageWithProgress(
+            p.file,
+            myUserId,
+            (percent) =>
+              setGroupUploadProgress({
+                index: i,
+                total: pending.length,
+                percent,
+                phase: "uploading",
+              }),
+          );
+          setGroupUploadProgress({
+            index: i,
+            total: pending.length,
+            percent: 100,
+            phase: "compressing",
+          });
+          const res = await fetch("/api/chat/compress-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              rawPath,
+              roomId,
+              inviteToken: viewOnlyInviteToken ?? undefined,
+            }),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            setGroupError(json.error ?? "画像のアップロードに失敗しました");
+            setGroupInput(text);
+            return;
+          }
+          imagePaths.push(json.imagePath as string);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("画像添付メッセージの送信に失敗しました", err);
+        setGroupError(
+          "画像のアップロードに失敗しました。時間をおいて再度お試しください。",
+        );
+        setGroupInput(text);
+        return;
+      } finally {
+        setGroupImageUploading(false);
+        setGroupUploadProgress(null);
+      }
+    }
+
+    if (imagePaths.length === 0) {
+      const ok = await postGroupMessage(text, null);
+      if (!ok) setGroupInput(text);
+      return;
+    }
+
+    let allOk = true;
+    for (let i = 0; i < imagePaths.length; i++) {
+      const isLast = i === imagePaths.length - 1;
+      const ok = await postGroupMessage(isLast ? text : "", imagePaths[i]);
+      if (!ok) {
+        allOk = false;
+        break;
+      }
+    }
+    if (allOk) {
+      cancelAllGroupPendingImages();
+    } else {
+      setGroupInput(text);
+    }
+  }, [
+    groupInput,
+    groupPendingImages,
+    groupSending,
+    groupImageUploading,
+    postGroupMessage,
+    roomId,
+    viewOnlyInviteToken,
+    cancelAllGroupPendingImages,
+  ]);
 
   const sendDmMessage = useCallback(async () => {
     const trimmed = dmInput.trim();
@@ -1617,15 +1889,20 @@ export default function AvatarSpace({
   // 画像を保存(ダウンロード)する。Content-Dispositionによる強制ダウンロード
   // 付きの署名付きURLをその場で発行し直す(表示用URLとは別発行にすることで、
   // 通常表示時にダウンロードダイアログが出てしまうのを避ける)。
+  // DM・グループどちらのライトボックスからも使う(グループ画像はアカウント
+  // 所属を問わないRLSのため、roomId/peerUserId/inviteTokenの付与は
+  // DM+viewOnlyの場合のみでよい)。
   const downloadDmLightboxImage = useCallback(async () => {
-    if (!dmLightbox?.messageId || !selectedPeerUserId) return;
+    if (!dmLightbox?.messageId || (!selectedPeerUserId && !selectedGroupId)) {
+      return;
+    }
     setDmLightboxDownloading(true);
     try {
       const params = new URLSearchParams({
         messageId: dmLightbox.messageId,
         download: "1",
       });
-      if (viewOnlyInviteToken) {
+      if (viewOnlyInviteToken && selectedPeerUserId) {
         params.set("roomId", roomId);
         params.set("peerUserId", selectedPeerUserId);
         params.set("inviteToken", viewOnlyInviteToken);
@@ -1641,7 +1918,13 @@ export default function AvatarSpace({
     } finally {
       setDmLightboxDownloading(false);
     }
-  }, [dmLightbox, roomId, selectedPeerUserId, viewOnlyInviteToken]);
+  }, [
+    dmLightbox,
+    roomId,
+    selectedPeerUserId,
+    selectedGroupId,
+    viewOnlyInviteToken,
+  ]);
 
   // 添付画像の署名付きURLを取得する(未取得・未失敗のもののみ)。
   // スレッドを開いた/更新された際にまとめて呼ぶ。失敗した場合は
@@ -1716,6 +1999,67 @@ export default function AvatarSpace({
     roomId,
     viewOnlyInviteToken,
   ]);
+
+  // グループチャット版の署名付きURL取得(上のDM版と同じ考え方)。
+  // chat_messagesのグループ向けSELECT RLSはアカウント所属を問わないため、
+  // viewOnlyでも通常のmessageIdだけで取得できる(roomId/inviteTokenの
+  // 付与は不要)。dmImageUrls/dmImageLoadFailedはメッセージID単位の
+  // キャッシュのためDMと共用する。
+  useEffect(() => {
+    if (!selectedGroupId) return;
+    const thread = groupThreads[selectedGroupId] ?? [];
+    const targets = thread.filter(
+      (m) => m.imagePath && !dmImageUrls[m.id] && !dmImageLoadFailed[m.id],
+    );
+    if (targets.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        targets.map(async (m) => {
+          const params = new URLSearchParams({ messageId: m.id });
+          try {
+            const res = await fetch(`/api/chat/image-url?${params.toString()}`);
+            const json = await res.json();
+            if (!res.ok) {
+              // eslint-disable-next-line no-console
+              console.error(
+                "添付画像URLの取得に失敗しました",
+                m.id,
+                res.status,
+                json,
+              );
+              return { id: m.id, ok: false as const };
+            }
+            return { id: m.id, ok: true as const, url: json.url as string };
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error("添付画像URLの取得に失敗しました", m.id, err);
+            return { id: m.id, ok: false as const };
+          }
+        }),
+      );
+      if (cancelled) return;
+      const succeeded = results.filter(
+        (r): r is { id: string; ok: true; url: string } => r.ok,
+      );
+      const failed = results.filter((r) => !r.ok);
+      if (succeeded.length > 0) {
+        setDmImageUrls((prev) => ({
+          ...prev,
+          ...Object.fromEntries(succeeded.map((r) => [r.id, r.url])),
+        }));
+      }
+      if (failed.length > 0) {
+        setDmImageLoadFailed((prev) => ({
+          ...prev,
+          ...Object.fromEntries(failed.map((r) => [r.id, true as const])),
+        }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGroupId, groupThreads, dmImageUrls, dmImageLoadFailed]);
 
   // 画像の読み込みに失敗した状態(署名付きURL取得失敗、または実際の
   // <img>読み込み失敗)を解除して再試行させる。
@@ -3033,6 +3377,22 @@ export default function AvatarSpace({
               ...prev,
               [msg.senderUserId]: (prev[msg.senderUserId] ?? 0) + 1,
             }));
+          } else {
+            // スレッドを開いたまま新着を受け取った場合、既読位置もその場で
+            // 更新しておく。これをしないと、後でスレッドを閉じてチャット
+            // 一覧を再取得した際に「見たはずの新着」が未読として復活して
+            // しまっていた(2026-08-31修正)。
+            supabase
+              .rpc("mark_chat_thread_read", {
+                p_room_id: roomId,
+                p_peer_user_id: msg.senderUserId,
+              })
+              .then(({ error: markError }) => {
+                if (markError) {
+                  // eslint-disable-next-line no-console
+                  console.error("既読位置の保存に失敗しました", markError);
+                }
+              });
           }
           setChatThreadsRefreshTrigger((n) => n + 1);
         })
@@ -3046,6 +3406,7 @@ export default function AvatarSpace({
             message: string;
             createdAt: string;
             isSystem?: boolean;
+            imagePath?: string | null;
           };
           // broadcast自体はグループメンバー以外にも届くため、自分が
           // そのグループのメンバーかどうかをここで判定して弾く(退出
@@ -3070,9 +3431,22 @@ export default function AvatarSpace({
                 createdAt: msg.createdAt,
                 deletedAt: null,
                 isSystem: msg.isSystem ?? false,
+                imagePath: msg.imagePath ?? null,
               },
             ],
           }));
+          // グループを開いたまま新着を受け取った場合も、1対1DMと同じ理由
+          // (2026-08-31修正)で既読位置を更新しておく。
+          if (selectedGroupIdRef.current === msg.groupId) {
+            supabase
+              .rpc("mark_chat_group_read", { p_group_id: msg.groupId })
+              .then(({ error: markError }) => {
+                if (markError) {
+                  // eslint-disable-next-line no-console
+                  console.error("既読位置の保存に失敗しました", markError);
+                }
+              });
+          }
           setChatThreadsRefreshTrigger((n) => n + 1);
         })
         .on("broadcast", { event: "group-created" }, ({ payload }) => {
@@ -3094,6 +3468,30 @@ export default function AvatarSpace({
           }
           myGroupIdsRef.current.add(msg.groupId);
           setChatThreadsRefreshTrigger((n) => n + 1);
+        })
+        .on("broadcast", { event: "group-renamed" }, ({ payload }) => {
+          const msg = payload as {
+            originId: string;
+            groupId: string;
+            name: string | null;
+          };
+          if (
+            msg.originId === selfId.current ||
+            !myGroupIdsRef.current.has(msg.groupId)
+          ) {
+            return;
+          }
+          if (msg.name) {
+            setChatThreads((prev) =>
+              prev.map((t) =>
+                t.isGroup && t.threadId === msg.groupId
+                  ? { ...t, threadName: msg.name as string }
+                  : t,
+              ),
+            );
+          } else {
+            setChatThreadsRefreshTrigger((n) => n + 1);
+          }
         })
         .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
           const msg = payload as {
@@ -5220,20 +5618,31 @@ export default function AvatarSpace({
             {sidebarTab === "chat" && (
               <div
                 className={`flex min-h-0 flex-1 flex-col ${
-                  dmDragActive ? "ring-2 ring-inset ring-emerald-400" : ""
+                  dmDragActive || groupDragActive
+                    ? "ring-2 ring-inset ring-emerald-400"
+                    : ""
                 }`}
                 onDragOver={(e) => {
-                  if (!selectedPeerUserId) return;
-                  e.preventDefault();
-                  setDmDragActive(true);
+                  if (selectedPeerUserId) {
+                    e.preventDefault();
+                    setDmDragActive(true);
+                  } else if (selectedGroupId) {
+                    e.preventDefault();
+                    setGroupDragActive(true);
+                  }
                 }}
-                onDragLeave={() => setDmDragActive(false)}
+                onDragLeave={() => {
+                  setDmDragActive(false);
+                  setGroupDragActive(false);
+                }}
                 onDrop={(e) => {
                   e.preventDefault();
                   setDmDragActive(false);
-                  if (!selectedPeerUserId) return;
+                  setGroupDragActive(false);
                   const files = Array.from(e.dataTransfer.files ?? []);
-                  if (files.length > 0) stageDmImages(files);
+                  if (files.length === 0) return;
+                  if (selectedPeerUserId) stageDmImages(files);
+                  else if (selectedGroupId) stageGroupImages(files);
                 }}
               >
                 {!selectedPeerUserId && !selectedGroupId ? (
@@ -5708,6 +6117,53 @@ export default function AvatarSpace({
                                     {m.senderName}
                                   </p>
                                 )}
+                                {m.imagePath && dmImageLoadFailed[m.id] && (
+                                  <button
+                                    type="button"
+                                    onClick={() => retryDmImageUrl(m.id)}
+                                    className={`flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded-md bg-slate-600/60 text-[9px] text-slate-300 hover:bg-slate-600 ${
+                                      m.message ? "mb-1" : ""
+                                    }`}
+                                  >
+                                    <span>読み込めません</span>
+                                    <span className="underline">
+                                      タップで再試行
+                                    </span>
+                                  </button>
+                                )}
+                                {m.imagePath && !dmImageLoadFailed[m.id] && (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={dmImageUrls[m.id]}
+                                    alt="添付画像"
+                                    onClick={() => {
+                                      const url = dmImageUrls[m.id];
+                                      if (url)
+                                        setDmLightbox({ messageId: m.id, url });
+                                    }}
+                                    onError={() => {
+                                      if (dmImageUrls[m.id]) {
+                                        // eslint-disable-next-line no-console
+                                        console.error(
+                                          "添付画像の読み込みに失敗しました",
+                                          m.id,
+                                          dmImageUrls[m.id],
+                                        );
+                                        setDmImageLoadFailed((prev) => ({
+                                          ...prev,
+                                          [m.id]: true,
+                                        }));
+                                      }
+                                    }}
+                                    className={`block max-h-56 max-w-full rounded-md object-contain ${
+                                      m.message ? "mb-1" : ""
+                                    } ${
+                                      dmImageUrls[m.id]
+                                        ? "cursor-pointer"
+                                        : "min-h-16 min-w-16 animate-pulse bg-slate-600"
+                                    }`}
+                                  />
+                                )}
                                 <p className="whitespace-pre-wrap break-words">
                                   {m.message}
                                 </p>
@@ -5724,21 +6180,142 @@ export default function AvatarSpace({
                           {groupError}
                         </p>
                       )}
-                      <div className="flex shrink-0 items-center gap-2 border-t border-slate-700 p-2">
+                      {groupPendingImages.length > 0 && (
+                        <div className="flex gap-2 overflow-x-auto border-t border-slate-700 bg-slate-800/60 px-3 py-2">
+                          {groupPendingImages.map((p) => (
+                            <div
+                              key={p.id}
+                              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-700/70 py-1 pl-1 pr-2"
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDmLightbox({
+                                    messageId: null,
+                                    url: p.previewUrl,
+                                  })
+                                }
+                                className="shrink-0"
+                                aria-label="添付画像を拡大表示"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={p.previewUrl}
+                                  alt=""
+                                  className="h-8 w-8 rounded object-cover"
+                                />
+                              </button>
+                              <div className="min-w-0 max-w-[110px] text-[10px] text-slate-300">
+                                <p className="truncate font-medium">
+                                  {p.file.name}
+                                </p>
+                                {p.width && p.height && (
+                                  <p className="text-slate-500">
+                                    {p.width}×{p.height}
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => cancelGroupPendingImage(p.id)}
+                                disabled={groupImageUploading}
+                                aria-label="添付を取り消す"
+                                className="shrink-0 text-slate-400 hover:text-white disabled:opacity-30"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {groupUploadProgress && (
+                        <div className="border-t border-slate-700 bg-slate-800/60 px-3 py-2">
+                          <div className="mb-1 flex items-center justify-between text-[10px] text-slate-300">
+                            <span>
+                              {groupUploadProgress.phase === "uploading"
+                                ? `アップロード中 (${groupUploadProgress.index + 1}/${groupUploadProgress.total}) ${groupUploadProgress.percent}%`
+                                : `圧縮中… (${groupUploadProgress.index + 1}/${groupUploadProgress.total})`}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
+                            <div
+                              className={`h-full rounded-full bg-emerald-500 ${
+                                groupUploadProgress.phase === "uploading"
+                                  ? "transition-all"
+                                  : "animate-pulse"
+                              }`}
+                              style={{
+                                width:
+                                  groupUploadProgress.phase === "uploading"
+                                    ? `${groupUploadProgress.percent}%`
+                                    : "100%",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5 border-t border-slate-700 p-2">
+                        <input
+                          ref={groupImageInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files ?? []);
+                            e.target.value = "";
+                            if (files.length > 0) stageGroupImages(files);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => groupImageInputRef.current?.click()}
+                          disabled={groupImageUploading || groupSending}
+                          title="画像を添付"
+                          aria-label="画像を添付"
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-sm font-semibold leading-none text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                        >
+                          {groupImageUploading ? "…" : "+"}
+                        </button>
                         <input
                           value={groupInput}
                           onChange={(e) => setGroupInput(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && sendGroupMessage()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                              sendGroupMessage();
+                            }
+                          }}
+                          onPaste={(e) => {
+                            const items = e.clipboardData?.items;
+                            if (!items) return;
+                            const imageFiles: File[] = [];
+                            for (let i = 0; i < items.length; i++) {
+                              const item = items[i];
+                              if (item.type.startsWith("image/")) {
+                                const file = item.getAsFile();
+                                if (file) imageFiles.push(file);
+                              }
+                            }
+                            if (imageFiles.length > 0) {
+                              e.preventDefault();
+                              stageGroupImages(imageFiles);
+                            }
+                          }}
                           maxLength={500}
                           placeholder="メッセージを入力"
                           className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
                         />
                         <button
                           onClick={sendGroupMessage}
-                          disabled={!groupInput.trim() || groupSending}
+                          disabled={
+                            (!groupInput.trim() &&
+                              groupPendingImages.length === 0) ||
+                            groupSending ||
+                            groupImageUploading
+                          }
                           className="flex h-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold leading-none text-white hover:bg-emerald-500 disabled:opacity-50"
                         >
-                          送信
+                          {groupImageUploading ? "送信中..." : "送信"}
                         </button>
                       </div>
                     </>
@@ -6198,7 +6775,16 @@ export default function AvatarSpace({
       {groupContextMenu && (
         <div
           className="fixed z-[70] w-40 overflow-hidden rounded-lg bg-slate-800 text-sm text-white shadow-xl"
-          style={{ left: groupContextMenu.x, top: groupContextMenu.y }}
+          style={{
+            // スマホ画面右端から出た項目を長押しした場合、メニュー(幅160px)
+            // が画面外にはみ出さないよう、右端に余白(12px)を残してクランプ
+            // する(左端も同様に余白を確保する)。
+            left: Math.min(
+              Math.max(groupContextMenu.x, 12),
+              window.innerWidth - 160 - 12,
+            ),
+            top: groupContextMenu.y,
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <button

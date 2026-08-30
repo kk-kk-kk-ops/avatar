@@ -1518,19 +1518,34 @@ $$;
 
 grant execute on function public.delete_chat_group(uuid) to authenticated;
 
--- グループチャットからの退出(2026-08-30追加)。UI上の「削除」機能は
--- 「退出」に置き換えた(LINE/Teams等と同様、退出した本人の画面からは
--- 消えるが、グループ自体・他のメンバーの履歴には影響しない)。退出した
--- ことを他のメンバーに知らせるシステムメッセージ(is_system=true)を
--- 通常のグループメッセージとして1件挿入してから、自分のchat_group_members
--- 行を削除する。以後はSELECT側のRLS(group_id in (select ... where
--- user_id=auth.uid()))上、自分はこのグループのメンバーではなくなるため、
--- 新着メッセージは一切見えなくなる(=退出後は通知が来ない)。
--- 会員判定のみでよく、アカウント所属を問わないため、viewOnly向けの
--- 別ルートは不要(create_chat_groupと異なりここではprofilesを見ない)。
+-- グループチャットからの退出(2026-08-30追加、2026-08-31に空グループの
+-- 自動削除を追加)。UI上の「削除」機能は「退出」に置き換えた
+-- (LINE/Teams等と同様、退出した本人の画面からは消えるが、グループ自体・
+-- 他のメンバーの履歴には影響しない)。退出したことを他のメンバーに
+-- 知らせるシステムメッセージ(is_system=true)を通常のグループメッセージ
+-- として1件挿入してから、自分のchat_group_members行を削除する。以後は
+-- SELECT側のRLS(group_id in (select ... where user_id=auth.uid()))上、
+-- 自分はこのグループのメンバーではなくなるため、新着メッセージは一切
+-- 見えなくなる(=退出後は通知が来ない)。会員判定のみでよく、アカウント
+-- 所属を問わないため、viewOnly向けの別ルートは不要(create_chat_groupと
+-- 異なりここではprofilesを見ない)。
+--
+-- 退出後に誰もメンバーがいなくなった場合、DBに残しても容量を圧迫する
+-- だけのため、グループ本体(chat_groups)を削除する(on delete cascadeで
+-- chat_messages/chat_group_read_stateもまとめて消える)。ただしSupabase
+-- Storageの添付画像実体はSQLのDELETEだけでは消えない既知の制約がある
+-- (get_expired_chat_message_idsと同じ理由)ため、削除直前に画像パスの
+-- 一覧を集めてdeleted_image_pathsとして返し、呼び出し元(アプリ側の
+-- service_role経由API)に実ファイルの削除を委ねる。
 drop function if exists public.leave_chat_group(uuid);
 create function public.leave_chat_group(p_group_id uuid)
-returns table (id uuid, created_at timestamptz, message text, sender_name text)
+returns table (
+  id uuid,
+  created_at timestamptz,
+  message text,
+  sender_name text,
+  deleted_image_paths text[]
+)
 language plpgsql
 security definer
 set search_path = public
@@ -1541,6 +1556,8 @@ declare
   v_message text;
   v_id uuid;
   v_created_at timestamptz;
+  v_remaining_members int;
+  v_image_paths text[];
 begin
   if auth.uid() is null then
     raise exception 'ログインが必要です';
@@ -1568,7 +1585,20 @@ begin
   delete from public.chat_group_members
   where group_id = p_group_id and user_id = auth.uid();
 
-  return query select v_id, v_created_at, v_message, v_name;
+  select count(*) into v_remaining_members
+  from public.chat_group_members
+  where group_id = p_group_id;
+
+  if v_remaining_members = 0 then
+    select array_agg(m.image_path) into v_image_paths
+    from public.chat_messages m
+    where m.group_id = p_group_id and m.image_path is not null;
+
+    delete from public.chat_groups where id = p_group_id;
+  end if;
+
+  return query
+    select v_id, v_created_at, v_message, v_name, coalesce(v_image_paths, array[]::text[]);
 end;
 $$;
 
