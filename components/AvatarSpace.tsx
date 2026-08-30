@@ -416,6 +416,9 @@ export default function AvatarSpace({
   // chatThreads取得のたびに更新し、グループ作成直後は楽観的に追加する。
   const myGroupIdsRef = useRef<Set<string>>(new Set());
   const [chatThreadsLoading, setChatThreadsLoading] = useState(false);
+  const [chatThreadsError, setChatThreadsError] = useState<string | null>(
+    null,
+  );
   // 新着DM/グループメッセージを受信するたびに+1し、チャット一覧の
   // 再取得トリガーにする。
   const [chatThreadsRefreshTrigger, setChatThreadsRefreshTrigger] = useState(0);
@@ -819,6 +822,9 @@ export default function AvatarSpace({
       if (error) {
         // eslint-disable-next-line no-console
         console.error("チャット履歴の取得に失敗しました", error);
+        setDmError(
+          `チャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+        );
         return;
       }
       const rows = (data ?? []) as Array<{
@@ -892,6 +898,9 @@ export default function AvatarSpace({
       if (error) {
         // eslint-disable-next-line no-console
         console.error("グループチャット履歴の取得に失敗しました", error);
+        setGroupError(
+          `グループチャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+        );
         return;
       }
       const rows = (data ?? []) as Array<{
@@ -947,6 +956,7 @@ export default function AvatarSpace({
     if (sidebarTab !== "chat" || selectedPeerUserId || selectedGroupId) return;
     let cancelled = false;
     setChatThreadsLoading(true);
+    setChatThreadsError(null);
     (async () => {
       const { data, error } = await supabase.rpc("list_chat_threads", {
         p_room_id: roomId,
@@ -956,6 +966,9 @@ export default function AvatarSpace({
       if (error) {
         // eslint-disable-next-line no-console
         console.error("チャット一覧の取得に失敗しました", error);
+        setChatThreadsError(
+          `チャット一覧の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+        );
         return;
       }
       const rows = (data ?? []) as Array<{
@@ -5060,6 +5073,10 @@ export default function AvatarSpace({
                     {chatThreadsLoading ? (
                       <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
                         読み込み中...
+                      </div>
+                    ) : chatThreadsError ? (
+                      <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-red-500">
+                        {chatThreadsError}
                       </div>
                     ) : chatThreads.length === 0 ? (
                       <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
