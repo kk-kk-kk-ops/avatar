@@ -741,6 +741,10 @@ alter table public.chat_messages add column if not exists deleted_at timestamptz
 -- 下のinsert own dmポリシーで行う)。
 alter table public.chat_messages add column if not exists image_path text;
 
+-- グループチャット退出時の「○○が退出しました」通知用(2026-08-30)。
+-- 通常のメッセージと区別して表示する(枠なし・赤文字)ためのフラグ。
+alter table public.chat_messages add column if not exists is_system boolean not null default false;
+
 -- テキストも画像も無い空メッセージを禁止する(画像添付時はmessageが
 -- 空文字でも許容するため、画像添付機能の導入に合わせてこの制約を追加)。
 -- 論理削除(上のedited_at/deleted_at列。削除時はmessageを空文字にする
@@ -1304,7 +1308,7 @@ create policy "chat_messages: insert own dm"
 -- 設計方針で、実際に読めるかどうかは常にSELECT側のRLSで担保される)。
 drop function if exists public.create_chat_group(uuid, uuid[]);
 create function public.create_chat_group(p_room_id uuid, p_member_user_ids uuid[])
-returns uuid
+returns table (group_id uuid, already_existed boolean)
 language plpgsql
 security definer
 set search_path = public
@@ -1312,6 +1316,7 @@ as $$
 declare
   v_group_id uuid;
   v_member uuid;
+  v_target_members uuid[];
 begin
   if auth.uid() is null then
     raise exception 'ログインが必要です';
@@ -1325,6 +1330,26 @@ begin
     where r.id = p_room_id and p.user_id = auth.uid()
   ) then
     raise exception 'このルームへのアクセス権がありません';
+  end if;
+
+  -- 重複作成防止: 自分を含めた選択メンバーの集合が完全一致する既存の
+  -- グループがあれば、新規作成せずそのグループIDを返す(2026-08-30追加)。
+  select array_agg(distinct m order by m) into v_target_members
+  from unnest(array_append(p_member_user_ids, auth.uid())) as m;
+
+  select g.id into v_group_id
+  from public.chat_groups g
+  where g.room_id = p_room_id
+    and (
+      select array_agg(gm.user_id order by gm.user_id)
+      from public.chat_group_members gm
+      where gm.group_id = g.id
+    ) = v_target_members
+  limit 1;
+
+  if v_group_id is not null then
+    return query select v_group_id, true;
+    return;
   end if;
 
   insert into public.chat_groups (room_id, created_by)
@@ -1343,7 +1368,7 @@ begin
     end if;
   end loop;
 
-  return v_group_id;
+  return query select v_group_id, false;
 end;
 $$;
 
@@ -1360,7 +1385,7 @@ create function public.create_chat_group_by_invite_token(
   target_room_id uuid,
   p_member_user_ids uuid[]
 )
-returns uuid
+returns table (group_id uuid, already_existed boolean)
 language plpgsql
 security definer
 set search_path = public
@@ -1368,6 +1393,7 @@ as $$
 declare
   v_group_id uuid;
   v_member uuid;
+  v_target_members uuid[];
 begin
   if auth.uid() is null then
     raise exception 'ログインが必要です';
@@ -1381,6 +1407,25 @@ begin
     where r.id = target_room_id and a.invite_token = token
   ) then
     raise exception 'このルームへのアクセス権がありません';
+  end if;
+
+  -- 重複作成防止(2026-08-30追加。create_chat_group()と同じロジック)。
+  select array_agg(distinct m order by m) into v_target_members
+  from unnest(array_append(p_member_user_ids, auth.uid())) as m;
+
+  select g.id into v_group_id
+  from public.chat_groups g
+  where g.room_id = target_room_id
+    and (
+      select array_agg(gm.user_id order by gm.user_id)
+      from public.chat_group_members gm
+      where gm.group_id = g.id
+    ) = v_target_members
+  limit 1;
+
+  if v_group_id is not null then
+    return query select v_group_id, true;
+    return;
   end if;
 
   insert into public.chat_groups (room_id, created_by)
@@ -1399,7 +1444,7 @@ begin
     end if;
   end loop;
 
-  return v_group_id;
+  return query select v_group_id, false;
 end;
 $$;
 
@@ -1472,6 +1517,63 @@ end;
 $$;
 
 grant execute on function public.delete_chat_group(uuid) to authenticated;
+
+-- グループチャットからの退出(2026-08-30追加)。UI上の「削除」機能は
+-- 「退出」に置き換えた(LINE/Teams等と同様、退出した本人の画面からは
+-- 消えるが、グループ自体・他のメンバーの履歴には影響しない)。退出した
+-- ことを他のメンバーに知らせるシステムメッセージ(is_system=true)を
+-- 通常のグループメッセージとして1件挿入してから、自分のchat_group_members
+-- 行を削除する。以後はSELECT側のRLS(group_id in (select ... where
+-- user_id=auth.uid()))上、自分はこのグループのメンバーではなくなるため、
+-- 新着メッセージは一切見えなくなる(=退出後は通知が来ない)。
+-- 会員判定のみでよく、アカウント所属を問わないため、viewOnly向けの
+-- 別ルートは不要(create_chat_groupと異なりここではprofilesを見ない)。
+drop function if exists public.leave_chat_group(uuid);
+create function public.leave_chat_group(p_group_id uuid)
+returns table (id uuid, created_at timestamptz, message text, sender_name text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room_id uuid;
+  v_name text;
+  v_message text;
+  v_id uuid;
+  v_created_at timestamptz;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  if not exists (
+    select 1 from public.chat_group_members
+    where group_id = p_group_id and user_id = auth.uid()
+  ) then
+    raise exception 'このグループのメンバーではありません';
+  end if;
+
+  select g.room_id into v_room_id from public.chat_groups g where g.id = p_group_id;
+
+  select coalesce(p.display_name, 'メンバー') into v_name
+  from public.profiles p where p.user_id = auth.uid();
+
+  v_message := v_name || 'が退出しました';
+
+  insert into public.chat_messages
+    (room_id, sender_user_id, sender_name, group_id, message, is_system)
+  values
+    (v_room_id, auth.uid(), v_name, p_group_id, v_message, true)
+  returning chat_messages.id, chat_messages.created_at into v_id, v_created_at;
+
+  delete from public.chat_group_members
+  where group_id = p_group_id and user_id = auth.uid();
+
+  return query select v_id, v_created_at, v_message, v_name;
+end;
+$$;
+
+revoke all on function public.leave_chat_group(uuid) from public;
+grant execute on function public.leave_chat_group(uuid) to authenticated;
 
 -- チャットタブの一覧表示用に、そのルームで自分がやり取りした相手・
 -- 参加しているグループを、最終やり取り順にまとめて返す。1対1の表示名は
