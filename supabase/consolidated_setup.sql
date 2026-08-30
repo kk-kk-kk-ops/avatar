@@ -1349,6 +1349,62 @@ $$;
 
 grant execute on function public.create_chat_group(uuid, uuid[]) to authenticated;
 
+-- 2026-08-30追加: viewOnly(既に自分のアカウントを持つ人が他人の招待URLを
+-- 一時閲覧中)向けのグループ作成。上のcreate_chat_group()はprofiles経由の
+-- アカウント所属を必須にしているため、viewOnlyで呼ぶと「このルームへの
+-- アクセス権がありません」で失敗していた。招待トークンの一致で認可する
+-- 点以外はcreate_chat_group()と同じ。
+drop function if exists public.create_chat_group_by_invite_token(text, uuid, uuid[]);
+create function public.create_chat_group_by_invite_token(
+  token text,
+  target_room_id uuid,
+  p_member_user_ids uuid[]
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_group_id uuid;
+  v_member uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  if p_member_user_ids is null or array_length(p_member_user_ids, 1) is null then
+    raise exception '参加者を1人以上選択してください';
+  end if;
+  if not exists (
+    select 1 from public.rooms r
+    join public.accounts a on a.id = r.account_id
+    where r.id = target_room_id and a.invite_token = token
+  ) then
+    raise exception 'このルームへのアクセス権がありません';
+  end if;
+
+  insert into public.chat_groups (room_id, created_by)
+  values (target_room_id, auth.uid())
+  returning id into v_group_id;
+
+  insert into public.chat_group_members (group_id, user_id)
+  values (v_group_id, auth.uid())
+  on conflict do nothing;
+
+  foreach v_member in array p_member_user_ids loop
+    if v_member <> auth.uid() then
+      insert into public.chat_group_members (group_id, user_id)
+      values (v_group_id, v_member)
+      on conflict do nothing;
+    end if;
+  end loop;
+
+  return v_group_id;
+end;
+$$;
+
+grant execute on function public.create_chat_group_by_invite_token(text, uuid, uuid[]) to authenticated;
+
 -- スレッドを開いた際に既読位置を更新する(グループ)。
 drop function if exists public.mark_chat_group_read(uuid);
 create function public.mark_chat_group_read(p_group_id uuid)
