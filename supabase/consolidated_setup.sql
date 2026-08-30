@@ -1554,6 +1554,144 @@ $$;
 revoke all on function public.list_chat_threads(uuid) from public;
 grant execute on function public.list_chat_threads(uuid) to authenticated;
 
+-- 2026-08-30追加: viewOnly(既に自分のアカウントを持つ人が他人の招待URLを
+-- 一時閲覧中。profiles.account_idを書き換えない設計)向けのチャット一覧。
+-- 上のlist_chat_threads()はprofiles.account_id経由でアカウント所属を
+-- 確認するため、viewOnlyでは常に空を返してしまい、DM履歴・グループ
+-- チャットのどちらも一切表示されない不具合になっていた。招待トークンの
+-- 一致で認可する点以外はlist_chat_threads()と同じロジック(グループの
+-- 判定はもともとchat_group_members.user_id=auth.uid()のみで行っており、
+-- プロフィールのアカウント所属を問わないため、この部分は変更していない)。
+drop function if exists public.list_chat_threads_by_invite_token(text, uuid);
+create function public.list_chat_threads_by_invite_token(
+  token text,
+  target_room_id uuid
+)
+returns table (
+  thread_id uuid,
+  is_group boolean,
+  thread_name text,
+  last_message text,
+  last_message_at timestamptz,
+  unread_count bigint
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  with allowed as (
+    select 1
+    from public.rooms r
+    join public.accounts a on a.id = r.account_id
+    where r.id = target_room_id and a.invite_token = token
+  ),
+  peers as (
+    select distinct
+      case when m.sender_user_id = auth.uid() then m.recipient_user_id else m.sender_user_id end as peer_id
+    from public.chat_messages m
+    where m.room_id = target_room_id
+      and m.recipient_user_id is not null
+      and (m.sender_user_id = auth.uid() or m.recipient_user_id = auth.uid())
+      and exists (select 1 from allowed)
+  ),
+  dm_last as (
+    select distinct on (pe.peer_id)
+      pe.peer_id,
+      m.message,
+      m.sender_name,
+      m.deleted_at,
+      m.created_at
+    from peers pe
+    join public.chat_messages m
+      on m.room_id = target_room_id
+      and (
+        (m.sender_user_id = auth.uid() and m.recipient_user_id = pe.peer_id)
+        or (m.recipient_user_id = auth.uid() and m.sender_user_id = pe.peer_id)
+      )
+    order by pe.peer_id, m.created_at desc
+  ),
+  dm_unread as (
+    select
+      m.sender_user_id as peer_id,
+      count(*) as cnt
+    from public.chat_messages m
+    left join public.chat_read_state rs
+      on rs.room_id = target_room_id and rs.user_id = auth.uid() and rs.peer_user_id = m.sender_user_id
+    where m.room_id = target_room_id
+      and m.recipient_user_id = auth.uid()
+      and m.deleted_at is null
+      and m.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
+    group by m.sender_user_id
+  ),
+  dm_rows as (
+    select
+      lm.peer_id as thread_id,
+      false as is_group,
+      coalesce(pr.display_name, lm.sender_name) as thread_name,
+      case when lm.deleted_at is not null then '' else lm.message end as last_message,
+      lm.created_at as last_message_at,
+      coalesce(u.cnt, 0) as unread_count
+    from dm_last lm
+    left join public.profiles pr on pr.user_id = lm.peer_id
+    left join dm_unread u on u.peer_id = lm.peer_id
+  ),
+  my_groups as (
+    select g.id as group_id, g.created_at, g.name as custom_name
+    from public.chat_groups g
+    join public.chat_group_members gm on gm.group_id = g.id and gm.user_id = auth.uid()
+    where g.room_id = target_room_id
+  ),
+  group_names as (
+    select
+      gm.group_id,
+      string_agg(coalesce(pr.display_name, 'メンバー'), '、' order by pr.display_name) as name
+    from public.chat_group_members gm
+    left join public.profiles pr on pr.user_id = gm.user_id
+    where gm.group_id in (select group_id from my_groups)
+      and gm.user_id <> auth.uid()
+    group by gm.group_id
+  ),
+  group_last as (
+    select distinct on (m.group_id)
+      m.group_id, m.message, m.deleted_at, m.created_at
+    from public.chat_messages m
+    where m.group_id in (select group_id from my_groups)
+    order by m.group_id, m.created_at desc
+  ),
+  group_unread as (
+    select m.group_id, count(*) as cnt
+    from public.chat_messages m
+    left join public.chat_group_read_state rs
+      on rs.group_id = m.group_id and rs.user_id = auth.uid()
+    where m.group_id in (select group_id from my_groups)
+      and m.sender_user_id <> auth.uid()
+      and m.deleted_at is null
+      and m.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
+    group by m.group_id
+  ),
+  group_rows as (
+    select
+      mg.group_id as thread_id,
+      true as is_group,
+      coalesce(mg.custom_name, gn.name, 'グループ') as thread_name,
+      case when gl.deleted_at is not null then '' else coalesce(gl.message, '') end as last_message,
+      coalesce(gl.created_at, mg.created_at) as last_message_at,
+      coalesce(gu.cnt, 0) as unread_count
+    from my_groups mg
+    left join group_names gn on gn.group_id = mg.group_id
+    left join group_last gl on gl.group_id = mg.group_id
+    left join group_unread gu on gu.group_id = mg.group_id
+  )
+  select * from dm_rows
+  union all
+  select * from group_rows
+  order by last_message_at desc;
+$$;
+
+revoke all on function public.list_chat_threads_by_invite_token(text, uuid) from public;
+grant execute on function public.list_chat_threads_by_invite_token(text, uuid) to authenticated;
+
 
 -- ------------------------------------------------------------
 -- 9f-4. chat-images: チャットの画像添付機能用Storageバケット。
