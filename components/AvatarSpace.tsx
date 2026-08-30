@@ -5204,7 +5204,7 @@ export default function AvatarSpace({
                           onTouchMove={handleDmTouchMove}
                           onTouchEnd={handleDmTouchEnd}
                           onTouchCancel={handleDmTouchEnd}
-                          className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                          className={`dm-selectable w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
                             dmSelectionModeMessageId === m.id
                               ? "dm-select-active"
                               : ""
@@ -5505,7 +5505,7 @@ export default function AvatarSpace({
                           {thread.map((m) => (
                             <div
                               key={m.id}
-                              className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                              className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
                                 m.isSelf
                                   ? "ml-auto bg-emerald-600 text-white"
                                   : "bg-slate-700 text-slate-100"
