@@ -858,20 +858,22 @@ export default function AvatarSpace({
         prev[selectedPeerUserId] ? { ...prev, [selectedPeerUserId]: 0 } : prev,
       );
       // 既読位置をサーバー側にも保存する(ログインし直しても未読数が
-      // 保持されるようにするため)。viewOnlyは別ルートのため対象外。
-      if (!viewOnlyInviteToken) {
-        supabase
-          .rpc("mark_chat_thread_read", {
-            p_room_id: roomId,
-            p_peer_user_id: selectedPeerUserId,
-          })
-          .then(({ error: markError }) => {
-            if (markError) {
-              // eslint-disable-next-line no-console
-              console.error("既読位置の保存に失敗しました", markError);
-            }
-          });
-      }
+      // 保持されるようにするため)。chat_read_stateのRLSはuser_id=
+      // auth.uid()のみで判定しておりアカウント所属を問わないため、
+      // viewOnlyでもそのまま呼べる(2026-08-30修正: 以前はここを
+      // viewOnly除外していたため、viewOnlyでは開いても未読数が
+      // 減らない不具合になっていた)。
+      supabase
+        .rpc("mark_chat_thread_read", {
+          p_room_id: roomId,
+          p_peer_user_id: selectedPeerUserId,
+        })
+        .then(({ error: markError }) => {
+          if (markError) {
+            // eslint-disable-next-line no-console
+            console.error("既読位置の保存に失敗しました", markError);
+          }
+        });
     })();
     return () => {
       cancelled = true;
@@ -928,18 +930,17 @@ export default function AvatarSpace({
           deletedAt: row.deleted_at,
         }));
       setGroupThreads((prev) => ({ ...prev, [selectedGroupId]: messages }));
-      // 既読位置の保存はアカウントに所属する本来のメンバー向けの機能の
-      // ため、viewOnlyは対象外とする(1対1DMの既読保存と同じ方針)。
-      if (!viewOnlyInviteToken) {
-        supabase
-          .rpc("mark_chat_group_read", { p_group_id: selectedGroupId })
-          .then(({ error: markError }) => {
-            if (markError) {
-              // eslint-disable-next-line no-console
-              console.error("既読位置の保存に失敗しました", markError);
-            }
-          });
-      }
+      // chat_group_read_stateのRLSもuser_id=auth.uid()のみで判定して
+      // おりアカウント所属を問わないため、viewOnlyでもそのまま呼べる
+      // (2026-08-30修正: 前回viewOnly除外にしたのは誤りだった)。
+      supabase
+        .rpc("mark_chat_group_read", { p_group_id: selectedGroupId })
+        .then(({ error: markError }) => {
+          if (markError) {
+            // eslint-disable-next-line no-console
+            console.error("既読位置の保存に失敗しました", markError);
+          }
+        });
     })();
     return () => {
       cancelled = true;
@@ -1229,10 +1230,20 @@ export default function AvatarSpace({
     setCreateGroupError(null);
     try {
       const memberUserIds = Array.from(createGroupSelectedIds);
-      const { data, error } = await supabase.rpc("create_chat_group", {
-        p_room_id: roomId,
-        p_member_user_ids: memberUserIds,
-      });
+      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)は
+      // profiles.account_idがこのアカウントを指さないため、通常の
+      // create_chat_groupでは「このルームへのアクセス権がありません」に
+      // なる(2026-08-30修正)。招待トークンを検証する別ルート経由にする。
+      const { data, error } = viewOnlyInviteToken
+        ? await supabase.rpc("create_chat_group_by_invite_token", {
+            token: viewOnlyInviteToken,
+            target_room_id: roomId,
+            p_member_user_ids: memberUserIds,
+          })
+        : await supabase.rpc("create_chat_group", {
+            p_room_id: roomId,
+            p_member_user_ids: memberUserIds,
+          });
       if (error || !data) {
         // eslint-disable-next-line no-console
         console.error("グループチャットの作成に失敗しました", error);
@@ -1261,7 +1272,13 @@ export default function AvatarSpace({
     } finally {
       setCreatingGroup(false);
     }
-  }, [createGroupSelectedIds, creatingGroup, roomId, supabase]);
+  }, [
+    createGroupSelectedIds,
+    creatingGroup,
+    roomId,
+    supabase,
+    viewOnlyInviteToken,
+  ]);
 
   // グループ名変更。メンバーなら誰でも変更できる。
   const handleRenameGroupSave = useCallback(async () => {
@@ -1311,6 +1328,13 @@ export default function AvatarSpace({
       if (selectedGroupId === deletingGroupId) {
         setSelectedGroupId(null);
       }
+      // 他のメンバーへ削除をリアルタイムで知らせる(これが無いと、他の
+      // メンバーの一覧・開いたままのスレッドに削除済みグループが残り
+      // 続けてしまっていた)。
+      channelRef.current?.httpSend("group-deleted", {
+        originId: selfId.current,
+        groupId: deletingGroupId,
+      });
       setDeletingGroupId(null);
     } finally {
       setDeletingGroupBusy(false);
@@ -2961,6 +2985,15 @@ export default function AvatarSpace({
           myGroupIdsRef.current.add(msg.groupId);
           setChatThreadsRefreshTrigger((n) => n + 1);
         })
+        .on("broadcast", { event: "group-deleted" }, ({ payload }) => {
+          const msg = payload as { originId: string; groupId: string };
+          if (msg.originId === selfId.current) return;
+          myGroupIdsRef.current.delete(msg.groupId);
+          setChatThreads((prev) =>
+            prev.filter((t) => t.threadId !== msg.groupId),
+          );
+          setSelectedGroupId((prev) => (prev === msg.groupId ? null : prev));
+        })
         .on("broadcast", { event: "dm-edit" }, ({ payload }) => {
           const msg = payload as {
             id: string;
@@ -4513,6 +4546,12 @@ export default function AvatarSpace({
 
   const playerList = Object.values(players);
 
+  // 「チャット」タブに表示する未読合計(DM+グループ)。
+  const chatThreadsTotalUnreadCount = chatThreads.reduce(
+    (sum, t) => sum + t.unreadCount,
+    0,
+  );
+
   // 近く(音声通話が繋がっている相手)にいて、かつ画面共有中の人の一覧。
   // 選択視聴モデルのため、ライブ映像(remoteScreenStreams)を持っているのは
   // このうち選択中の1人だけで、それ以外は静止画プレビューのみ持ちうる。
@@ -4988,7 +5027,8 @@ export default function AvatarSpace({
               </button>
             </div>
 
-            {/* タブ切替:参加者/チャット/設定 */}
+            {/* タブ切替:参加者/チャット/設定。「チャット」タブには未読の
+                合計(DM+グループ)をバッジ表示する。 */}
             <div className="mb-3 flex shrink-0 gap-1 rounded-lg bg-white/5 p-1 text-xs font-semibold">
               {(
                 [
@@ -5001,13 +5041,21 @@ export default function AvatarSpace({
                   key={tab.key}
                   type="button"
                   onClick={() => setSidebarTab(tab.key)}
-                  className={`flex-1 rounded-md py-1.5 transition-colors ${
+                  className={`relative flex-1 rounded-md py-1.5 transition-colors ${
                     sidebarTab === tab.key
                       ? "bg-emerald-600 text-white"
                       : "text-slate-300 hover:bg-white/10"
                   }`}
                 >
                   {tab.label}
+                  {tab.key === "chat" &&
+                    chatThreadsTotalUnreadCount > 0 && (
+                      <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white">
+                        {chatThreadsTotalUnreadCount > 99
+                          ? "99+"
+                          : chatThreadsTotalUnreadCount}
+                      </span>
+                    )}
                 </button>
               ))}
             </div>
