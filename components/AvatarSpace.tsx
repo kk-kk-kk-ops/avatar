@@ -879,11 +879,14 @@ export default function AvatarSpace({
   }, [joined, roomId, supabase, viewOnlyInviteToken, selectedPeerUserId]);
 
   // ---- チャット:選択中のグループスレッドを読み込む ----
-  // viewOnly(招待URL経由の一時閲覧)はグループチャットの対象外
-  // (グループはchat_group_members経由のRLSのため、そもそもviewOnly
-  // ユーザーはどのグループのメンバーにもなり得ない)。
+  // グループのSELECT/INSERT RLSはchat_group_members.user_id=auth.uid()
+  // のみで判定しており、profiles経由のアカウント所属は問わないため、
+  // viewOnly(招待URL経由の一時閲覧。profiles.account_idを書き換えない
+  // 設計)でも通常のクエリでそのまま読み書きできる(2026-08-30に判明・
+  // 修正: 以前はここでviewOnlyを一律除外していたため、viewOnlyの人が
+  // 招待されたグループのメッセージを一切見られなかった)。
   useEffect(() => {
-    if (!joined || !selectedGroupId || viewOnlyInviteToken) return;
+    if (!joined || !selectedGroupId) return;
     let cancelled = false;
     const myUserId = authUserIdRef.current;
     (async () => {
@@ -925,14 +928,18 @@ export default function AvatarSpace({
           deletedAt: row.deleted_at,
         }));
       setGroupThreads((prev) => ({ ...prev, [selectedGroupId]: messages }));
-      supabase
-        .rpc("mark_chat_group_read", { p_group_id: selectedGroupId })
-        .then(({ error: markError }) => {
-          if (markError) {
-            // eslint-disable-next-line no-console
-            console.error("既読位置の保存に失敗しました", markError);
-          }
-        });
+      // 既読位置の保存はアカウントに所属する本来のメンバー向けの機能の
+      // ため、viewOnlyは対象外とする(1対1DMの既読保存と同じ方針)。
+      if (!viewOnlyInviteToken) {
+        supabase
+          .rpc("mark_chat_group_read", { p_group_id: selectedGroupId })
+          .then(({ error: markError }) => {
+            if (markError) {
+              // eslint-disable-next-line no-console
+              console.error("既読位置の保存に失敗しました", markError);
+            }
+          });
+      }
     })();
     return () => {
       cancelled = true;
@@ -952,15 +959,25 @@ export default function AvatarSpace({
   // 個別スレッドを開いていない)でのみ取得する。新着DM受信時にも
   // chatThreadsRefreshTriggerを介して再取得する(未読数・並び順を最新化)。
   useEffect(() => {
-    if (!joined || viewOnlyInviteToken) return;
+    if (!joined) return;
     if (sidebarTab !== "chat" || selectedPeerUserId || selectedGroupId) return;
     let cancelled = false;
     setChatThreadsLoading(true);
     setChatThreadsError(null);
     (async () => {
-      const { data, error } = await supabase.rpc("list_chat_threads", {
-        p_room_id: roomId,
-      });
+      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)は
+      // profiles.account_idがこのアカウントを指さないため、通常の
+      // list_chat_threadsではDM・グループどちらも常に0件になっていた
+      // (2026-08-30修正)。招待トークンを検証するSECURITY DEFINER関数
+      // 経由で取得する(list_chat_messages_by_invite_tokenと同じ考え方)。
+      const { data, error } = viewOnlyInviteToken
+        ? await supabase.rpc("list_chat_threads_by_invite_token", {
+            token: viewOnlyInviteToken,
+            target_room_id: roomId,
+          })
+        : await supabase.rpc("list_chat_threads", {
+            p_room_id: roomId,
+          });
       if (cancelled) return;
       setChatThreadsLoading(false);
       if (error) {
@@ -1141,8 +1158,10 @@ export default function AvatarSpace({
     [dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken],
   );
 
-  // グループチャットの送信(画像添付・編集・削除は1対1と異なり非対応。
-  // viewOnlyもグループの対象外)。
+  // グループチャットの送信(画像添付・編集・削除は1対1と異なり非対応)。
+  // グループのINSERT RLSはchat_group_members.user_id=auth.uid()のみで
+  // 判定しており、profiles経由のアカウント所属は問わないため、viewOnly
+  // でもそのままこのINSERTが通る(トークン検証の専用RPCは不要)。
   const sendGroupMessage = useCallback(async () => {
     const groupId = selectedGroupId;
     const text = groupInput.trim();
@@ -5204,7 +5223,7 @@ export default function AvatarSpace({
                           onTouchMove={handleDmTouchMove}
                           onTouchEnd={handleDmTouchEnd}
                           onTouchCancel={handleDmTouchEnd}
-                          className={`dm-selectable max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                          className={`dm-selectable w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
                             dmSelectionModeMessageId === m.id
                               ? "dm-select-active"
                               : ""
@@ -5505,7 +5524,7 @@ export default function AvatarSpace({
                           {thread.map((m) => (
                             <div
                               key={m.id}
-                              className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                              className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
                                 m.isSelf
                                   ? "ml-auto bg-emerald-600 text-white"
                                   : "bg-slate-700 text-slate-100"
