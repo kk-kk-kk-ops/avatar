@@ -9,6 +9,16 @@ import { Track, type Room } from "livekit-client";
 // するだけで元の挙動に戻る)。
 export const NOISE_FILTER_ENABLED = true;
 
+// パッケージのREADMEは「デフォルトでバンドル済みアセットを使う」と
+// 書かれているが、実際のv1.3.0ソースコードはWASM本体(約16MB)とONNX
+// モデル(約8MB)を配布元の外部CDN(cdn.mezon.ai)からfetchする実装に
+// なっており、当該CDNがCORSヘッダーを返さないため本番ドメインから
+// 読み込めず「ノイズ抑制フィルターの適用に失敗しました」で毎回
+// フォールバックしていた(2026-08-31判明)。同じファイルをpublic/配下
+// (Next.jsの静的配信、同一オリジン)に自前ホストし、cdnUrlをそちらへ
+// 差し替えることでCORSを回避する。
+const ASSET_BASE_URL = "/df3-assets";
+
 // マイクONのたびに(トラックが破棄・再生成されるため)呼び直す想定。
 // 失敗してもマイク自体は通常通り使えるよう、必ずtry/catchで包んで
 // 呼び出し元の処理を止めないこと。
@@ -27,6 +37,7 @@ export async function applyNoiseFilterProcessor(room: Room): Promise<void> {
       sampleRate: 48000,
       noiseReductionLevel: 80,
       enabled: true,
+      assetConfig: { cdnUrl: ASSET_BASE_URL },
     });
     await track.setProcessor(filter);
   } catch (err) {
