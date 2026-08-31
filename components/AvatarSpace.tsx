@@ -13,6 +13,7 @@ import {
   type RemoteTrackPublication,
 } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
+import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
 import {
   PlayerState,
   PresenceStatus,
@@ -2668,6 +2669,7 @@ export default function AvatarSpace({
         if (micEnabledRef.current) {
           room.localParticipant
             .setMicrophoneEnabled(true)
+            .then(() => applyNoiseFilterProcessor(room))
             .catch((err) => console.warn("[livekit] mic再パブリッシュ失敗", err));
         }
         if (inCallRef.current) {
@@ -4320,6 +4322,12 @@ export default function AvatarSpace({
     try {
       await room.localParticipant.setMicrophoneEnabled(next);
       setMicEnabled(next);
+      if (next) {
+        // マイクONのたびにトラックが破棄・再生成されるため、その都度
+        // ノイズ抑制フィルターを適用し直す。失敗してもマイク自体の動作を
+        // 妨げないよう、結果を待たずに呼ぶ(内部でエラーは捕捉済み)。
+        void applyNoiseFilterProcessor(room);
+      }
       if (selfState.current) {
         selfState.current.micOn = next;
         channelRef.current?.track(selfState.current);
