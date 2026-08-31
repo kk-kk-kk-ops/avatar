@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.5.1",
     "@supabase/supabase-js": "^2.45.4",
+    "deepfilternet3-noise-filter": "^1.3.0",
     "livekit-client": "^2.21.0",
     "livekit-server-sdk": "^2.17.0",
     "next": "14.2.5",
