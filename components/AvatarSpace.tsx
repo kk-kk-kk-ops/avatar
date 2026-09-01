@@ -649,6 +649,13 @@ export default function AvatarSpace({
   } | null>(null);
 
   const openDmHover = useCallback((messageId: string) => {
+    // スマホ等のタッチ端末では、タップがmouseenterとして疑似発火する
+    // ことがあり、意図せずPC向けのホバーバーが出てしまっていた
+    // (2026-09-02報告)。実際にマウスでホバーできる端末(hover:hover
+    // かつポインタがマウス相当の精度)でのみ開く。
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      return;
+    }
     if (dmHoverCloseTimerRef.current !== null) {
       window.clearTimeout(dmHoverCloseTimerRef.current);
       dmHoverCloseTimerRef.current = null;
@@ -667,6 +674,10 @@ export default function AvatarSpace({
   }, []);
 
   const openGroupHover = useCallback((messageId: string) => {
+    // 理由はopenDmHover参照。
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      return;
+    }
     if (groupHoverCloseTimerRef.current !== null) {
       window.clearTimeout(groupHoverCloseTimerRef.current);
       groupHoverCloseTimerRef.current = null;
@@ -6245,25 +6256,59 @@ export default function AvatarSpace({
                             onMouseEnter={() => openDmHover(m.id)}
                             onMouseLeave={() => scheduleDmHoverClose(m.id)}
                           >
-                            {dmHoverMessageId === m.id && (
-                              <div
-                                className="absolute left-1/2 z-30 flex -translate-x-1/2 gap-0.5 rounded-full bg-slate-800 px-1.5 py-1 shadow-lg"
-                                style={{ bottom: "100%", marginBottom: 4 }}
-                              >
-                                {REACTION_EMOJIS.map((emoji) => (
-                                  <button
-                                    key={emoji}
-                                    type="button"
-                                    onClick={() =>
-                                      handleDmReactionSelect(m, emoji)
-                                    }
-                                    className="flex h-6 w-6 items-center justify-center rounded-full text-sm hover:bg-slate-700"
+                            {dmHoverMessageId === m.id &&
+                              (() => {
+                                // チャットパネル(スクロール領域)の外に
+                                // はみ出さないよう、吹き出し中心を基準に
+                                // 画面固定座標でクランプする。CSSの
+                                // left-1/2 + -translate-x-1/2だけだと、
+                                // PC版はチャットパネル自体がブラウザ幅
+                                // より狭いサイドバーのため、画面左端に近い
+                                // 短い吹き出しでパネル外(背景の地図側)まで
+                                // はみ出してしまっていた。
+                                const bubbleEl =
+                                  dmBubbleRefs.current[m.id]?.parentElement;
+                                const panelEl = dmScrollRef.current;
+                                if (!bubbleEl || !panelEl) return null;
+                                const bubbleRect =
+                                  bubbleEl.getBoundingClientRect();
+                                const panelRect =
+                                  panelEl.getBoundingClientRect();
+                                const BAR_WIDTH = 180;
+                                const left = Math.min(
+                                  Math.max(
+                                    bubbleRect.left +
+                                      bubbleRect.width / 2 -
+                                      BAR_WIDTH / 2,
+                                    panelRect.left + 4,
+                                  ),
+                                  panelRect.right - BAR_WIDTH - 4,
+                                );
+                                return (
+                                  <div
+                                    className="fixed z-30 flex justify-center gap-0.5 rounded-full bg-slate-800 px-1.5 py-1 shadow-lg"
+                                    style={{
+                                      left,
+                                      top: bubbleRect.top,
+                                      width: BAR_WIDTH,
+                                      transform: "translateY(calc(-100% - 4px))",
+                                    }}
                                   >
-                                    {emoji}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
+                                    {REACTION_EMOJIS.map((emoji) => (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        onClick={() =>
+                                          handleDmReactionSelect(m, emoji)
+                                        }
+                                        className="flex h-6 w-6 items-center justify-center rounded-full text-sm hover:bg-slate-700"
+                                      >
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                         <div
                           onContextMenu={(e) => handleDmContextMenu(e, m)}
                           onTouchStart={(e) => handleDmTouchStart(e, m)}
@@ -6373,14 +6418,13 @@ export default function AvatarSpace({
                                       handleDmReactionSelect(m, g.emoji);
                                     }
                                   }}
-                                  className={`flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
+                                  className={`rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
                                     g.mine
                                       ? "cursor-pointer border-emerald-400 bg-emerald-500/20 text-emerald-100"
                                       : "cursor-default border-slate-600 bg-slate-800/70 text-slate-200"
                                   }`}
                                 >
-                                  <span>{g.emoji}</span>
-                                  <span>{g.count}</span>
+                                  {g.emoji}
                                 </button>
                               ))}
                             </div>
@@ -6625,25 +6669,56 @@ export default function AvatarSpace({
                                   scheduleGroupHoverClose(m.id)
                                 }
                               >
-                                {groupHoverMessageId === m.id && (
-                                  <div
-                                    className="absolute left-1/2 z-30 flex -translate-x-1/2 gap-0.5 rounded-full bg-slate-800 px-1.5 py-1 shadow-lg"
-                                    style={{ bottom: "100%", marginBottom: 4 }}
-                                  >
-                                    {REACTION_EMOJIS.map((emoji) => (
-                                      <button
-                                        key={emoji}
-                                        type="button"
-                                        onClick={() =>
-                                          handleGroupReactionSelect(m, emoji)
-                                        }
-                                        className="flex h-6 w-6 items-center justify-center rounded-full text-sm hover:bg-slate-700"
+                                {groupHoverMessageId === m.id &&
+                                  (() => {
+                                    // 理由はDM側(dmHoverMessageId)と同じ。
+                                    const bubbleEl =
+                                      groupBubbleRefs.current[m.id];
+                                    const panelEl = groupScrollRef.current;
+                                    if (!bubbleEl || !panelEl) return null;
+                                    const bubbleRect =
+                                      bubbleEl.getBoundingClientRect();
+                                    const panelRect =
+                                      panelEl.getBoundingClientRect();
+                                    const BAR_WIDTH = 180;
+                                    const left = Math.min(
+                                      Math.max(
+                                        bubbleRect.left +
+                                          bubbleRect.width / 2 -
+                                          BAR_WIDTH / 2,
+                                        panelRect.left + 4,
+                                      ),
+                                      panelRect.right - BAR_WIDTH - 4,
+                                    );
+                                    return (
+                                      <div
+                                        className="fixed z-30 flex justify-center gap-0.5 rounded-full bg-slate-800 px-1.5 py-1 shadow-lg"
+                                        style={{
+                                          left,
+                                          top: bubbleRect.top,
+                                          width: BAR_WIDTH,
+                                          transform:
+                                            "translateY(calc(-100% - 4px))",
+                                        }}
                                       >
-                                        {emoji}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
+                                        {REACTION_EMOJIS.map((emoji) => (
+                                          <button
+                                            key={emoji}
+                                            type="button"
+                                            onClick={() =>
+                                              handleGroupReactionSelect(
+                                                m,
+                                                emoji,
+                                              )
+                                            }
+                                            className="flex h-6 w-6 items-center justify-center rounded-full text-sm hover:bg-slate-700"
+                                          >
+                                            {emoji}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    );
+                                  })()}
                               <div
                                 ref={(el) => {
                                   groupBubbleRefs.current[m.id] = el;
@@ -6737,14 +6812,13 @@ export default function AvatarSpace({
                                           );
                                         }
                                       }}
-                                      className={`flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
+                                      className={`rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
                                         g.mine
                                           ? "cursor-pointer border-emerald-400 bg-emerald-500/20 text-emerald-100"
                                           : "cursor-default border-slate-600 bg-slate-800/70 text-slate-200"
                                       }`}
                                     >
-                                      <span>{g.emoji}</span>
-                                      <span>{g.count}</span>
+                                      {g.emoji}
                                     </button>
                                   ))}
                                 </div>
@@ -7096,10 +7170,10 @@ export default function AvatarSpace({
           // スマホで画面左端に近い相手メッセージの吹き出しにこのメニューを
           // 出すと、絵文字ボタンが画面外に出て押せなくなっていたため)。
           const MENU_WIDTH = 160;
-          const left = Math.min(
-            Math.max(point.x - MENU_WIDTH, 8),
-            window.innerWidth - MENU_WIDTH - 8,
-          );
+          const panelRect = dmScrollRef.current?.getBoundingClientRect();
+          const minLeft = (panelRect?.left ?? 0) + 8;
+          const maxLeft = (panelRect?.right ?? window.innerWidth) - MENU_WIDTH - 8;
+          const left = Math.min(Math.max(point.x - MENU_WIDTH, minLeft), maxLeft);
           return (
             <div
               className="fixed z-50 w-40 overflow-hidden rounded-lg bg-slate-800 text-xs font-semibold text-white shadow-xl"
@@ -7442,10 +7516,10 @@ export default function AvatarSpace({
           // DMの長押しメニューと同じ理由で、画面左右端からはみ出さない
           // ようクランプする。
           const MENU_WIDTH = 200;
-          const left = Math.min(
-            Math.max(point.x - MENU_WIDTH, 8),
-            window.innerWidth - MENU_WIDTH - 8,
-          );
+          const panelRect = groupScrollRef.current?.getBoundingClientRect();
+          const minLeft = (panelRect?.left ?? 0) + 8;
+          const maxLeft = (panelRect?.right ?? window.innerWidth) - MENU_WIDTH - 8;
+          const left = Math.min(Math.max(point.x - MENU_WIDTH, minLeft), maxLeft);
           return (
             <div
               className="fixed z-50 flex w-[200px] items-center justify-center gap-0.5 rounded-full bg-slate-800 px-1.5 py-1.5 shadow-xl"
