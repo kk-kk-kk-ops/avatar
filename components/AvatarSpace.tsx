@@ -778,6 +778,14 @@ export default function AvatarSpace({
   // コピーメニュー無し)のため、スクロール制御も単純に「更新のたびに
   // 一番下へ」だけにする。
   const groupScrollRef = useRef<HTMLDivElement | null>(null);
+  // DMのdmForceScrollRefと同じ考え方(スレッドを開いた直後・自分の送信・
+  // 最下部付近での新着はtrueにして一番下へスクロールし、それ以外(過去ログを
+  // 見ている間の新着、通知からのメンションジャンプ)はfalseのままにして
+  // 現在のスクロール位置を保つ)。以前はgroupThreadsが更新されるたびに
+  // 無条件で一番下へスクロールしていたため、通知からメンションへジャンプ
+  // した直後に(スパム送信等で)新着が来ると、無条件スクロールに位置を
+  // 上書きされて最新メッセージへ戻ってしまう不具合があった(2026-09-02報告)。
+  const groupForceScrollRef = useRef(false);
 
   // ---- チャット:メッセージのコピー(右クリック/長押しメニュー) ----
   // 各メッセージ本文<p>へのref(Range操作でメッセージ全文選択・選択中の
@@ -1278,6 +1286,11 @@ export default function AvatarSpace({
     if (!joined || !selectedGroupId) return;
     let cancelled = false;
     const myUserId = authUserIdRef.current;
+    // 通知からのメンションジャンプ待ちが無い、通常のスレッド新規オープン/
+    // 再オープンの場合のみ、読み込み完了時に一番下へスクロールする。
+    if (!pendingMentionScrollTargetRef.current) {
+      groupForceScrollRef.current = true;
+    }
     type MessageRow = {
       id: string;
       sender_user_id: string;
@@ -1394,15 +1407,20 @@ export default function AvatarSpace({
     };
   }, [joined, roomId, supabase, viewOnlyInviteToken, selectedGroupId]);
 
-  // グループチャットのスクロール位置制御(更新のたびに一番下へ)。通知
-  // からのジャンプ待ち(pendingMentionScrollTargetRef)がある間は、下の
-  // 「ジャンプ」effectが位置を制御するので、ここでの一番下スクロールは
-  // 行わない(一瞬下端が見えてからジャンプ先へ飛ぶ、というチラつきを防ぐ)。
+  // グループチャットのスクロール位置制御。groupForceScrollRefがtrueの
+  // 間だけ一番下へスクロールしてフラグを消費する(DMのdmForceScrollRefと
+  // 同じ考え方)。通知からのメンションジャンプ待ち・過去ログ閲覧中の新着
+  // では立てないため、意図せず一番下へ戻されることが無い。
   useEffect(() => {
-    if (!selectedGroupId || pendingMentionScrollTargetRef.current) return;
+    if (!selectedGroupId) return;
     const el = groupScrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    if (groupForceScrollRef.current) {
+      groupForceScrollRef.current = false;
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
   }, [selectedGroupId, groupThreads]);
 
   // ---- 通知一覧からのジャンプ:対象メッセージまでスクロール+一時強調 ----
@@ -1802,6 +1820,7 @@ export default function AvatarSpace({
           setGroupError("送信に失敗しました。時間をおいて再度お試しください。");
           return false;
         }
+        groupForceScrollRef.current = true;
         setGroupThreads((prev) => ({
           ...prev,
           [groupId]: [
@@ -2330,7 +2349,7 @@ export default function AvatarSpace({
     const el = groupInputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, []);
 
   useEffect(() => {
@@ -4291,6 +4310,16 @@ export default function AvatarSpace({
             !myGroupIdsRef.current.has(msg.groupId)
           ) {
             return;
+          }
+          // 表示中のスレッド宛ての新着なら、届いた時点でのスクロール位置を
+          // 見て「既に最下部付近にいたか」を判定する(DMのdm受信ハンドラと
+          // 同じ理由。過去ログを見ている間や通知からのジャンプ直後は、
+          // 新着が来ても一番下へ戻さない)。
+          if (selectedGroupIdRef.current === msg.groupId) {
+            const el = groupScrollRef.current;
+            groupForceScrollRef.current = el
+              ? isDmScrollNearBottom(el)
+              : true;
           }
           setGroupThreads((prev) => ({
             ...prev,
@@ -7509,7 +7538,7 @@ export default function AvatarSpace({
                               文字ごとに色を変えられないための代替手段)。 */}
                           <div
                             aria-hidden
-                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-white"
+                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg border border-transparent bg-slate-800 px-2.5 py-1.5 text-xs text-white"
                           >
                             {renderTextWithMentions(groupInput, [
                               "全員",
@@ -7561,7 +7590,7 @@ export default function AvatarSpace({
                             maxLength={500}
                             rows={1}
                             placeholder="メッセージを入力"
-                            className="relative w-full resize-none rounded-lg border border-slate-600 bg-transparent px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
+                            className="relative w-full resize-none overflow-hidden rounded-lg border border-slate-600 bg-transparent px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
                           />
                         </div>
                         <button
