@@ -1570,14 +1570,14 @@ export default function AvatarSpace({
       const { data, error } = await supabase
         .from("chat_mentions")
         .select(
-          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name), chat_messages(created_at, message)",
+          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name)",
         )
         .eq("mentioned_user_id", myUserId)
         .order("created_at", { ascending: false })
         .limit(50);
       if (cancelled) return;
-      setMentionsLoading(false);
       if (error) {
+        setMentionsLoading(false);
         // eslint-disable-next-line no-console
         console.error("通知の取得に失敗しました", error);
         setMentionsError(
@@ -1594,26 +1594,56 @@ export default function AvatarSpace({
         created_at: string;
         read_at: string | null;
         chat_groups: Array<{ name: string | null }> | null;
-        chat_messages: Array<{ created_at: string; message: string }> | null;
       }>;
+      // メッセージ本文・正確な送信時刻は、chat_mentionsからの埋め込み
+      // SELECTだと(関係が正しく解決されず)確実に取れなかったため、
+      // メッセージIDをまとめて渡す別クエリで取得して突き合わせる
+      // (グループスレッド読み込みと同じ、素朴な.from("chat_messages")
+      // クエリなので確実に動く)。
+      const messageIds = Array.from(new Set(rows.map((r) => r.message_id)));
+      const messageById = new Map<
+        string,
+        { created_at: string; message: string }
+      >();
+      if (messageIds.length > 0) {
+        const { data: messageRows, error: messageError } = await supabase
+          .from("chat_messages")
+          .select("id, created_at, message")
+          .in("id", messageIds);
+        if (cancelled) return;
+        if (messageError) {
+          // eslint-disable-next-line no-console
+          console.error("通知本文の取得に失敗しました", messageError);
+        } else {
+          for (const m of (messageRows ?? []) as Array<{
+            id: string;
+            created_at: string;
+            message: string;
+          }>) {
+            messageById.set(m.id, {
+              created_at: m.created_at,
+              message: m.message,
+            });
+          }
+        }
+      }
+      setMentionsLoading(false);
       setMentions(
-        rows.map((row) => ({
-          id: row.id,
-          messageId: row.message_id,
-          groupId: row.group_id,
-          groupName: row.chat_groups?.[0]?.name ?? "グループ",
-          mentionerName: row.mentioner_name,
-          isEveryone: row.is_everyone,
-          createdAt: row.created_at,
-          readAt: row.read_at,
-          // 通知一覧のchat_mentions.created_atはメンション作成時刻(メッセージ
-          // 送信とほぼ同時)なので参考程度には使えるが、ジャンプ時のスクロール
-          // 位置合わせ(anchored window取得)には対象メッセージ本体の
-          // created_atを正確に使う必要があるため別で持つ。
-          messageCreatedAt:
-            row.chat_messages?.[0]?.created_at ?? row.created_at,
-          messagePreview: row.chat_messages?.[0]?.message ?? "",
-        })),
+        rows.map((row) => {
+          const message = messageById.get(row.message_id);
+          return {
+            id: row.id,
+            messageId: row.message_id,
+            groupId: row.group_id,
+            groupName: row.chat_groups?.[0]?.name ?? "グループ",
+            mentionerName: row.mentioner_name,
+            isEveryone: row.is_everyone,
+            createdAt: row.created_at,
+            readAt: row.read_at,
+            messageCreatedAt: message?.created_at ?? row.created_at,
+            messagePreview: message?.message ?? "",
+          };
+        }),
       );
     })();
     return () => {
