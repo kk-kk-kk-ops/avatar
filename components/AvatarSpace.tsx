@@ -71,6 +71,35 @@ function randomId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// チャットの固定絵文字リアクション(5種類)。DB側のcheck制約
+// (chat_message_reactions_emoji_check)と同じ値を維持すること。
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "👏"] as const;
+
+type ChatReaction = { userId: string; emoji: string };
+
+// トークに付いた複数人分のリアクション(1人1件)を、絵文字ごとに
+// 件数集計する(誰が押したかはUIに出さないため、集計後の形だけ持てば
+// 十分)。
+type GroupedReaction = { emoji: string; count: number; mine: boolean };
+function groupChatReactions(
+  reactions: ChatReaction[],
+  myUserId: string | null,
+): GroupedReaction[] {
+  const order: string[] = [];
+  const counts = new Map<string, { count: number; mine: boolean }>();
+  for (const r of reactions) {
+    const entry = counts.get(r.emoji);
+    if (entry) {
+      entry.count += 1;
+      if (r.userId === myUserId) entry.mine = true;
+    } else {
+      counts.set(r.emoji, { count: 1, mine: r.userId === myUserId });
+      order.push(r.emoji);
+    }
+  }
+  return order.map((emoji) => ({ emoji, ...counts.get(emoji)! }));
+}
+
 function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
@@ -387,6 +416,7 @@ export default function AvatarSpace({
     editedAt: string | null;
     deletedAt: string | null;
     imagePath: string | null;
+    reactions: ChatReaction[];
   };
   // 会話相手(認証済みユーザーの安定ID)ごとのスレッド。
   const [dmThreads, setDmThreads] = useState<Record<string, DmMessage[]>>({});
@@ -437,6 +467,7 @@ export default function AvatarSpace({
     // 出しではなく枠なし・赤文字で表示する。
     isSystem: boolean;
     imagePath: string | null;
+    reactions: ChatReaction[];
   };
   // 現在サイドバーで開いているグループスレッド。1対1(selectedPeerUserId)
   // とは排他的(どちらか一方だけがnullでない)。
@@ -585,6 +616,30 @@ export default function AvatarSpace({
   // スマホの長押し検出用(contextmenuイベントが発火しないiOS Safari向け)。
   const dmLongPressTimerRef = useRef<number | null>(null);
   const dmLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  // 絵文字リアクション:PCでホバー中のメッセージ(そのメッセージの上に
+  // 絵文字バーを一時表示する)。DMメッセージはdmContextMenu(コピー/編集/
+  // 削除メニュー)と別軸のUIなので専用stateにする。
+  const [dmHoverMessageId, setDmHoverMessageId] = useState<string | null>(
+    null,
+  );
+  const [groupHoverMessageId, setGroupHoverMessageId] = useState<
+    string | null
+  >(null);
+  // グループメッセージの吹き出しdivへのref(絵文字バー/長押しメニューの
+  // 位置算出に使う。DMのdmBubbleRefsと同じ考え方だが、グループメッセージ
+  // には元々コピー機能が無いためref自体も無かった)。
+  const groupBubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // グループメッセージの長押しで開く、絵文字リアクション専用メニュー。
+  // DMと違いグループメッセージには元々コピー/編集/削除メニューが無いため、
+  // dmContextMenuとは別の、リアクションだけのシンプルなメニューにする。
+  const [groupMessageContextMenu, setGroupMessageContextMenu] = useState<{
+    message: GroupMessage;
+  } | null>(null);
+  const groupMessageLongPressTimerRef = useRef<number | null>(null);
+  const groupMessageLongPressStartRef = useRef<{
+    x: number;
+    y: number;
+  } | null>(null);
   // グループ一覧の項目(名前変更/退出メニュー)向けの長押し検出用。
   // DMメッセージの長押しコピー機能とは無関係の、単純な「メニューを開く」
   // だけの用途のため、部分コピー等の複雑な状態は持たない。
@@ -841,7 +896,7 @@ export default function AvatarSpace({
         : await supabase
             .from("chat_messages")
             .select(
-              "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path",
+              "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path, chat_message_reactions(user_id, emoji)",
             )
             .eq("room_id", roomId)
             .or(
@@ -866,7 +921,41 @@ export default function AvatarSpace({
         edited_at: string | null;
         deleted_at: string | null;
         image_path: string | null;
+        chat_message_reactions?: Array<{ user_id: string; emoji: string }>;
       }>;
+      // viewOnly(招待URLの一時ゲスト)は通常のRLS経由でchat_message_
+      // reactionsを埋め込みSELECTできない(9f-5のコメント参照)ため、
+      // メッセージ本体の取得後にトークン検証付きの別RPCでまとめて取得し、
+      // メッセージIDをキーに突き合わせる。
+      const reactionsByMessageId = new Map<
+        string,
+        Array<{ user_id: string; emoji: string }>
+      >();
+      if (viewOnlyInviteToken) {
+        const messageIds = rows.map((row) => row.id);
+        if (messageIds.length > 0) {
+          const { data: reactionRows, error: reactionError } =
+            await supabase.rpc("list_chat_message_reactions_by_invite_token", {
+              token: viewOnlyInviteToken,
+              p_message_ids: messageIds,
+            });
+          if (reactionError) {
+            // eslint-disable-next-line no-console
+            console.error("リアクションの取得に失敗しました", reactionError);
+          } else {
+            for (const r of (reactionRows ?? []) as Array<{
+              message_id: string;
+              user_id: string;
+              emoji: string;
+            }>) {
+              const list = reactionsByMessageId.get(r.message_id) ?? [];
+              list.push({ user_id: r.user_id, emoji: r.emoji });
+              reactionsByMessageId.set(r.message_id, list);
+            }
+          }
+        }
+      }
+      if (cancelled) return;
       const messages: DmMessage[] = (
         viewOnlyInviteToken ? rows : rows.slice().reverse()
       )
@@ -881,6 +970,11 @@ export default function AvatarSpace({
           editedAt: row.edited_at,
           deletedAt: row.deleted_at,
           imagePath: row.image_path,
+          reactions: (
+            viewOnlyInviteToken
+              ? (reactionsByMessageId.get(row.id) ?? [])
+              : (row.chat_message_reactions ?? [])
+          ).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
         }));
       dmForceScrollRef.current = true;
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
@@ -935,7 +1029,7 @@ export default function AvatarSpace({
       const { data, error } = await supabase
         .from("chat_messages")
         .select(
-          "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system, image_path",
+          "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system, image_path, chat_message_reactions(user_id, emoji)",
         )
         .eq("room_id", roomId)
         .eq("group_id", selectedGroupId)
@@ -959,6 +1053,7 @@ export default function AvatarSpace({
         deleted_at: string | null;
         is_system: boolean;
         image_path: string | null;
+        chat_message_reactions?: Array<{ user_id: string; emoji: string }>;
       }>;
       const messages: GroupMessage[] = rows
         .slice()
@@ -974,6 +1069,10 @@ export default function AvatarSpace({
           deletedAt: row.deleted_at,
           isSystem: row.is_system,
           imagePath: row.image_path,
+          reactions: (row.chat_message_reactions ?? []).map((r) => ({
+            userId: r.user_id,
+            emoji: r.emoji,
+          })),
         }));
       setGroupThreads((prev) => ({ ...prev, [selectedGroupId]: messages }));
       // タブの未読合計バッジを、スレッドを開いた時点で即座に反映する
@@ -1193,6 +1292,7 @@ export default function AvatarSpace({
               editedAt: null,
               deletedAt: null,
               imagePath,
+              reactions: [],
             },
           ],
         }));
@@ -1268,6 +1368,7 @@ export default function AvatarSpace({
               deletedAt: null,
               isSystem: false,
               imagePath,
+              reactions: [],
             },
           ],
         }));
@@ -1671,6 +1772,75 @@ export default function AvatarSpace({
     cancelAllGroupPendingImages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGroupId]);
+
+  // グループメッセージへの絵文字リアクション選択。DMのhandleDmReaction
+  // Selectと同じ「同じ絵文字なら取り消し・別の絵文字なら上書き」の
+  // ロジックだが、グループのメッセージ読み書きは(グループRLSがアカウント
+  // 所属を問わないため)viewOnlyかどうかで経路を分ける必要が無い点が
+  // DM向けと異なる(9f-3bのコメント、および[[handleDmReactionSelect]]と
+  // 同じ考え方)。
+  const handleGroupReactionSelect = useCallback(
+    async (m: GroupMessage, emoji: string) => {
+      const groupId = selectedGroupId;
+      const myUserId = authUserIdRef.current;
+      if (!groupId || !myUserId) return;
+      const previousEmoji =
+        m.reactions.find((r) => r.userId === myUserId)?.emoji ?? null;
+      const removing = previousEmoji === emoji;
+      const nextEmoji = removing ? null : emoji;
+
+      const applyLocally = (targetEmoji: string | null) => {
+        setGroupThreads((prev) => ({
+          ...prev,
+          [groupId]: (prev[groupId] ?? []).map((msg) =>
+            msg.id !== m.id
+              ? msg
+              : {
+                  ...msg,
+                  reactions: targetEmoji
+                    ? [
+                        ...msg.reactions.filter((r) => r.userId !== myUserId),
+                        { userId: myUserId, emoji: targetEmoji },
+                      ]
+                    : msg.reactions.filter((r) => r.userId !== myUserId),
+                },
+          ),
+        }));
+      };
+      applyLocally(nextEmoji);
+      setGroupMessageContextMenu(null);
+
+      const { error } = removing
+        ? await supabase
+            .from("chat_message_reactions")
+            .delete()
+            .eq("message_id", m.id)
+            .eq("user_id", myUserId)
+        : await supabase
+            .from("chat_message_reactions")
+            .upsert(
+              { message_id: m.id, user_id: myUserId, emoji },
+              { onConflict: "message_id,user_id" },
+            );
+
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("リアクションの更新に失敗しました", error);
+        applyLocally(previousEmoji);
+        setGroupError("リアクションの更新に失敗しました。");
+        return;
+      }
+
+      channelRef.current?.httpSend("group-reaction", {
+        originId: selfId.current,
+        messageId: m.id,
+        groupId,
+        reactorUserId: myUserId,
+        emoji: nextEmoji,
+      });
+    },
+    [selectedGroupId, supabase],
+  );
 
   const sendGroupMessage = useCallback(async () => {
     const text = groupInput.trim();
@@ -2208,6 +2378,84 @@ export default function AvatarSpace({
     [selectedPeerUserId, supabase, viewOnlyInviteToken, dmEditingMessageId],
   );
 
+  // DMメッセージへの絵文字リアクション選択(ホバーバー/長押しメニュー
+  // 共通)。同じ絵文字を選び直した場合は取り消し、別の絵文字なら
+  // 上書きする(1人1トークにつき1リアクションまで)。楽観的に即座へ
+  // 反映し、失敗時は元の状態へ戻す。
+  const handleDmReactionSelect = useCallback(
+    async (m: DmMessage, emoji: string) => {
+      const peerUserId = selectedPeerUserId;
+      const myUserId = authUserIdRef.current;
+      if (!peerUserId || !myUserId) return;
+      const previousEmoji =
+        m.reactions.find((r) => r.userId === myUserId)?.emoji ?? null;
+      const removing = previousEmoji === emoji;
+      const nextEmoji = removing ? null : emoji;
+
+      const applyLocally = (targetEmoji: string | null) => {
+        setDmThreads((prev) => ({
+          ...prev,
+          [peerUserId]: (prev[peerUserId] ?? []).map((msg) =>
+            msg.id !== m.id
+              ? msg
+              : {
+                  ...msg,
+                  reactions: targetEmoji
+                    ? [
+                        ...msg.reactions.filter((r) => r.userId !== myUserId),
+                        { userId: myUserId, emoji: targetEmoji },
+                      ]
+                    : msg.reactions.filter((r) => r.userId !== myUserId),
+                },
+          ),
+        }));
+      };
+      applyLocally(nextEmoji);
+      setDmContextMenu(null);
+
+      const { error } = viewOnlyInviteToken
+        ? removing
+          ? await supabase.rpc(
+              "remove_chat_message_reaction_by_invite_token",
+              { token: viewOnlyInviteToken, p_message_id: m.id },
+            )
+          : await supabase.rpc("set_chat_message_reaction_by_invite_token", {
+              token: viewOnlyInviteToken,
+              p_message_id: m.id,
+              p_emoji: emoji,
+            })
+        : removing
+          ? await supabase
+              .from("chat_message_reactions")
+              .delete()
+              .eq("message_id", m.id)
+              .eq("user_id", myUserId)
+          : await supabase
+              .from("chat_message_reactions")
+              .upsert(
+                { message_id: m.id, user_id: myUserId, emoji },
+                { onConflict: "message_id,user_id" },
+              );
+
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("リアクションの更新に失敗しました", error);
+        applyLocally(previousEmoji);
+        setDmError("リアクションの更新に失敗しました。");
+        return;
+      }
+
+      channelRef.current?.httpSend("dm-reaction", {
+        originId: selfId.current,
+        messageId: m.id,
+        reactorUserId: myUserId,
+        recipientUserId: peerUserId,
+        emoji: nextEmoji,
+      });
+    },
+    [selectedPeerUserId, supabase, viewOnlyInviteToken],
+  );
+
   // 指定テキストをクリップボードへコピーする。コピー後は選択範囲の
   // ハイライトが残り続けないよう解除する。
   const copyDmText = useCallback((text: string) => {
@@ -2364,6 +2612,64 @@ export default function AvatarSpace({
     clearGroupLongPressTimer();
   }, [clearGroupLongPressTimer]);
 
+  // ---- グループメッセージの長押し(絵文字リアクション専用メニュー) ----
+  // グループメッセージには元々コピー/編集/削除の右クリックメニューが
+  // 無いため、DMのhandleDmTouchStart/handleDmContextMenuとは独立した
+  // シンプルな実装にする(長押し500ms・移動量10px以内でキャンセルは同じ)。
+  const clearGroupMessageLongPressTimer = useCallback(() => {
+    if (groupMessageLongPressTimerRef.current !== null) {
+      window.clearTimeout(groupMessageLongPressTimerRef.current);
+      groupMessageLongPressTimerRef.current = null;
+    }
+  }, []);
+
+  const handleGroupMessageContextMenu = useCallback(
+    (e: React.MouseEvent, m: GroupMessage) => {
+      e.preventDefault();
+      clearGroupMessageLongPressTimer();
+      setGroupMessageContextMenu({ message: m });
+    },
+    [clearGroupMessageLongPressTimer],
+  );
+
+  const handleGroupMessageTouchStart = useCallback(
+    (e: React.TouchEvent, m: GroupMessage) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      groupMessageLongPressStartRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+      };
+      groupMessageLongPressTimerRef.current = window.setTimeout(() => {
+        groupMessageLongPressTimerRef.current = null;
+        setGroupMessageContextMenu({ message: m });
+      }, 500);
+    },
+    [],
+  );
+
+  const handleGroupMessageTouchMove = useCallback((e: React.TouchEvent) => {
+    const start = groupMessageLongPressStartRef.current;
+    const touch = e.touches[0];
+    if (!start || !touch || groupMessageLongPressTimerRef.current === null) {
+      return;
+    }
+    if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) {
+      clearGroupMessageLongPressTimer();
+    }
+  }, [clearGroupMessageLongPressTimer]);
+
+  const handleGroupMessageTouchEnd = useCallback(() => {
+    clearGroupMessageLongPressTimer();
+  }, [clearGroupMessageLongPressTimer]);
+
+  const getGroupBubbleTopRight = useCallback((messageId: string) => {
+    const bubbleEl = groupBubbleRefs.current[messageId];
+    if (!bubbleEl) return null;
+    const rect = bubbleEl.getBoundingClientRect();
+    return { x: rect.right, y: rect.top };
+  }, []);
+
   // 部分コピーモード:対象メッセージ全文を初期選択し、ユーザーがブラウザ
   // 標準の選択ハンドルでドラッグして範囲を1文字単位で調整できるようにする。
   // 「コピー」ボタンの位置は選択範囲を追わず、常にメッセージ吹き出し枠の
@@ -2420,6 +2726,15 @@ export default function AvatarSpace({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [dmContextMenu, dmSelectionModeMessageId, closeDmCopyUi]);
+
+  useEffect(() => {
+    if (!groupMessageContextMenu) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setGroupMessageContextMenu(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [groupMessageContextMenu]);
 
   // 部分コピーモード中の「外側タップで閉じる」。dmContextMenu用の全画面
   // divと同じ見た目にすると、選択ハンドルへのタッチもそのdivに吸われて
@@ -3371,6 +3686,7 @@ export default function AvatarSpace({
                 editedAt: null,
                 deletedAt: null,
                 imagePath: msg.imagePath,
+                reactions: [],
               },
             ],
           }));
@@ -3434,6 +3750,7 @@ export default function AvatarSpace({
                 deletedAt: null,
                 isSystem: msg.isSystem ?? false,
                 imagePath: msg.imagePath ?? null,
+                reactions: [],
               },
             ],
           }));
@@ -3543,6 +3860,80 @@ export default function AvatarSpace({
             ...prev,
             [msg.senderUserId]: (prev[msg.senderUserId] ?? []).filter(
               (m) => m.id !== msg.id,
+            ),
+          }));
+        })
+        .on("broadcast", { event: "dm-reaction" }, ({ payload }) => {
+          const msg = payload as {
+            messageId: string;
+            originId: string;
+            reactorUserId: string;
+            recipientUserId: string;
+            emoji: string | null;
+          };
+          const myUserId = authUserIdRef.current;
+          // DMは常に2者間のため、リアクションを付けた本人
+          // (reactorUserId)が自分にとっての会話相手=スレッドキーになる
+          // (dm/dm-editイベントと同じ判定方法)。
+          if (
+            msg.originId === selfId.current ||
+            msg.recipientUserId !== myUserId
+          ) {
+            return;
+          }
+          setDmThreads((prev) => ({
+            ...prev,
+            [msg.reactorUserId]: (prev[msg.reactorUserId] ?? []).map((m) =>
+              m.id !== msg.messageId
+                ? m
+                : {
+                    ...m,
+                    reactions: msg.emoji
+                      ? [
+                          ...m.reactions.filter(
+                            (r) => r.userId !== msg.reactorUserId,
+                          ),
+                          { userId: msg.reactorUserId, emoji: msg.emoji },
+                        ]
+                      : m.reactions.filter(
+                          (r) => r.userId !== msg.reactorUserId,
+                        ),
+                  },
+            ),
+          }));
+        })
+        .on("broadcast", { event: "group-reaction" }, ({ payload }) => {
+          const msg = payload as {
+            messageId: string;
+            originId: string;
+            groupId: string;
+            reactorUserId: string;
+            emoji: string | null;
+          };
+          if (
+            msg.originId === selfId.current ||
+            !myGroupIdsRef.current.has(msg.groupId)
+          ) {
+            return;
+          }
+          setGroupThreads((prev) => ({
+            ...prev,
+            [msg.groupId]: (prev[msg.groupId] ?? []).map((m) =>
+              m.id !== msg.messageId
+                ? m
+                : {
+                    ...m,
+                    reactions: msg.emoji
+                      ? [
+                          ...m.reactions.filter(
+                            (r) => r.userId !== msg.reactorUserId,
+                          ),
+                          { userId: msg.reactorUserId, emoji: msg.emoji },
+                        ]
+                      : m.reactions.filter(
+                          (r) => r.userId !== msg.reactorUserId,
+                        ),
+                  },
             ),
           }));
         })
@@ -5792,12 +6183,48 @@ export default function AvatarSpace({
                           まだメッセージはありません
                         </p>
                       )}
-                      {thread.map((m) => (
+                      {thread.map((m) => {
+                        const groupedReactions = groupChatReactions(
+                          m.reactions,
+                          authUserIdRef.current,
+                        );
+                        return (
                         // 削除済みメッセージはリアルタイム反映・初回読み込み
                         // どちらの経路でもthreadから除外済みのため、ここでは
                         // 通常メッセージのみを描画すればよい。
                         <div
                           key={m.id}
+                          className={`flex flex-col ${m.isSelf ? "items-end" : "items-start"}`}
+                        >
+                          <div
+                            className="relative"
+                            onMouseEnter={() => setDmHoverMessageId(m.id)}
+                            onMouseLeave={() =>
+                              setDmHoverMessageId((cur) =>
+                                cur === m.id ? null : cur,
+                              )
+                            }
+                          >
+                            {dmHoverMessageId === m.id && (
+                              <div
+                                className="absolute left-1/2 z-30 flex -translate-x-1/2 gap-0.5 rounded-full bg-slate-800 px-1.5 py-1 shadow-lg"
+                                style={{ bottom: "100%", marginBottom: 4 }}
+                              >
+                                {REACTION_EMOJIS.map((emoji) => (
+                                  <button
+                                    key={emoji}
+                                    type="button"
+                                    onClick={() =>
+                                      handleDmReactionSelect(m, emoji)
+                                    }
+                                    className="flex h-6 w-6 items-center justify-center rounded-full text-sm hover:bg-slate-700"
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                        <div
                           onContextMenu={(e) => handleDmContextMenu(e, m)}
                           onTouchStart={(e) => handleDmTouchStart(e, m)}
                           onTouchMove={handleDmTouchMove}
@@ -5891,7 +6318,27 @@ export default function AvatarSpace({
                             </span>
                           )}
                         </div>
-                      ))}
+                          </div>
+                          {groupedReactions.length > 0 && (
+                            <div className="mt-0.5 flex flex-wrap gap-1">
+                              {groupedReactions.map((g) => (
+                                <span
+                                  key={g.emoji}
+                                  className={`flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
+                                    g.mine
+                                      ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
+                                      : "border-slate-600 bg-slate-800/70 text-slate-200"
+                                  }`}
+                                >
+                                  <span>{g.emoji}</span>
+                                  <span>{g.count}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        );
+                      })}
                     </div>
                     {showDmScrollButton && (
                       <button
@@ -6101,8 +6548,14 @@ export default function AvatarSpace({
                               まだメッセージはありません
                             </p>
                           )}
-                          {thread.map((m) =>
-                            m.isSystem ? (
+                          {thread.map((m) => {
+                            const groupedReactions = m.isSystem
+                              ? []
+                              : groupChatReactions(
+                                  m.reactions,
+                                  authUserIdRef.current,
+                                );
+                            return m.isSystem ? (
                               // 退出通知など。通常の吹き出しとは区別し、
                               // 枠なし・赤文字のみで中央に表示する。
                               <p
@@ -6114,6 +6567,51 @@ export default function AvatarSpace({
                             ) : (
                               <div
                                 key={m.id}
+                                className={`flex flex-col ${m.isSelf ? "items-end" : "items-start"}`}
+                              >
+                              <div
+                                className="relative"
+                                onMouseEnter={() =>
+                                  setGroupHoverMessageId(m.id)
+                                }
+                                onMouseLeave={() =>
+                                  setGroupHoverMessageId((cur) =>
+                                    cur === m.id ? null : cur,
+                                  )
+                                }
+                              >
+                                {groupHoverMessageId === m.id && (
+                                  <div
+                                    className="absolute left-1/2 z-30 flex -translate-x-1/2 gap-0.5 rounded-full bg-slate-800 px-1.5 py-1 shadow-lg"
+                                    style={{ bottom: "100%", marginBottom: 4 }}
+                                  >
+                                    {REACTION_EMOJIS.map((emoji) => (
+                                      <button
+                                        key={emoji}
+                                        type="button"
+                                        onClick={() =>
+                                          handleGroupReactionSelect(m, emoji)
+                                        }
+                                        className="flex h-6 w-6 items-center justify-center rounded-full text-sm hover:bg-slate-700"
+                                      >
+                                        {emoji}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              <div
+                                ref={(el) => {
+                                  groupBubbleRefs.current[m.id] = el;
+                                }}
+                                onContextMenu={(e) =>
+                                  handleGroupMessageContextMenu(e, m)
+                                }
+                                onTouchStart={(e) =>
+                                  handleGroupMessageTouchStart(e, m)
+                                }
+                                onTouchMove={handleGroupMessageTouchMove}
+                                onTouchEnd={handleGroupMessageTouchEnd}
+                                onTouchCancel={handleGroupMessageTouchEnd}
                                 className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
                                   m.isSelf
                                     ? "ml-auto bg-emerald-600 text-white"
@@ -6179,8 +6677,27 @@ export default function AvatarSpace({
                                   {formatDmClockTime(m.createdAt)}
                                 </p>
                               </div>
-                            ),
-                          )}
+                              </div>
+                              {groupedReactions.length > 0 && (
+                                <div className="mt-0.5 flex flex-wrap gap-1">
+                                  {groupedReactions.map((g) => (
+                                    <span
+                                      key={g.emoji}
+                                      className={`flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
+                                        g.mine
+                                          ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
+                                          : "border-slate-600 bg-slate-800/70 text-slate-200"
+                                      }`}
+                                    >
+                                      <span>{g.emoji}</span>
+                                      <span>{g.count}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                       {groupError && (
@@ -6528,6 +7045,25 @@ export default function AvatarSpace({
                 transform: "translate(-100%, calc(-100% - 6px))",
               }}
             >
+              {dmContextMenu.source === "touch" && (
+                // スマホの長押しは既存のコピー/編集/削除メニューと同じ
+                // ジェスチャーのため、絵文字リアクションの選択もこの
+                // メニューの先頭にまとめる(PCはホバーバーで別途対応)。
+                <div className="flex items-center justify-center gap-0.5 border-b border-slate-700 px-1.5 py-1.5">
+                  {REACTION_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() =>
+                        handleDmReactionSelect(dmContextMenu.message, emoji)
+                      }
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-base hover:bg-slate-700"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
               {dmContextMenu.source === "mouse" && dmContextMenu.selectedText ? (
                 // PCで既に範囲選択済みの状態から開いた場合は、その場コピー
                 // だけを1項目で出す(「部分コピー」との二度手間を避ける)。
@@ -6823,6 +7359,49 @@ export default function AvatarSpace({
           </button>
         </div>
       )}
+
+      {/* グループメッセージの長押しメニュー(絵文字リアクションのみ)。
+          グループメッセージには元々コピー/編集/削除メニューが無いため、
+          dmContextMenuと違いこのメニューは絵文字選択専用。 */}
+      {groupMessageContextMenu && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setGroupMessageContextMenu(null)}
+        />
+      )}
+      {groupMessageContextMenu &&
+        (() => {
+          const point = getGroupBubbleTopRight(
+            groupMessageContextMenu.message.id,
+          );
+          if (!point) return null;
+          return (
+            <div
+              className="fixed z-50 flex items-center gap-0.5 rounded-full bg-slate-800 px-1.5 py-1.5 shadow-xl"
+              style={{
+                left: point.x,
+                top: point.y,
+                transform: "translate(-100%, calc(-100% - 6px))",
+              }}
+            >
+              {REACTION_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() =>
+                    handleGroupReactionSelect(
+                      groupMessageContextMenu.message,
+                      emoji,
+                    )
+                  }
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-base text-white hover:bg-slate-700"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
       {/* グループ名変更モーダル */}
       {renamingGroupId && (
