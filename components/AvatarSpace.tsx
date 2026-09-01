@@ -1165,12 +1165,15 @@ export default function AvatarSpace({
   }, [selectedGroupId, groupThreads]);
 
   // ---- チャットタブ:やり取りした相手ごとの最新メッセージ一覧を読み込む ----
-  // 一覧が実際に表示されているタイミング(チャットタブが開いていて、かつ
-  // 個別スレッドを開いていない)でのみ取得する。新着DM受信時にも
-  // chatThreadsRefreshTriggerを介して再取得する(未読数・並び順を最新化)。
+  // 個別スレッドを開いていない間、常に取得する(以前はsidebarTab==="chat"
+  // の間だけに限定していたため、参加者/設定タブを見ている間に来た新着は
+  // chatThreadsRefreshTriggerが増えても再取得されず、「チャット」タブの
+  // 未読バッジがリアルタイムに反映されない不具合があった。2026-09-02
+  // 報告)。新着DM/グループDM受信時にはchatThreadsRefreshTriggerを介して
+  // 再取得する(未読数・並び順を最新化)。
   useEffect(() => {
     if (!joined) return;
-    if (sidebarTab !== "chat" || selectedPeerUserId || selectedGroupId) return;
+    if (selectedPeerUserId || selectedGroupId) return;
     let cancelled = false;
     setChatThreadsLoading(true);
     setChatThreadsError(null);
@@ -1228,7 +1231,6 @@ export default function AvatarSpace({
     roomId,
     supabase,
     viewOnlyInviteToken,
-    sidebarTab,
     selectedPeerUserId,
     selectedGroupId,
     chatThreadsRefreshTrigger,
