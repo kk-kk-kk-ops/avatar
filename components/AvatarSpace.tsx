@@ -215,7 +215,7 @@ function renderTextWithMentions(
       parts.push(text.slice(lastIndex, match.index));
     }
     parts.push(
-      <span key={key++} className="text-purple-400">
+      <span key={key++} className="text-blue-400">
         {match[0]}
       </span>,
     );
@@ -6446,14 +6446,15 @@ export default function AvatarSpace({
                   key={tab.key}
                   type="button"
                   onClick={() => setSidebarTab(tab.key)}
-                  className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-md py-1.5 transition-colors ${
+                  title={tab.label}
+                  aria-label={tab.label}
+                  className={`relative flex flex-1 items-center justify-center rounded-md py-2 transition-colors ${
                     sidebarTab === tab.key
                       ? "bg-emerald-600 text-white"
                       : "text-slate-300 hover:bg-white/10"
                   }`}
                 >
-                  <tab.Icon className="h-4 w-4" />
-                  {tab.label}
+                  <tab.Icon className="h-5 w-5" />
                   {tab.unread > 0 && (
                     <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white">
                       {tab.unread > 99 ? "99+" : tab.unread}
@@ -7112,6 +7113,11 @@ export default function AvatarSpace({
                                 key={m.id}
                                 className={`flex flex-col ${m.isSelf ? "items-end" : "items-start"}`}
                               >
+                              {!m.isSelf && (
+                                <p className="mb-0.5 text-[10px] font-semibold text-slate-400">
+                                  {m.senderName}
+                                </p>
+                              )}
                               <div
                                 className="relative"
                                 onMouseEnter={() => openGroupHover(m.id)}
@@ -7192,11 +7198,6 @@ export default function AvatarSpace({
                                     : ""
                                 }`}
                               >
-                                {!m.isSelf && (
-                                  <p className="mb-0.5 text-[10px] font-semibold text-slate-300">
-                                    {m.senderName}
-                                  </p>
-                                )}
                                 {m.imagePath && dmImageLoadFailed[m.id] && (
                                   <button
                                     type="button"
@@ -7420,7 +7421,7 @@ export default function AvatarSpace({
                               文字ごとに色を変えられないための代替手段)。 */}
                           <div
                             aria-hidden
-                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg border border-transparent px-2.5 py-1.5 text-xs text-white"
+                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white"
                           >
                             {renderTextWithMentions(groupInput, [
                               "全員",
@@ -7472,7 +7473,7 @@ export default function AvatarSpace({
                             maxLength={500}
                             rows={1}
                             placeholder="メッセージを入力"
-                            className="relative w-full resize-none rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
+                            className="relative w-full resize-none rounded-lg border border-slate-600 bg-transparent px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
                           />
                         </div>
                         <button
