@@ -2426,16 +2426,34 @@ grant execute on function public.list_banned_participants(uuid) to authenticated
 --     正規の変更(招待経由のrole付与、無料お試し開始時のrole付与、
 --     マスターメール判定によるis_master付与、デバッグ用プラン切替)は
 --     すべてアプリ側でservice_roleクライアント(lib/supabase/serviceRole.ts)
---     に切り替え済み。Supabaseダッシュボード(SQL Editor等)からの直接
---     操作はpostgresロール(スーパーユーザー)扱いのため、is_superuser
---     判定でも別途バイパスできるようにしておく。
+--     に切り替え済み。
+--
+--     2026-09-01追記: 当初はSupabaseダッシュボード(SQL Editor等)からの
+--     直接操作を「postgresロール=スーパーユーザー扱い」として
+--     current_setting('is_superuser')でバイパスできる想定だったが、
+--     Supabaseのホスティング環境ではSQL Editorが使うpostgresロールは
+--     真のPostgreSQLスーパーユーザーではなく(is_superuser=off)、この
+--     分岐は実際には一度も機能していなかった(consolidated_setup.sqlを
+--     このトリガー追加後に頭から通しで再実行して初めて発覚)。
+--     そのため、PostgREST(SupabaseのREST API)を経由しない書き込みを
+--     示す確実なsignalとして auth.role() is null も許可条件に加える。
+--     REST API経由の書き込みは、anonキー・authenticatedユーザーの
+--     JWT・service_roleキーのいずれであっても、PostgRESTが必ずrole
+--     クレームをセットするためauth.role()がnullになることは無い
+--     (=元の脆弱性の攻撃経路であるREST直叩きは引き続き一切救われない)。
+--     null になるのはSQL Editor・psql・Supabase CLIのマイグレーション等、
+--     PostgRESTを経由しない直接DB接続のみで、その経路にアクセスできる
+--     時点でトリガー自体を無効化する等も可能な、別次元の信頼レベルの
+--     操作のため、ここをバイパスしても防御力は落ちない。
 -- ------------------------------------------------------------
 create or replace function public.prevent_privileged_column_self_write()
 returns trigger
 language plpgsql
 as $$
 begin
-  if auth.role() = 'service_role' or current_setting('is_superuser', true) = 'on' then
+  if auth.role() = 'service_role'
+     or current_setting('is_superuser', true) = 'on'
+     or auth.role() is null then
     return new;
   end if;
 
