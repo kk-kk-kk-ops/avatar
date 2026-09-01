@@ -11,6 +11,7 @@ import {
   type MapTemplate,
   type Obstacle,
   type MeetingZone,
+  type WarpPoint,
   type AccountSummary,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
@@ -122,7 +123,7 @@ export default async function MasterPage() {
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
-      "id, name, background_image_url, obstacles, meeting_area, map_width, map_height, spawn_x, spawn_y",
+      "id, name, background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y",
     )
     .order("created_at", { ascending: true });
 
@@ -153,12 +154,26 @@ export default async function MasterPage() {
       }),
     );
 
+    const rawWarpPoints = Array.isArray(t.warp_points) ? t.warp_points : [];
+    const warpPoints: WarpPoint[] = rawWarpPoints
+      .filter(
+        (w: Partial<WarpPoint>) =>
+          w.channel === "A" || w.channel === "B" || w.channel === "C",
+      )
+      .map((w: Partial<WarpPoint>, i: number) => ({
+        id: w.id ?? `warp-${i}`,
+        channel: w.channel as "A" | "B" | "C",
+        x: w.x ?? 0,
+        y: w.y ?? 0,
+      }));
+
     return {
       id: t.id,
       name: t.name,
       backgroundImageUrl: t.background_image_url,
       obstacles,
       meetingZones,
+      warpPoints,
       width: t.map_width ?? MAP_WIDTH,
       height: t.map_height ?? MAP_HEIGHT,
       spawnPoint:

@@ -277,6 +277,11 @@ alter table public.templates
   add column if not exists spawn_x double precision;
 alter table public.templates
   add column if not exists spawn_y double precision;
+-- ワープポイント(2026-09追加)。WarpPoint[](lib/types.ts)をそのまま
+-- 保存する。obstacles/meeting_areaと同じくテンプレート単位の配列で、
+-- ルーム側では個別に持たない。
+alter table public.templates
+  add column if not exists warp_points jsonb not null default '[]'::jsonb;
 
 alter table public.templates enable row level security;
 

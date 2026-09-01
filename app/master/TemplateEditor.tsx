@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { MapTemplate, Obstacle, MeetingZone } from "@/lib/types";
+import type { MapTemplate, Obstacle, MeetingZone, WarpPoint } from "@/lib/types";
 import {
   NEW_ITEM_SIZE,
   MIN_ITEM_SIZE,
@@ -10,6 +10,8 @@ import {
   MIN_OBSTACLE_HEIGHT,
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
+  WARP_CHANNELS,
+  WARP_POINT_RADIUS,
   clampPosition,
   clampSize,
   randomItemId,
@@ -92,6 +94,9 @@ export default function TemplateEditor({
   const [spawnPoint, setSpawnPoint] = useState<{ x: number; y: number } | null>(
     template.spawnPoint,
   );
+  const [warpPoints, setWarpPoints] = useState<WarpPoint[]>(
+    template.warpPoints,
+  );
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     template.backgroundImageUrl,
   );
@@ -148,6 +153,15 @@ export default function TemplateEditor({
   // 汎用ドラッグ(dragState/applyDrag)には乗せず、専用の最小限のドラッグ
   // 状態で扱う。
   const spawnDragState = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  // ワープポイントも点(円)なので、アバター初期位置と同じ考え方の専用
+  // ドラッグ状態にする。
+  const warpDragState = useRef<{
+    id: string;
     startX: number;
     startY: number;
     originX: number;
@@ -321,6 +335,23 @@ export default function TemplateEditor({
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
+    const warpDrag = warpDragState.current;
+    if (warpDrag) {
+      const dx = (e.clientX - warpDrag.startX) / scale;
+      const dy = (e.clientY - warpDrag.startY) / scale;
+      const x = Math.min(
+        Math.max(warpDrag.originX + dx, WARP_POINT_RADIUS),
+        mapWidth - WARP_POINT_RADIUS,
+      );
+      const y = Math.min(
+        Math.max(warpDrag.originY + dy, WARP_POINT_RADIUS),
+        mapHeight - WARP_POINT_RADIUS,
+      );
+      setWarpPoints((prev) =>
+        prev.map((w) => (w.id === warpDrag.id ? { ...w, x, y } : w)),
+      );
+      return;
+    }
     const spawnDrag = spawnDragState.current;
     if (spawnDrag) {
       const dx = (e.clientX - spawnDrag.startX) / scale;
@@ -368,7 +399,44 @@ export default function TemplateEditor({
   const handlePointerUp = () => {
     dragState.current = null;
     spawnDragState.current = null;
+    warpDragState.current = null;
   };
+
+  const handleWarpPointerDown = (e: React.PointerEvent, id: string) => {
+    e.stopPropagation();
+    const point = warpPoints.find((w) => w.id === id);
+    if (!point) return;
+    warpDragState.current = {
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: point.x,
+      originY: point.y,
+    };
+  };
+
+  // ワープ(A/B/Cチャンネルは1ペア=丸2つまで。ボタンは既にペアがある
+  // チャンネルでは無効化するため、ここでは新規追加のみを考える)。
+  // 2つの丸は少しずらして両方が重ならずに見えるよう、中心から左右に
+  // ずらして配置する。
+  const addWarpPair = (channel: (typeof WARP_CHANNELS)[number]) => {
+    const center = getVisibleCenterMapPoint();
+    const offset = WARP_POINT_RADIUS + 20;
+    const clamp = (x: number, y: number) => ({
+      x: Math.min(Math.max(x, WARP_POINT_RADIUS), mapWidth - WARP_POINT_RADIUS),
+      y: Math.min(Math.max(y, WARP_POINT_RADIUS), mapHeight - WARP_POINT_RADIUS),
+    });
+    const p1 = clamp(center.x - offset, center.y);
+    const p2 = clamp(center.x + offset, center.y);
+    setWarpPoints((prev) => [
+      ...prev,
+      { id: randomItemId("warp"), channel, ...p1 },
+      { id: randomItemId("warp"), channel, ...p2 },
+    ]);
+  };
+
+  const removeWarpPair = (channel: string) =>
+    setWarpPoints((prev) => prev.filter((w) => w.channel !== channel));
 
   const handleSpawnPointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
@@ -600,6 +668,7 @@ export default function TemplateEditor({
       mapWidth,
       mapHeight,
       spawnPoint,
+      warpPoints,
     );
     if (!result.ok) {
       setError(result.error);
@@ -750,6 +819,19 @@ export default function TemplateEditor({
           >
             ＋全体アナウンスエリア
           </button>
+          {WARP_CHANNELS.map((channel) => {
+            const hasPair = warpPoints.some((w) => w.channel === channel);
+            return (
+              <button
+                key={channel}
+                onClick={() => addWarpPair(channel)}
+                disabled={hasPair}
+                className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+              >
+                ＋{channel}ワープ{hasPair ? "(設置済み)" : ""}
+              </button>
+            );
+          })}
           <button
             onClick={setSpawnToDefaultPosition}
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
@@ -863,6 +945,11 @@ export default function TemplateEditor({
           <div>
             <p className="font-semibold text-slate-700">【作業エリア】</p>
             <p>・音声・ビデオ通話・画面共有不可</p>
+          </div>
+          <div>
+            <p className="font-semibold text-slate-700">【ワープ】</p>
+            <p>・同じアルファベット(A/B/C)の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
+            <p>・1チャンネルにつき丸2つまで(削除すると2つまとめて消える)</p>
           </div>
         </div>
 
@@ -1011,6 +1098,30 @@ export default function TemplateEditor({
                   }
                   className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
                 />
+              </div>
+            ))}
+
+            {warpPoints.map((w) => (
+              <div
+                key={w.id}
+                onPointerDown={(e) => handleWarpPointerDown(e, w.id)}
+                className="absolute flex cursor-move items-center justify-center rounded-full border-2 border-purple-400 bg-purple-500/50 text-xs font-bold text-white"
+                style={{
+                  left: (w.x - WARP_POINT_RADIUS) * scale,
+                  top: (w.y - WARP_POINT_RADIUS) * scale,
+                  width: WARP_POINT_RADIUS * 2 * scale,
+                  height: WARP_POINT_RADIUS * 2 * scale,
+                }}
+              >
+                {w.channel}
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => removeWarpPair(w.channel)}
+                  title="このペア(丸2つ)をまとめて削除"
+                  className="absolute -right-1 -top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                >
+                  ×
+                </button>
               </div>
             ))}
 

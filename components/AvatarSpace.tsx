@@ -36,6 +36,8 @@ import {
   NEW_ITEM_SIZE,
   Obstacle,
   MeetingZone,
+  WarpPoint,
+  WARP_POINT_RADIUS,
   DEFAULT_OBSTACLES,
   DEFAULT_MEETING_ZONES,
   AVATAR_IMAGES,
@@ -941,6 +943,16 @@ export default function AvatarSpace({
 
   const obstaclesRef = useRef<Obstacle[]>(DEFAULT_OBSTACLES);
   const meetingZonesRef = useRef<MeetingZone[]>(DEFAULT_MEETING_ZONES);
+  const [warpPoints, setWarpPoints] = useState<WarpPoint[]>([]);
+  const warpPointsRef = useRef<WarpPoint[]>([]);
+  // ワープ直後、瞬間移動先の丸にも重なっているため、そのまま同じフレームで
+  // 逆方向へワープし直してしまう(行ったり来たりの無限ループ)のを防ぐ
+  // クールダウン。テレポート実行時刻を記録し、一定時間は新規のワープ判定
+  // 自体を行わない。
+  const warpCooldownUntilRef = useRef(0);
+  // ワープ演出(一瞬暗転)用。trueの間、画面全体を覆う黒いオーバーレイを
+  // 表示する。
+  const [warpFading, setWarpFading] = useState(false);
 
   // マップの広さ(テンプレートごとに変更可能)。デフォルトは従来通りの
   // MAP_WIDTH/MAP_HEIGHTだが、テンプレート側で個別サイズが設定されて
@@ -3751,6 +3763,9 @@ export default function AvatarSpace({
     meetingZonesRef.current = meetingZones;
   }, [meetingZones]);
   useEffect(() => {
+    warpPointsRef.current = warpPoints;
+  }, [warpPoints]);
+  useEffect(() => {
     mapSizeRef.current = mapSize;
   }, [mapSize]);
 
@@ -3767,7 +3782,7 @@ export default function AvatarSpace({
       const { data } = await supabase
         .from("templates")
         .select(
-          "background_image_url, obstacles, meeting_area, map_width, map_height, spawn_x, spawn_y",
+          "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y",
         )
         .eq("id", room.templateId)
         .maybeSingle();
@@ -3835,6 +3850,19 @@ export default function AvatarSpace({
           }),
         );
         setMeetingZones(loaded);
+      }
+
+      const rawWarpPoints = data.warp_points;
+      if (Array.isArray(rawWarpPoints)) {
+        const loadedWarpPoints = (rawWarpPoints as Array<Partial<WarpPoint>>)
+          .filter((w) => w.channel === "A" || w.channel === "B" || w.channel === "C")
+          .map((w, i) => ({
+            id: w.id ?? `warp-${i}`,
+            channel: w.channel as "A" | "B" | "C",
+            x: w.x ?? 0,
+            y: w.y ?? 0,
+          }));
+        setWarpPoints(loadedWarpPoints);
       }
     })();
   }, [joined, roomId, rooms, supabase]);
@@ -4238,13 +4266,18 @@ export default function AvatarSpace({
           });
         })
         .on("broadcast", { event: "layout-update" }, ({ payload }) => {
-          const { obstacles: newObstacles, meetingZones: newZones } =
-            payload as {
-              obstacles?: Obstacle[];
-              meetingZones?: MeetingZone[];
-            };
+          const {
+            obstacles: newObstacles,
+            meetingZones: newZones,
+            warpPoints: newWarpPoints,
+          } = payload as {
+            obstacles?: Obstacle[];
+            meetingZones?: MeetingZone[];
+            warpPoints?: WarpPoint[];
+          };
           if (newObstacles) setObstacles(newObstacles);
           if (newZones) setMeetingZones(newZones);
+          if (newWarpPoints) setWarpPoints(newWarpPoints);
         })
         .on("broadcast", { event: "screen-preview" }, ({ payload }) => {
           const { id, dataUrl } = payload as { id: string; dataUrl: string };
@@ -4992,6 +5025,41 @@ export default function AvatarSpace({
           }
         }
         self.moving = moving;
+
+        // ワープポイントの出入り判定(2026-09追加)。片方の丸(半径
+        // WARP_POINT_RADIUS)の中心から一定距離内に入ったら、同じchannel
+        // のもう片方の丸の座標へ瞬間移動する(双方向)。テレポート直後は
+        // 移動先の丸にも重なった状態になるため、そのまま同じ判定で逆方向へ
+        // ワープし直してしまう(行ったり来たりの無限ループ)のを防ぐため、
+        // 一定時間(クールダウン)は判定自体を行わない。
+        if (performance.now() >= warpCooldownUntilRef.current) {
+          const hitWarp = warpPointsRef.current.find(
+            (w) => Math.hypot(self.x - w.x, self.y - w.y) <= WARP_POINT_RADIUS,
+          );
+          const warpDestination = hitWarp
+            ? warpPointsRef.current.find(
+                (w) => w.channel === hitWarp.channel && w.id !== hitWarp.id,
+              )
+            : null;
+          if (hitWarp && warpDestination) {
+            warpCooldownUntilRef.current = performance.now() + 900;
+            setWarpFading(true);
+            window.setTimeout(() => {
+              self.x = warpDestination.x;
+              self.y = warpDestination.y;
+              setPlayers((prev) => {
+                const current = prev[self.id];
+                if (!current) return prev;
+                return {
+                  ...prev,
+                  [self.id]: { ...current, x: self.x, y: self.y },
+                };
+              });
+              channelRef.current?.track(self);
+            }, 180);
+            window.setTimeout(() => setWarpFading(false), 500);
+          }
+        }
 
         // ミーティングエリアの出入り判定(音声通話の自動接続に使用)
         const zoneId = findMeetingZoneId(
@@ -8099,6 +8167,16 @@ export default function AvatarSpace({
 
       {/* プラン変更による強制退出の通知(最前面に表示し、少ししてから
           window.location.reload()で新プランの制限を反映し直す) */}
+      {/* ワープ演出:一瞬暗転させてから元に戻る(瞬間移動そのものは
+          裏で即座に行われる)。常にマウントしたままopacityだけ切り替える
+          ことで、CSSのtransitionがきちんと効くようにしている。 */}
+      <div
+        aria-hidden
+        className={`pointer-events-none fixed inset-0 z-[90] bg-black transition-opacity duration-200 ${
+          warpFading ? "opacity-100" : "opacity-0"
+        }`}
+      />
+
       {forceLeaveMessage && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
