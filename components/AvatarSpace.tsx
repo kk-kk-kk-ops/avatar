@@ -625,6 +625,13 @@ export default function AvatarSpace({
   const [groupHoverMessageId, setGroupHoverMessageId] = useState<
     string | null
   >(null);
+  // ホバーで出した絵文字バーへ、吹き出しとの間の隙間を挟んでマウスを
+  // 移動する間に一瞬mouseleaveが発火して消えてしまう問題への対策。
+  // leave即座に閉じず、一定時間後に閉じる予約をし、その間にバー側へ
+  // マウスが入ってenterが再発火すれば予約をキャンセルする(DM/グループ
+  // それぞれ独立したタイマーを持つ)。
+  const dmHoverCloseTimerRef = useRef<number | null>(null);
+  const groupHoverCloseTimerRef = useRef<number | null>(null);
   // グループメッセージの吹き出しdivへのref(絵文字バー/長押しメニューの
   // 位置算出に使う。DMのdmBubbleRefsと同じ考え方だが、グループメッセージ
   // には元々コピー機能が無いためref自体も無かった)。
@@ -640,6 +647,43 @@ export default function AvatarSpace({
     x: number;
     y: number;
   } | null>(null);
+
+  const openDmHover = useCallback((messageId: string) => {
+    if (dmHoverCloseTimerRef.current !== null) {
+      window.clearTimeout(dmHoverCloseTimerRef.current);
+      dmHoverCloseTimerRef.current = null;
+    }
+    setDmHoverMessageId(messageId);
+  }, []);
+
+  const scheduleDmHoverClose = useCallback((messageId: string) => {
+    if (dmHoverCloseTimerRef.current !== null) {
+      window.clearTimeout(dmHoverCloseTimerRef.current);
+    }
+    dmHoverCloseTimerRef.current = window.setTimeout(() => {
+      dmHoverCloseTimerRef.current = null;
+      setDmHoverMessageId((cur) => (cur === messageId ? null : cur));
+    }, 250);
+  }, []);
+
+  const openGroupHover = useCallback((messageId: string) => {
+    if (groupHoverCloseTimerRef.current !== null) {
+      window.clearTimeout(groupHoverCloseTimerRef.current);
+      groupHoverCloseTimerRef.current = null;
+    }
+    setGroupHoverMessageId(messageId);
+  }, []);
+
+  const scheduleGroupHoverClose = useCallback((messageId: string) => {
+    if (groupHoverCloseTimerRef.current !== null) {
+      window.clearTimeout(groupHoverCloseTimerRef.current);
+    }
+    groupHoverCloseTimerRef.current = window.setTimeout(() => {
+      groupHoverCloseTimerRef.current = null;
+      setGroupHoverMessageId((cur) => (cur === messageId ? null : cur));
+    }, 250);
+  }, []);
+
   // グループ一覧の項目(名前変更/退出メニュー)向けの長押し検出用。
   // DMメッセージの長押しコピー機能とは無関係の、単純な「メニューを開く」
   // だけの用途のため、部分コピー等の複雑な状態は持たない。
@@ -6198,12 +6242,8 @@ export default function AvatarSpace({
                         >
                           <div
                             className="relative"
-                            onMouseEnter={() => setDmHoverMessageId(m.id)}
-                            onMouseLeave={() =>
-                              setDmHoverMessageId((cur) =>
-                                cur === m.id ? null : cur,
-                              )
-                            }
+                            onMouseEnter={() => openDmHover(m.id)}
+                            onMouseLeave={() => scheduleDmHoverClose(m.id)}
                           >
                             {dmHoverMessageId === m.id && (
                               <div
@@ -6319,20 +6359,29 @@ export default function AvatarSpace({
                           )}
                         </div>
                           </div>
+                          <p className="mt-0.5 text-[10px] text-slate-400">
+                            {formatDmClockTime(m.createdAt)}
+                          </p>
                           {groupedReactions.length > 0 && (
                             <div className="mt-0.5 flex flex-wrap gap-1">
                               {groupedReactions.map((g) => (
-                                <span
+                                <button
                                   key={g.emoji}
+                                  type="button"
+                                  onClick={() => {
+                                    if (g.mine) {
+                                      handleDmReactionSelect(m, g.emoji);
+                                    }
+                                  }}
                                   className={`flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
                                     g.mine
-                                      ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
-                                      : "border-slate-600 bg-slate-800/70 text-slate-200"
+                                      ? "cursor-pointer border-emerald-400 bg-emerald-500/20 text-emerald-100"
+                                      : "cursor-default border-slate-600 bg-slate-800/70 text-slate-200"
                                   }`}
                                 >
                                   <span>{g.emoji}</span>
                                   <span>{g.count}</span>
-                                </span>
+                                </button>
                               ))}
                             </div>
                           )}
@@ -6571,13 +6620,9 @@ export default function AvatarSpace({
                               >
                               <div
                                 className="relative"
-                                onMouseEnter={() =>
-                                  setGroupHoverMessageId(m.id)
-                                }
+                                onMouseEnter={() => openGroupHover(m.id)}
                                 onMouseLeave={() =>
-                                  setGroupHoverMessageId((cur) =>
-                                    cur === m.id ? null : cur,
-                                  )
+                                  scheduleGroupHoverClose(m.id)
                                 }
                               >
                                 {groupHoverMessageId === m.id && (
@@ -6673,25 +6718,34 @@ export default function AvatarSpace({
                                 <p className="whitespace-pre-wrap break-words">
                                   {m.message}
                                 </p>
-                                <p className="mt-0.5 text-right text-[9px] opacity-70">
-                                  {formatDmClockTime(m.createdAt)}
-                                </p>
                               </div>
                               </div>
+                              <p className="mt-0.5 text-[10px] text-slate-400">
+                                {formatDmClockTime(m.createdAt)}
+                              </p>
                               {groupedReactions.length > 0 && (
                                 <div className="mt-0.5 flex flex-wrap gap-1">
                                   {groupedReactions.map((g) => (
-                                    <span
+                                    <button
                                       key={g.emoji}
+                                      type="button"
+                                      onClick={() => {
+                                        if (g.mine) {
+                                          handleGroupReactionSelect(
+                                            m,
+                                            g.emoji,
+                                          );
+                                        }
+                                      }}
                                       className={`flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[11px] leading-none ${
                                         g.mine
-                                          ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
-                                          : "border-slate-600 bg-slate-800/70 text-slate-200"
+                                          ? "cursor-pointer border-emerald-400 bg-emerald-500/20 text-emerald-100"
+                                          : "cursor-default border-slate-600 bg-slate-800/70 text-slate-200"
                                       }`}
                                     >
                                       <span>{g.emoji}</span>
                                       <span>{g.count}</span>
-                                    </span>
+                                    </button>
                                   ))}
                                 </div>
                               )}
@@ -7036,13 +7090,23 @@ export default function AvatarSpace({
         (() => {
           const point = getDmBubbleTopRight(dmContextMenu.message.id);
           if (!point) return null;
+          // メニュー幅を固定し、本来は吹き出しの右上端に右揃えする位置
+          // (point.x - MENU_WIDTH)を、画面左右端からはみ出さないよう
+          // クランプする(groupContextMenuの左右クランプと同じ考え方。
+          // スマホで画面左端に近い相手メッセージの吹き出しにこのメニューを
+          // 出すと、絵文字ボタンが画面外に出て押せなくなっていたため)。
+          const MENU_WIDTH = 160;
+          const left = Math.min(
+            Math.max(point.x - MENU_WIDTH, 8),
+            window.innerWidth - MENU_WIDTH - 8,
+          );
           return (
             <div
-              className="fixed z-50 min-w-[128px] overflow-hidden rounded-lg bg-slate-800 text-xs font-semibold text-white shadow-xl"
+              className="fixed z-50 w-40 overflow-hidden rounded-lg bg-slate-800 text-xs font-semibold text-white shadow-xl"
               style={{
-                left: point.x,
+                left,
                 top: point.y,
-                transform: "translate(-100%, calc(-100% - 6px))",
+                transform: "translateY(calc(-100% - 6px))",
               }}
             >
               {dmContextMenu.source === "touch" && (
@@ -7375,13 +7439,20 @@ export default function AvatarSpace({
             groupMessageContextMenu.message.id,
           );
           if (!point) return null;
+          // DMの長押しメニューと同じ理由で、画面左右端からはみ出さない
+          // ようクランプする。
+          const MENU_WIDTH = 200;
+          const left = Math.min(
+            Math.max(point.x - MENU_WIDTH, 8),
+            window.innerWidth - MENU_WIDTH - 8,
+          );
           return (
             <div
-              className="fixed z-50 flex items-center gap-0.5 rounded-full bg-slate-800 px-1.5 py-1.5 shadow-xl"
+              className="fixed z-50 flex w-[200px] items-center justify-center gap-0.5 rounded-full bg-slate-800 px-1.5 py-1.5 shadow-xl"
               style={{
-                left: point.x,
+                left,
                 top: point.y,
-                transform: "translate(-100%, calc(-100% - 6px))",
+                transform: "translateY(calc(-100% - 6px))",
               }}
             >
               {REACTION_EMOJIS.map((emoji) => (
