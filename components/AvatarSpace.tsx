@@ -946,10 +946,12 @@ export default function AvatarSpace({
   const [warpPoints, setWarpPoints] = useState<WarpPoint[]>([]);
   const warpPointsRef = useRef<WarpPoint[]>([]);
   // ワープ直後、瞬間移動先の丸にも重なっているため、そのまま同じフレームで
-  // 逆方向へワープし直してしまう(行ったり来たりの無限ループ)のを防ぐ
-  // クールダウン。テレポート実行時刻を記録し、一定時間は新規のワープ判定
-  // 自体を行わない。
-  const warpCooldownUntilRef = useRef(0);
+  // 逆方向へワープし直してしまう(行ったり来たりの無限ループ)のを防ぐため、
+  // 「現在重なっている(と扱っている)ワープ地点のID」を記録する。時間経過
+  // ではなく、一度丸の外に完全に出る(nullに戻る)までは新規のワープ判定を
+  // 行わない(2026-09報告: 時間ベースのクールダウンだと、猶予時間内に
+  // 丸から出られなかった場合に当たり判定が無いまま足踏みしてしまっていた)。
+  const insideWarpIdRef = useRef<string | null>(null);
   // ワープ演出(一瞬暗転)用。trueの間、画面全体を覆う黒いオーバーレイを
   // 表示する。
   const [warpFading, setWarpFading] = useState(false);
@@ -5028,25 +5030,30 @@ export default function AvatarSpace({
 
         // ワープポイントの出入り判定(2026-09追加)。片方の丸(半径
         // WARP_POINT_RADIUS)の中心から一定距離内に入ったら、同じchannel
-        // のもう片方の丸の座標へ瞬間移動する(双方向)。テレポート直後は
-        // 移動先の丸にも重なった状態になるため、そのまま同じ判定で逆方向へ
-        // ワープし直してしまう(行ったり来たりの無限ループ)のを防ぐため、
-        // 一定時間(クールダウン)は判定自体を行わない。
-        if (performance.now() >= warpCooldownUntilRef.current) {
-          const hitWarp = warpPointsRef.current.find(
-            (w) => Math.hypot(self.x - w.x, self.y - w.y) <= WARP_POINT_RADIUS,
+        // のもう片方の丸の座標へ瞬間移動する(双方向)。insideWarpIdRefに
+        // 「現在重なっている(と扱っている)丸のID」を記録し、それと違う丸に
+        // 新しく重なった時だけ発火させる。丸の外に完全に出るとnullに戻る
+        // ため、一度出るまでは(移動先の丸に重なったままでも)再発火しない。
+        const hitWarp = warpPointsRef.current.find(
+          (w) => Math.hypot(self.x - w.x, self.y - w.y) <= WARP_POINT_RADIUS,
+        );
+        if (!hitWarp) {
+          insideWarpIdRef.current = null;
+        } else if (hitWarp.id !== insideWarpIdRef.current) {
+          const warpDestination = warpPointsRef.current.find(
+            (w) => w.channel === hitWarp.channel && w.id !== hitWarp.id,
           );
-          const warpDestination = hitWarp
-            ? warpPointsRef.current.find(
-                (w) => w.channel === hitWarp.channel && w.id !== hitWarp.id,
-              )
-            : null;
-          if (hitWarp && warpDestination) {
-            warpCooldownUntilRef.current = performance.now() + 900;
+          if (warpDestination) {
+            // テレポート実行(180ms後)までの間、まだ座標は移動元の丸のまま
+            // なので、ここではまず移動元の丸のIDを記録して連続発火を防ぐ。
+            // 実際に座標が移動先へ切り替わるタイミングで、改めて移動先の
+            // 丸のIDに更新する。
+            insideWarpIdRef.current = hitWarp.id;
             setWarpFading(true);
             window.setTimeout(() => {
               self.x = warpDestination.x;
               self.y = warpDestination.y;
+              insideWarpIdRef.current = warpDestination.id;
               setPlayers((prev) => {
                 const current = prev[self.id];
                 if (!current) return prev;
@@ -5058,6 +5065,11 @@ export default function AvatarSpace({
               channelRef.current?.track(self);
             }, 180);
             window.setTimeout(() => setWarpFading(false), 500);
+          } else {
+            // 対になる丸が存在しない(片方だけ設置されている等の異常系)。
+            // ワープはしないが、同じ丸に居続ける間は毎フレーム再判定
+            // しないよう記録だけしておく。
+            insideWarpIdRef.current = hitWarp.id;
           }
         }
 
@@ -6557,6 +6569,23 @@ export default function AvatarSpace({
                   height: o.height,
                 }}
               />
+            ))}
+
+            {/* ワープポイント。半透明の色付き円で見えるようにする
+                (テンプレート編集画面と同系色)。 */}
+            {warpPoints.map((w) => (
+              <div
+                key={w.id}
+                className="pointer-events-none absolute flex items-center justify-center rounded-full border-2 border-purple-400 bg-purple-500/30 text-xs font-bold text-white"
+                style={{
+                  left: w.x - WARP_POINT_RADIUS,
+                  top: w.y - WARP_POINT_RADIUS,
+                  width: WARP_POINT_RADIUS * 2,
+                  height: WARP_POINT_RADIUS * 2,
+                }}
+              >
+                {w.channel}
+              </div>
             ))}
 
             {/* 自分の音声が届く範囲の目安(マイクON時のみ表示。位置は毎フレームDOM操作で更新) */}
