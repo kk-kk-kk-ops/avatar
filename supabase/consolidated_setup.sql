@@ -1979,6 +1979,133 @@ grant execute on function public.list_chat_threads_by_invite_token(text, uuid) t
 
 
 -- ------------------------------------------------------------
+-- 9f-3c. chat_mentions: グループチャットの@メンション通知(2026-09-02
+--   追加)。メッセージ送信時に、本文中の「@全員」または「@<メンバー表示名>」
+--   を解析したクライアントが、create_chat_mentions()経由でこのテーブルに
+--   1メンション対象者につき1行ずつ挿入する(「@全員」は送信者を除く
+--   その時点の全メンバーへ展開して1行ずつ)。
+--
+--   INSERT用のRLSポリシーはあえて用意しない。「自分が送信したメッセージ
+--   かどうか」「対象ユーザーが実際にそのグループのメンバーかどうか
+--   (クライアントからのなりすまし防止)」の検証がRLSのusing/with checkだけ
+--   では表現しづらいため、create_chat_mentions()というSECURITY DEFINER
+--   関数を必ず経由させる(create_chat_groupと同じ考え方)。
+--   SELECT/UPDATE(既読化)は、mentioned_user_id = auth.uid()の行に
+--   限定する通常のRLSで足りる(viewOnlyゲストも含め、auth.uid()だけで
+--   完結する判定のため9f-2のような特別対応は不要)。
+-- ------------------------------------------------------------
+create table if not exists public.chat_mentions (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references public.chat_messages(id) on delete cascade,
+  group_id uuid not null references public.chat_groups(id) on delete cascade,
+  mentioned_user_id uuid not null references auth.users(id) on delete cascade,
+  mentioner_user_id uuid not null references auth.users(id) on delete cascade,
+  mentioner_name text not null,
+  is_everyone boolean not null default false,
+  created_at timestamptz not null default now(),
+  read_at timestamptz
+);
+
+create index if not exists chat_mentions_mentioned_user_id_created_at_idx
+  on public.chat_mentions (mentioned_user_id, created_at desc);
+
+alter table public.chat_mentions enable row level security;
+
+drop policy if exists "chat_mentions: select own" on public.chat_mentions;
+create policy "chat_mentions: select own"
+  on public.chat_mentions for select
+  using (mentioned_user_id = auth.uid());
+
+drop policy if exists "chat_mentions: update own" on public.chat_mentions;
+create policy "chat_mentions: update own"
+  on public.chat_mentions for update
+  using (mentioned_user_id = auth.uid())
+  with check (mentioned_user_id = auth.uid());
+
+-- グループメンバーの表示名一覧(@メンションのポップアップ候補用)。
+-- profilesの通常SELECT RLSは本人の行しか許可していないため、同じ
+-- グループのメンバー同士であれば表示名を見られるようこの関数経由にする。
+drop function if exists public.list_chat_group_member_names(uuid);
+create function public.list_chat_group_member_names(p_group_id uuid)
+returns table (user_id uuid, display_name text)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+begin
+  if not public.is_chat_group_member(p_group_id, auth.uid()) then
+    raise exception 'このグループのメンバーではありません';
+  end if;
+
+  return query
+    select gm.user_id, coalesce(p.display_name, p.email, 'ユーザー')
+    from public.chat_group_members gm
+    left join public.profiles p on p.user_id = gm.user_id
+    where gm.group_id = p_group_id;
+end;
+$$;
+
+grant execute on function public.list_chat_group_member_names(uuid) to authenticated;
+
+-- メンション行の作成。p_mention_everyoneがtrueの場合はp_mentioned_user_ids
+-- を無視し、その時点のグループメンバー全員(送信者本人を除く)へ展開する。
+-- p_mention_everyoneがfalseの場合も、指定されたuser_idが実際にそのグループの
+-- メンバーであることをここで検証してから挿入する(なりすまし・存在しない
+-- ユーザーへのメンション作成を防ぐ)。
+drop function if exists public.create_chat_mentions(uuid, uuid, text, boolean, uuid[]);
+create function public.create_chat_mentions(
+  p_message_id uuid,
+  p_group_id uuid,
+  p_mentioner_name text,
+  p_mention_everyone boolean,
+  p_mentioned_user_ids uuid[]
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  -- 対象メッセージが実在し、このグループ宛てで、かつ自分が送信した
+  -- メッセージであることを検証する(他人が送ったメッセージに対して
+  -- 勝手にメンション通知を作れないようにするため)。
+  if not exists (
+    select 1 from public.chat_messages m
+    where m.id = p_message_id
+      and m.group_id = p_group_id
+      and m.sender_user_id = auth.uid()
+  ) then
+    raise exception 'このメッセージにはメンションを作成できません';
+  end if;
+
+  if p_mention_everyone then
+    insert into public.chat_mentions
+      (message_id, group_id, mentioned_user_id, mentioner_user_id, mentioner_name, is_everyone)
+    select p_message_id, p_group_id, gm.user_id, auth.uid(), p_mentioner_name, true
+    from public.chat_group_members gm
+    where gm.group_id = p_group_id
+      and gm.user_id <> auth.uid();
+  else
+    insert into public.chat_mentions
+      (message_id, group_id, mentioned_user_id, mentioner_user_id, mentioner_name, is_everyone)
+    select p_message_id, p_group_id, gm.user_id, auth.uid(), p_mentioner_name, false
+    from public.chat_group_members gm
+    where gm.group_id = p_group_id
+      and gm.user_id <> auth.uid()
+      and gm.user_id = any(p_mentioned_user_ids);
+  end if;
+end;
+$$;
+
+grant execute on function public.create_chat_mentions(uuid, uuid, text, boolean, uuid[]) to authenticated;
+
+
+-- ------------------------------------------------------------
 -- 9f-4. chat-images: チャットの画像添付機能用Storageバケット。
 --   非公開バケット(public: false)。DMの内容は本来sender/recipient以外に
 --   見えてはいけないため、template-imagesのような公開バケットにはしない。
