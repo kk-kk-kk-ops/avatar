@@ -280,6 +280,12 @@ function formatDmListTime(iso: string): string {
   return date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
 }
 
+// 通知一覧のメンション本文プレビュー用。30文字を超える場合は30文字+「...」
+// に省略する。
+function truncateForPreview(text: string, maxLength = 30): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
 // 画面共有開始時点の最初の1フレームを、選択前プレビュー用の軽量な
 // JPEG dataURLとして切り出す。取得に失敗した場合はnullを返す
 // (プレビューが出ないだけで、選択視聴自体は引き続き可能)。
@@ -606,6 +612,7 @@ export default function AvatarSpace({
     createdAt: string;
     readAt: string | null;
     messageCreatedAt: string;
+    messagePreview: string;
   };
   const [mentions, setMentions] = useState<MentionNotification[]>([]);
   const [mentionsLoading, setMentionsLoading] = useState(false);
@@ -1563,7 +1570,7 @@ export default function AvatarSpace({
       const { data, error } = await supabase
         .from("chat_mentions")
         .select(
-          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name), chat_messages(created_at)",
+          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name), chat_messages(created_at, message)",
         )
         .eq("mentioned_user_id", myUserId)
         .order("created_at", { ascending: false })
@@ -1587,7 +1594,7 @@ export default function AvatarSpace({
         created_at: string;
         read_at: string | null;
         chat_groups: Array<{ name: string | null }> | null;
-        chat_messages: Array<{ created_at: string }> | null;
+        chat_messages: Array<{ created_at: string; message: string }> | null;
       }>;
       setMentions(
         rows.map((row) => ({
@@ -1605,6 +1612,7 @@ export default function AvatarSpace({
           // created_atを正確に使う必要があるため別で持つ。
           messageCreatedAt:
             row.chat_messages?.[0]?.created_at ?? row.created_at,
+          messagePreview: row.chat_messages?.[0]?.message ?? "",
         })),
       );
     })();
@@ -7648,6 +7656,11 @@ export default function AvatarSpace({
                           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-purple-400" />
                         )}
                       </div>
+                      {mention.messagePreview && (
+                        <p className="mt-1 truncate text-[11px] text-slate-300">
+                          {truncateForPreview(mention.messagePreview)}
+                        </p>
+                      )}
                       <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-400">
                         <span className="min-w-0 truncate">
                           👥 {mention.groupName}
