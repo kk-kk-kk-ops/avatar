@@ -31,6 +31,91 @@ create table if not exists public.accounts (
 
 alter table public.accounts enable row level security;
 
+-- ------------------------------------------------------------
+-- 1b. 権限昇格防止トリガー(関数本体+accounts分)。
+--     profiles.role/is_master、accounts.planは「本人の行である」ことしか
+--     RLSで表現できておらず(列単位の制限ができない)、ログイン済み
+--     ユーザーがSupabaseのREST APIを直接叩けば自分のrole/is_master/plan
+--     を書き換えられてしまう問題があった(2026-08 Tech Lead確認依頼
+--     その25で発覚)。service_role以外からのこれらの列の変更を一律拒否
+--     する。UPDATEだけでなくINSERTも対象にし、最初からis_master=true・
+--     plan='pro'で行を作る形での迂回も防ぐ。
+--
+--     正規の変更(招待経由のrole付与、無料お試し開始時のrole付与、
+--     マスターメール判定によるis_master付与、デバッグ用プラン切替)は
+--     すべてアプリ側でservice_roleクライアント(lib/supabase/serviceRole.ts)
+--     に切り替え済み。
+--
+--     2026-09-01追記(バイパス条件): 当初はSupabaseダッシュボード(SQL
+--     Editor等)からの直接操作を「postgresロール=スーパーユーザー扱い」
+--     としてcurrent_setting('is_superuser')でバイパスできる想定だったが、
+--     Supabaseのホスティング環境ではSQL Editorが使うpostgresロールは
+--     真のPostgreSQLスーパーユーザーではなく(is_superuser=off)、この
+--     分岐は実際には一度も機能していなかった。そのため、PostgREST
+--     (SupabaseのREST API)を経由しない書き込みを示す確実なsignalとして
+--     auth.role() is nullも許可条件に加える。REST API経由の書き込みは、
+--     anonキー・authenticatedユーザーのJWT・service_roleキーのいずれで
+--     あっても、PostgRESTが必ずroleクレームをセットするためauth.role()が
+--     nullになることは無い(=元の脆弱性の攻撃経路であるREST直叩きは
+--     引き続き一切救われない)。nullになるのはSQL Editor・psql・
+--     Supabase CLIのマイグレーション等、PostgRESTを経由しない直接DB
+--     接続のみで、その経路にアクセスできる時点でトリガー自体を無効化
+--     する等も可能な、別次元の信頼レベルの操作のため、ここをバイパス
+--     しても防御力は落ちない。
+--
+--     2026-09-01追記(定義位置): この関数・accounts向けトリガーは、
+--     直後の「plan='master'の既存行をfreeへ移行」処理より前に有効化
+--     しておく必要があるため、accountsテーブル作成直後のこの位置に置く
+--     (profiles向けトリガーはprofilesテーブル作成直後の「2a」に別途置く)。
+--     旧・セクション16に両方まとめて置いていたが、それだとこのファイル内
+--     で先に実行されるセクション11-13(管理者アカウントのrole='admin'
+--     付与等)より後になってしまい、「前回実行時点の古いトリガー定義」が
+--     適用されたまま失敗する不具合があった。
+-- ------------------------------------------------------------
+create or replace function public.prevent_privileged_column_self_write()
+returns trigger
+language plpgsql
+as $$
+begin
+  if auth.role() = 'service_role'
+     or current_setting('is_superuser', true) = 'on'
+     or auth.role() is null then
+    return new;
+  end if;
+
+  if tg_table_name = 'profiles' then
+    if tg_op = 'INSERT' then
+      if new.role is not null or new.is_master is true then
+        raise exception 'role/is_masterはこの経路からは設定できません';
+      end if;
+    elsif tg_op = 'UPDATE' then
+      if new.role is distinct from old.role
+         or new.is_master is distinct from old.is_master then
+        raise exception 'role/is_masterはこの経路からは変更できません';
+      end if;
+    end if;
+  elsif tg_table_name = 'accounts' then
+    if tg_op = 'INSERT' then
+      if new.plan is distinct from 'free' then
+        raise exception '新規契約はfreeプランでのみ作成できます';
+      end if;
+    elsif tg_op = 'UPDATE' then
+      if new.plan is distinct from old.plan then
+        raise exception 'planはこの経路からは変更できません';
+      end if;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists accounts_prevent_privileged_self_write on public.accounts;
+create trigger accounts_prevent_privileged_self_write
+  before insert or update on public.accounts
+  for each row
+  execute function public.prevent_privileged_column_self_write();
+
 -- plan列のCHECK制約。マスタープランは廃止したため、既存にplan='master'の
 -- 行が残っていれば先に'free'へ移行してから(そうしないと制約違反になる)、
 -- 'master'を含まない制約を作り直す。マスター権限アカウントは今後、
@@ -107,6 +192,18 @@ create policy "profiles: update own"
   on public.profiles for update
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- ------------------------------------------------------------
+-- 2a. 権限昇格防止トリガー(profiles分)。関数本体・経緯は「1b」参照。
+--     このファイル内で後続のセクション11-13(管理者アカウントへの
+--     role='admin'付与)より前に有効化しておく必要があるため、profiles
+--     テーブル作成直後のこの位置に置く。
+-- ------------------------------------------------------------
+drop trigger if exists profiles_prevent_privileged_self_write on public.profiles;
+create trigger profiles_prevent_privileged_self_write
+  before insert or update on public.profiles
+  for each row
+  execute function public.prevent_privileged_column_self_write();
 
 
 -- ------------------------------------------------------------
@@ -2413,88 +2510,16 @@ grant execute on function public.list_banned_participants(uuid) to authenticated
 
 
 -- ------------------------------------------------------------
--- 16. 権限昇格防止トリガー: profiles.role/is_master、accounts.planは
---     「本人の行である」ことしかRLSで表現できておらず(列単位の制限が
---     できない)、ログイン済みユーザーがSupabaseのREST APIを直接叩けば
---     自分のrole/is_master/planを書き換えられてしまう問題があった
---     (2026-08 Tech Lead確認依頼その25で発覚)。
---
---     service_role以外からのこれらの列の変更を一律拒否する。UPDATE
---     だけでなくINSERTも対象にし、最初からis_master=true・plan='pro'
---     で行を作る形での迂回も防ぐ。
---
---     正規の変更(招待経由のrole付与、無料お試し開始時のrole付与、
---     マスターメール判定によるis_master付与、デバッグ用プラン切替)は
---     すべてアプリ側でservice_roleクライアント(lib/supabase/serviceRole.ts)
---     に切り替え済み。
---
---     2026-09-01追記: 当初はSupabaseダッシュボード(SQL Editor等)からの
---     直接操作を「postgresロール=スーパーユーザー扱い」として
---     current_setting('is_superuser')でバイパスできる想定だったが、
---     Supabaseのホスティング環境ではSQL Editorが使うpostgresロールは
---     真のPostgreSQLスーパーユーザーではなく(is_superuser=off)、この
---     分岐は実際には一度も機能していなかった(consolidated_setup.sqlを
---     このトリガー追加後に頭から通しで再実行して初めて発覚)。
---     そのため、PostgREST(SupabaseのREST API)を経由しない書き込みを
---     示す確実なsignalとして auth.role() is null も許可条件に加える。
---     REST API経由の書き込みは、anonキー・authenticatedユーザーの
---     JWT・service_roleキーのいずれであっても、PostgRESTが必ずrole
---     クレームをセットするためauth.role()がnullになることは無い
---     (=元の脆弱性の攻撃経路であるREST直叩きは引き続き一切救われない)。
---     null になるのはSQL Editor・psql・Supabase CLIのマイグレーション等、
---     PostgRESTを経由しない直接DB接続のみで、その経路にアクセスできる
---     時点でトリガー自体を無効化する等も可能な、別次元の信頼レベルの
---     操作のため、ここをバイパスしても防御力は落ちない。
+-- 16. 権限昇格防止トリガー
+--     2026-09-01: このファイル内でセクション11-13(管理者アカウントの
+--     role='admin'付与等)がこのセクションより前で実行されるため、この
+--     位置に定義があると「トリガーがまだ存在しない古い状態」でそれらの
+--     INSERT/UPDATEが走ってしまう(=前回実行時点の古いトリガー定義が
+--     DBに残っていればそちらが適用され、今回のファイル内での修正が
+--     一切反映されないまま失敗する)不具合があった。関数・両トリガーの
+--     定義自体は、保護対象のprofiles/accountsテーブル作成直後
+--     (「1b」「2a」)に移動済み。このセクション番号は欠番として残す。
 -- ------------------------------------------------------------
-create or replace function public.prevent_privileged_column_self_write()
-returns trigger
-language plpgsql
-as $$
-begin
-  if auth.role() = 'service_role'
-     or current_setting('is_superuser', true) = 'on'
-     or auth.role() is null then
-    return new;
-  end if;
-
-  if tg_table_name = 'profiles' then
-    if tg_op = 'INSERT' then
-      if new.role is not null or new.is_master is true then
-        raise exception 'role/is_masterはこの経路からは設定できません';
-      end if;
-    elsif tg_op = 'UPDATE' then
-      if new.role is distinct from old.role
-         or new.is_master is distinct from old.is_master then
-        raise exception 'role/is_masterはこの経路からは変更できません';
-      end if;
-    end if;
-  elsif tg_table_name = 'accounts' then
-    if tg_op = 'INSERT' then
-      if new.plan is distinct from 'free' then
-        raise exception '新規契約はfreeプランでのみ作成できます';
-      end if;
-    elsif tg_op = 'UPDATE' then
-      if new.plan is distinct from old.plan then
-        raise exception 'planはこの経路からは変更できません';
-      end if;
-    end if;
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists profiles_prevent_privileged_self_write on public.profiles;
-create trigger profiles_prevent_privileged_self_write
-  before insert or update on public.profiles
-  for each row
-  execute function public.prevent_privileged_column_self_write();
-
-drop trigger if exists accounts_prevent_privileged_self_write on public.accounts;
-create trigger accounts_prevent_privileged_self_write
-  before insert or update on public.accounts
-  for each row
-  execute function public.prevent_privileged_column_self_write();
 
 
 -- ------------------------------------------------------------
