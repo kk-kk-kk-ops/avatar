@@ -116,6 +116,7 @@ export type MapTemplate = {
   backgroundImageUrl: string;
   obstacles: Obstacle[];
   meetingZones: MeetingZone[];
+  warpPoints: WarpPoint[];
   width: number;
   height: number;
   // 入室時のアバター初期位置(当たり判定ボックスの中心座標。障害物・
@@ -303,6 +304,14 @@ export type MeetingZone = Rect & {
   label: string;
   kind?: "meeting" | "conference" | "announcement" | "work";
 };
+
+// ワープポイント(2026-09)。同じchannel("A"/"B"/"C")の2点が1ペアになり、
+// 片方の円にアバターが入ったらもう片方の円の座標へ瞬間移動する
+// (双方向)。x,yは円の中心座標(Obstacle/MeetingZoneが左上基準なのとは
+// 座標系が異なるので注意)。channelごとに最大1ペア(2点)まで。
+export type WarpPoint = { id: string; channel: "A" | "B" | "C"; x: number; y: number };
+export const WARP_CHANNELS = ["A", "B", "C"] as const;
+export const WARP_POINT_RADIUS = 36; // 円の表示半径・当たり判定半径(px)
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
 export const MIN_ITEM_SIZE = 40; // これより小さくはできない
