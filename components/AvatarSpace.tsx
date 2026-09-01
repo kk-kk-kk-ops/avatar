@@ -71,6 +71,76 @@ function randomId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+// サイドバーのタブ切替(参加者/チャット/通知/設定)用の線画アイコン。
+// アイコンフォント等のライブラリは使わず、白線(currentColor)のみの
+// シンプルなインラインSVGで揃える。
+function TabIconBell({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M12 3a5 5 0 0 0-5 5v3.5c0 .9-.35 1.76-.98 2.4L4.7 15.2a1 1 0 0 0 .7 1.7h13.2a1 1 0 0 0 .7-1.7l-1.32-1.3a3.4 3.4 0 0 1-.98-2.4V8a5 5 0 0 0-5-5Z" />
+      <path d="M9.5 18.5a2.5 2.5 0 0 0 5 0" />
+    </svg>
+  );
+}
+
+function TabIconPerson({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="12" cy="8" r="3.3" />
+      <path d="M5 19.5c0-3.5 3-5.8 7-5.8s7 2.3 7 5.8" />
+    </svg>
+  );
+}
+
+function TabIconChat({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3.2V16H6a2 2 0 0 1-2-2Z" />
+    </svg>
+  );
+}
+
+function TabIconGear({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 13.5a7.4 7.4 0 0 0 0-3l1.8-1.4-1.5-2.6-2.2.6a7.6 7.6 0 0 0-1.7-1L15.4 4h-3l-.4 2.1a7.6 7.6 0 0 0-1.7 1l-2.2-.6-1.5 2.6L8.4 10.5a7.4 7.4 0 0 0 0 3l-1.8 1.4 1.5 2.6 2.2-.6c.5.4 1.1.8 1.7 1l.4 2.1h3l.4-2.1c.6-.2 1.2-.6 1.7-1l2.2.6 1.5-2.6Z" />
+    </svg>
+  );
+}
+
 // チャットの固定絵文字リアクション(5種類)。DB側のcheck制約
 // (chat_message_reactions_emoji_check)と同じ値を維持すること。
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "👏"] as const;
@@ -98,6 +168,61 @@ function groupChatReactions(
     }
   }
   return order.map((emoji) => ({ emoji, ...counts.get(emoji)! }));
+}
+
+// renderTextWithMentionsと対になる、送信テキストからのメンション対象抽出。
+// 判定条件(直後が空白or文字列終端)を完全に揃えることで、「表示上ハイライト
+// された@メンションと、実際に通知が作られる@メンションが食い違う」ことが
+// 無いようにしている。
+function extractGroupMentions(
+  text: string,
+  members: { userId: string; displayName: string }[],
+): { everyone: boolean; userIds: string[] } {
+  const everyone = /@全員(?=\s|$)/.test(text);
+  const userIds = new Set<string>();
+  for (const m of members) {
+    const escaped = m.displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`@${escaped}(?=\\s|$)`).test(text)) {
+      userIds.add(m.userId);
+    }
+  }
+  return { everyone, userIds: Array.from(userIds) };
+}
+
+// グループチャットの@メンション表示用。テキスト中の「@全員」「@<メンバー
+// 表示名>」を紫色でハイライトする(入力中のオーバーレイ・送信済み
+// メッセージの吹き出し表示、両方で共有する)。表示名の直後が空白または
+// 文字列終端の場合のみマッチさせることで、「@k.k」の後に文字を続けて
+// 打った場合(例: 「@k.kさん」)は途中まで一致させずデフォルト色に戻す
+// (仕様上の要件)。表示名が別の表示名の接頭辞になっているケースを誤って
+// 短い方でマッチさせないよう、長い名前から先に試す。
+function renderTextWithMentions(
+  text: string,
+  mentionNames: string[],
+): React.ReactNode {
+  if (!text || mentionNames.length === 0) return text;
+  const escaped = mentionNames
+    .slice()
+    .sort((a, b) => b.length - a.length)
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(`@(?:${escaped.join("|")})(?=\\s|$)`, "g");
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let key = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <span key={key++} className="text-purple-400">
+        {match[0]}
+      </span>,
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
 }
 
 function randomColor() {
@@ -262,7 +387,7 @@ export default function AvatarSpace({
   // サイドバーの3タブ(参加者/チャット/設定)。設定は以前は別画面の
   // モーダルだったが、サイドバー内のタブへ埋め込む形に変更した。
   const [sidebarTab, setSidebarTab] = useState<
-    "participants" | "chat" | "settings"
+    "participants" | "chat" | "notifications" | "settings"
   >("participants");
   const [settingsNameInput, setSettingsNameInput] = useState("");
   const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
@@ -454,6 +579,26 @@ export default function AvatarSpace({
   // 再取得トリガーにする。
   const [chatThreadsRefreshTrigger, setChatThreadsRefreshTrigger] = useState(0);
 
+  // ---- 通知(グループチャットの@メンション) ----
+  type MentionNotification = {
+    id: string;
+    messageId: string;
+    groupId: string;
+    groupName: string;
+    mentionerName: string;
+    isEveryone: boolean;
+    createdAt: string;
+    readAt: string | null;
+  };
+  const [mentions, setMentions] = useState<MentionNotification[]>([]);
+  const [mentionsLoading, setMentionsLoading] = useState(false);
+  const [mentionsError, setMentionsError] = useState<string | null>(null);
+  const [mentionsRefreshTrigger, setMentionsRefreshTrigger] = useState(0);
+  // 開いたら該当メッセージまでスクロールしたい対象(通知一覧からの
+  // ジャンプ用)。グループスレッドの読み込みが終わった後に使うため、
+  // 一覧読み込みエフェクト側でこのrefを見て処理し、使い終わったらnullに戻す。
+  const pendingMentionScrollTargetRef = useRef<string | null>(null);
+
   // ---- グループチャット ----
   type GroupMessage = {
     id: string;
@@ -480,8 +625,20 @@ export default function AvatarSpace({
     Record<string, GroupMessage[]>
   >({});
   const [groupInput, setGroupInput] = useState("");
+  const groupInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [groupSending, setGroupSending] = useState(false);
   const [groupError, setGroupError] = useState<string | null>(null);
+  // @メンション機能用。開いているグループスレッドのメンバー表示名一覧
+  // (ポップアップ候補・送信済みメッセージのハイライト両方に使う)。
+  type GroupMember = { userId: string; displayName: string };
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  // 入力中に「@」を打った(かつ直後に空白を含まない)時だけセットする、
+  // 候補ポップアップの状態。startは対象の「@」がgroupInput内で始まる
+  // 位置(候補選択時、ここから選択範囲までを「@表示名 」で置き換える)。
+  const [groupMentionQuery, setGroupMentionQuery] = useState<{
+    start: number;
+    query: string;
+  } | null>(null);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [createGroupSelectedIds, setCreateGroupSelectedIds] = useState<
     Set<string>
@@ -623,6 +780,11 @@ export default function AvatarSpace({
     null,
   );
   const [groupHoverMessageId, setGroupHoverMessageId] = useState<
+    string | null
+  >(null);
+  // 通知一覧からジャンプしてきた際、対象メッセージを一時的に強調表示する
+  // ためのID(数秒後に自動で消える)。
+  const [highlightedGroupMessageId, setHighlightedGroupMessageId] = useState<
     string | null
   >(null);
   // ホバーで出した絵文字バーへ、吹き出しとの間の隙間を挟んでマウスを
@@ -1164,6 +1326,61 @@ export default function AvatarSpace({
     el.scrollTop = el.scrollHeight;
   }, [selectedGroupId, groupThreads]);
 
+  // ---- 通知一覧からのジャンプ:対象メッセージまでスクロール+一時強調 ----
+  // 対象メッセージが読み込み済みの50件に含まれていない場合(古いメンション
+  // の場合)は何もしない(ベストエフォート)。
+  useEffect(() => {
+    const targetId = pendingMentionScrollTargetRef.current;
+    if (!targetId || !selectedGroupId) return;
+    const thread = groupThreads[selectedGroupId];
+    if (!thread || !thread.some((m) => m.id === targetId)) return;
+    pendingMentionScrollTargetRef.current = null;
+    requestAnimationFrame(() => {
+      groupBubbleRefs.current[targetId]?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+    setHighlightedGroupMessageId(targetId);
+    const timer = window.setTimeout(
+      () => setHighlightedGroupMessageId(null),
+      2000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [groupThreads, selectedGroupId]);
+
+  // ---- グループチャット:@メンション用のメンバー表示名一覧を取得する ----
+  useEffect(() => {
+    if (!joined || !selectedGroupId) {
+      setGroupMembers([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase.rpc(
+        "list_chat_group_member_names",
+        { p_group_id: selectedGroupId },
+      );
+      if (cancelled) return;
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("グループメンバー一覧の取得に失敗しました", error);
+        return;
+      }
+      setGroupMembers(
+        (data ?? []).map(
+          (row: { user_id: string; display_name: string }) => ({
+            userId: row.user_id,
+            displayName: row.display_name,
+          }),
+        ),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, selectedGroupId, supabase]);
+
   // ---- チャットタブ:やり取りした相手ごとの最新メッセージ一覧を読み込む ----
   // 個別スレッドを開いていない間、常に取得する(以前はsidebarTab==="chat"
   // の間だけに限定していたため、参加者/設定タブを見ている間に来た新着は
@@ -1235,6 +1452,92 @@ export default function AvatarSpace({
     selectedGroupId,
     chatThreadsRefreshTrigger,
   ]);
+
+  // ---- 通知:@メンション一覧を取得する ----
+  // chat_mentionsのSELECT RLSはmentioned_user_id=auth.uid()のみで判定して
+  // おりアカウント所属を問わないため、viewOnlyでもそのまま呼べる。
+  useEffect(() => {
+    if (!joined) return;
+    const myUserId = authUserIdRef.current;
+    if (!myUserId) return;
+    let cancelled = false;
+    setMentionsLoading(true);
+    setMentionsError(null);
+    (async () => {
+      const { data, error } = await supabase
+        .from("chat_mentions")
+        .select(
+          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name)",
+        )
+        .eq("mentioned_user_id", myUserId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (cancelled) return;
+      setMentionsLoading(false);
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("通知の取得に失敗しました", error);
+        setMentionsError(
+          `通知の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+        );
+        return;
+      }
+      const rows = (data ?? []) as Array<{
+        id: string;
+        message_id: string;
+        group_id: string;
+        mentioner_name: string;
+        is_everyone: boolean;
+        created_at: string;
+        read_at: string | null;
+        chat_groups: Array<{ name: string | null }> | null;
+      }>;
+      setMentions(
+        rows.map((row) => ({
+          id: row.id,
+          messageId: row.message_id,
+          groupId: row.group_id,
+          groupName: row.chat_groups?.[0]?.name ?? "グループ",
+          mentionerName: row.mentioner_name,
+          isEveryone: row.is_everyone,
+          createdAt: row.created_at,
+          readAt: row.read_at,
+        })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, supabase, mentionsRefreshTrigger]);
+
+  // 通知タップ:既読化してから、対象グループスレッドの該当メッセージへ
+  // ジャンプする。
+  const handleMentionClick = useCallback(
+    (mention: MentionNotification) => {
+      if (!mention.readAt) {
+        setMentions((prev) =>
+          prev.map((m) =>
+            m.id === mention.id ? { ...m, readAt: new Date().toISOString() } : m,
+          ),
+        );
+        supabase
+          .from("chat_mentions")
+          .update({ read_at: new Date().toISOString() })
+          .eq("id", mention.id)
+          .then(({ error }) => {
+            if (error) {
+              // eslint-disable-next-line no-console
+              console.error("通知の既読化に失敗しました", error);
+            }
+          });
+      }
+      pendingMentionScrollTargetRef.current = mention.messageId;
+      setSelectedPeerUserId(null);
+      setSelectedGroupId(mention.groupId);
+      setSidebarTab("chat");
+    },
+    [supabase],
+  );
 
   // ---- チャット:表示中のスレッドが更新されるたびにスクロール位置を制御する ----
   // dmForceScrollRef(送信直後・スレッドを開いた直後・最下部付近での新着)が
@@ -1440,13 +1743,46 @@ export default function AvatarSpace({
           isSystem: false,
           imagePath,
         });
+        // @メンション(@全員/@メンバー表示名)を含む場合、通知を作成する。
+        // 表示上のハイライト(renderTextWithMentions)と対になる
+        // extractGroupMentionsで判定するため、色が付いた部分=通知が
+        // 作られる部分が常に一致する。
+        if (text) {
+          const { everyone, userIds } = extractGroupMentions(
+            text,
+            groupMembers,
+          );
+          if (everyone || userIds.length > 0) {
+            const { error: mentionError } = await supabase.rpc(
+              "create_chat_mentions",
+              {
+                p_message_id: data.id,
+                p_group_id: groupId,
+                p_mentioner_name: senderName,
+                p_mention_everyone: everyone,
+                p_mentioned_user_ids: userIds,
+              },
+            );
+            if (mentionError) {
+              // eslint-disable-next-line no-console
+              console.error("メンション通知の作成に失敗しました", mentionError);
+            } else {
+              channelRef.current?.httpSend("mention", {
+                originId: selfId.current,
+                groupId,
+                everyone,
+                mentionedUserIds: userIds,
+              });
+            }
+          }
+        }
         setChatThreadsRefreshTrigger((n) => n + 1);
         return true;
       } finally {
         setGroupSending(false);
       }
     },
-    [groupSending, roomId, selectedGroupId, supabase],
+    [groupSending, roomId, selectedGroupId, supabase, groupMembers],
   );
 
   // グループチャット作成モーダルの「作成」ボタン。
@@ -1899,6 +2235,80 @@ export default function AvatarSpace({
     [selectedGroupId, supabase],
   );
 
+  // 入力欄の高さをテキスト量に合わせて自動調整する(複数行になっても
+  // 全体が見えるように)。最大高さは超えたらテキストエリア自体の
+  // スクロールに任せる。
+  const autoResizeGroupInput = useCallback(() => {
+    const el = groupInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, []);
+
+  useEffect(() => {
+    autoResizeGroupInput();
+  }, [groupInput, autoResizeGroupInput]);
+
+  // 入力欄の内容が変わるたびに、カーソル直前が「(先頭or空白)+@+空白を
+  // 含まない文字列」になっていないか調べ、なっていれば@メンション候補
+  // ポップアップの状態(どこからの「@」か・現在の絞り込み文字列)を
+  // セットする。
+  const handleGroupInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      setGroupInput(value);
+      const cursor = e.target.selectionStart ?? value.length;
+      const beforeCursor = value.slice(0, cursor);
+      const match = /(?:^|\s)@([^\s@]*)$/.exec(beforeCursor);
+      if (match) {
+        setGroupMentionQuery({
+          start: beforeCursor.lastIndexOf("@"),
+          query: match[1],
+        });
+      } else {
+        setGroupMentionQuery(null);
+      }
+    },
+    [],
+  );
+
+  // @メンション候補ポップアップに出す一覧。「全員」を常に先頭に置き、
+  // 絞り込み文字列(@の後に続けて打った文字)で表示名を前方一致以外も
+  // 含めた部分一致でフィルタする。
+  const groupMentionCandidates = groupMentionQuery
+    ? [
+        { key: "__everyone__", label: "全員" },
+        ...groupMembers.map((m) => ({ key: m.userId, label: m.displayName })),
+      ].filter((c) =>
+        c.label.toLowerCase().includes(groupMentionQuery.query.toLowerCase()),
+      )
+    : [];
+
+  // 候補を選択:カーソル直前の「@絞り込み文字列」部分を「@表示名 」で
+  // 置き換え、カーソルをその直後へ戻す。
+  const selectGroupMentionCandidate = useCallback(
+    (label: string) => {
+      if (!groupMentionQuery) return;
+      const el = groupInputRef.current;
+      const cursor = el?.selectionStart ?? groupInput.length;
+      const before = groupInput.slice(0, groupMentionQuery.start);
+      const after = groupInput.slice(cursor);
+      const inserted = `@${label} `;
+      const next = before + inserted + after;
+      setGroupInput(next);
+      setGroupMentionQuery(null);
+      const nextCursor = before.length + inserted.length;
+      requestAnimationFrame(() => {
+        const target = groupInputRef.current;
+        if (!target) return;
+        target.focus();
+        target.setSelectionRange(nextCursor, nextCursor);
+        autoResizeGroupInput();
+      });
+    },
+    [groupMentionQuery, groupInput, autoResizeGroupInput],
+  );
+
   const sendGroupMessage = useCallback(async () => {
     const text = groupInput.trim();
     const pending = groupPendingImages;
@@ -1911,6 +2321,7 @@ export default function AvatarSpace({
     }
 
     setGroupInput("");
+    setGroupMentionQuery(null);
     setGroupError(null);
 
     // 複数画像は、chat_messagesのスキーマ上1メッセージにつき画像は1枚のため、
@@ -3994,6 +4405,23 @@ export default function AvatarSpace({
             ),
           }));
         })
+        .on("broadcast", { event: "mention" }, ({ payload }) => {
+          const msg = payload as {
+            originId: string;
+            groupId: string;
+            everyone: boolean;
+            mentionedUserIds: string[];
+          };
+          const myUserId = authUserIdRef.current;
+          if (msg.originId === selfId.current || !myUserId) return;
+          const targeted =
+            msg.everyone || msg.mentionedUserIds.includes(myUserId);
+          if (!targeted) return;
+          // 通知本文(送信者名・グループ名等)はローカルで組み立てず、
+          // 一覧を丸ごと再取得する(chatThreadsと同じ考え方。1件だけの
+          // ためRPC/クエリの負荷は無視できる)。
+          setMentionsRefreshTrigger((n) => n + 1);
+        })
         .on("broadcast", { event: "force-leave" }, ({ payload }) => {
           const { reason, targetId } = payload as {
             reason?: string;
@@ -5506,6 +5934,7 @@ export default function AvatarSpace({
     (sum, t) => sum + t.unreadCount,
     0,
   );
+  const mentionsUnreadCount = mentions.filter((m) => !m.readAt).length;
 
   // 近く(音声通話が繋がっている相手)にいて、かつ画面共有中の人の一覧。
   // 選択視聴モデルのため、ライブ映像(remoteScreenStreams)を持っているのは
@@ -5982,35 +6411,54 @@ export default function AvatarSpace({
               </button>
             </div>
 
-            {/* タブ切替:参加者/チャット/設定。「チャット」タブには未読の
-                合計(DM+グループ)をバッジ表示する。 */}
+            {/* タブ切替:参加者/チャット/通知/設定。「チャット」「通知」
+                タブにはそれぞれの未読件数をバッジ表示する。 */}
             <div className="mb-3 flex shrink-0 gap-1 rounded-lg bg-white/5 p-1 text-xs font-semibold">
               {(
                 [
-                  { key: "participants" as const, label: "参加者" },
-                  { key: "chat" as const, label: "チャット" },
-                  { key: "settings" as const, label: "設定" },
+                  {
+                    key: "participants" as const,
+                    label: "参加者",
+                    Icon: TabIconPerson,
+                    unread: 0,
+                  },
+                  {
+                    key: "chat" as const,
+                    label: "チャット",
+                    Icon: TabIconChat,
+                    unread: chatThreadsTotalUnreadCount,
+                  },
+                  {
+                    key: "notifications" as const,
+                    label: "通知",
+                    Icon: TabIconBell,
+                    unread: mentionsUnreadCount,
+                  },
+                  {
+                    key: "settings" as const,
+                    label: "設定",
+                    Icon: TabIconGear,
+                    unread: 0,
+                  },
                 ]
               ).map((tab) => (
                 <button
                   key={tab.key}
                   type="button"
                   onClick={() => setSidebarTab(tab.key)}
-                  className={`relative flex-1 rounded-md py-1.5 transition-colors ${
+                  className={`relative flex flex-1 flex-col items-center gap-0.5 rounded-md py-1.5 transition-colors ${
                     sidebarTab === tab.key
                       ? "bg-emerald-600 text-white"
                       : "text-slate-300 hover:bg-white/10"
                   }`}
                 >
+                  <tab.Icon className="h-4 w-4" />
                   {tab.label}
-                  {tab.key === "chat" &&
-                    chatThreadsTotalUnreadCount > 0 && (
-                      <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white">
-                        {chatThreadsTotalUnreadCount > 99
-                          ? "99+"
-                          : chatThreadsTotalUnreadCount}
-                      </span>
-                    )}
+                  {tab.unread > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold leading-none text-white">
+                      {tab.unread > 99 ? "99+" : tab.unread}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -6734,10 +7182,14 @@ export default function AvatarSpace({
                                 onTouchMove={handleGroupMessageTouchMove}
                                 onTouchEnd={handleGroupMessageTouchEnd}
                                 onTouchCancel={handleGroupMessageTouchEnd}
-                                className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                                className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs transition-shadow ${
                                   m.isSelf
                                     ? "ml-auto bg-emerald-600 text-white"
                                     : "bg-slate-700 text-slate-100"
+                                } ${
+                                  highlightedGroupMessageId === m.id
+                                    ? "ring-2 ring-purple-400"
+                                    : ""
                                 }`}
                               >
                                 {!m.isSelf && (
@@ -6793,7 +7245,10 @@ export default function AvatarSpace({
                                   />
                                 )}
                                 <p className="whitespace-pre-wrap break-words">
-                                  {m.message}
+                                  {renderTextWithMentions(m.message, [
+                                    "全員",
+                                    ...groupMembers.map((gm) => gm.displayName),
+                                  ])}
                                 </p>
                               </div>
                               </div>
@@ -6932,34 +7387,94 @@ export default function AvatarSpace({
                         >
                           {groupImageUploading ? "…" : "+"}
                         </button>
-                        <input
-                          value={groupInput}
-                          onChange={(e) => setGroupInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                              sendGroupMessage();
-                            }
-                          }}
-                          onPaste={(e) => {
-                            const items = e.clipboardData?.items;
-                            if (!items) return;
-                            const imageFiles: File[] = [];
-                            for (let i = 0; i < items.length; i++) {
-                              const item = items[i];
-                              if (item.type.startsWith("image/")) {
-                                const file = item.getAsFile();
-                                if (file) imageFiles.push(file);
+                        <div className="relative min-w-0 flex-1">
+                          {groupMentionQuery &&
+                            groupMentionCandidates.length > 0 && (
+                              <div className="absolute bottom-full left-0 right-0 z-30 mb-1 max-h-40 overflow-y-auto rounded-lg bg-slate-800 py-1 text-xs text-white shadow-lg">
+                                {groupMentionCandidates.map((c) => (
+                                  <button
+                                    key={c.key}
+                                    type="button"
+                                    // mousedownでフォーカスが入力欄から
+                                    // 外れる前にonClickより先に発火させ、
+                                    // blurでポップアップが消える競合を防ぐ
+                                    // (onMouseDownでpreventDefaultして
+                                    // フォーカス移動自体を止める)。
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() =>
+                                      selectGroupMentionCandidate(c.label)
+                                    }
+                                    className="block w-full px-3 py-1.5 text-left hover:bg-slate-700"
+                                  >
+                                    @{c.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          {/* 色付きオーバーレイ(@メンション部分だけ紫色)。
+                              クリック等は下の実textareaへ素通しする
+                              (pointer-events-none)。実textarea側は文字色を
+                              透明にし、キャレットのみ見せることで、見た目上
+                              このオーバーレイの色付きテキストだけが見える
+                              ようにしている(ネイティブのinput/textareaは
+                              文字ごとに色を変えられないための代替手段)。 */}
+                          <div
+                            aria-hidden
+                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg border border-transparent px-2.5 py-1.5 text-xs text-white"
+                          >
+                            {renderTextWithMentions(groupInput, [
+                              "全員",
+                              ...groupMembers.map((m) => m.displayName),
+                            ])}
+                          </div>
+                          <textarea
+                            ref={groupInputRef}
+                            value={groupInput}
+                            onChange={handleGroupInputChange}
+                            onKeyDown={(e) => {
+                              if (e.nativeEvent.isComposing) return;
+                              if (
+                                e.key === "Enter" &&
+                                groupMentionQuery &&
+                                groupMentionCandidates.length > 0
+                              ) {
+                                e.preventDefault();
+                                selectGroupMentionCandidate(
+                                  groupMentionCandidates[0].label,
+                                );
+                                return;
                               }
-                            }
-                            if (imageFiles.length > 0) {
-                              e.preventDefault();
-                              stageGroupImages(imageFiles);
-                            }
-                          }}
-                          maxLength={500}
-                          placeholder="メッセージを入力"
-                          className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
-                        />
+                              if (e.key === "Escape" && groupMentionQuery) {
+                                setGroupMentionQuery(null);
+                                return;
+                              }
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                sendGroupMessage();
+                              }
+                            }}
+                            onPaste={(e) => {
+                              const items = e.clipboardData?.items;
+                              if (!items) return;
+                              const imageFiles: File[] = [];
+                              for (let i = 0; i < items.length; i++) {
+                                const item = items[i];
+                                if (item.type.startsWith("image/")) {
+                                  const file = item.getAsFile();
+                                  if (file) imageFiles.push(file);
+                                }
+                              }
+                              if (imageFiles.length > 0) {
+                                e.preventDefault();
+                                stageGroupImages(imageFiles);
+                              }
+                            }}
+                            maxLength={500}
+                            rows={1}
+                            placeholder="メッセージを入力"
+                            className="relative w-full resize-none rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
+                          />
+                        </div>
                         <button
                           onClick={sendGroupMessage}
                           disabled={
@@ -6977,6 +7492,56 @@ export default function AvatarSpace({
                   );
                 })()}
           </div>
+            )}
+
+            {sidebarTab === "notifications" && (
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
+                {mentionsLoading && mentions.length === 0 ? (
+                  <p className="mt-4 text-center text-[11px] text-slate-500">
+                    読み込み中...
+                  </p>
+                ) : mentionsError ? (
+                  <p className="mt-4 text-center text-[11px] text-red-400">
+                    {mentionsError}
+                  </p>
+                ) : mentions.length === 0 ? (
+                  <p className="mt-4 text-center text-[11px] text-slate-500">
+                    通知はありません
+                  </p>
+                ) : (
+                  mentions.map((mention) => (
+                    <button
+                      key={mention.id}
+                      type="button"
+                      onClick={() => handleMentionClick(mention)}
+                      className={`block w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                        mention.readAt
+                          ? "border-slate-700 bg-transparent text-slate-300 hover:bg-white/5"
+                          : "border-purple-400/60 bg-purple-500/10 text-white hover:bg-purple-500/15"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate font-semibold">
+                          {mention.mentionerName}さんから
+                          {mention.isEveryone ? "全員宛て" : ""}
+                          メンションされました
+                        </span>
+                        {!mention.readAt && (
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-purple-400" />
+                        )}
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                        <span className="min-w-0 truncate">
+                          👥 {mention.groupName}
+                        </span>
+                        <span className="shrink-0">
+                          {formatDmListTime(mention.createdAt)}
+                        </span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
             )}
 
             {sidebarTab === "settings" && (
