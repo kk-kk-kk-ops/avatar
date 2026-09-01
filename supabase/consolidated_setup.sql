@@ -31,6 +31,91 @@ create table if not exists public.accounts (
 
 alter table public.accounts enable row level security;
 
+-- ------------------------------------------------------------
+-- 1b. 権限昇格防止トリガー(関数本体+accounts分)。
+--     profiles.role/is_master、accounts.planは「本人の行である」ことしか
+--     RLSで表現できておらず(列単位の制限ができない)、ログイン済み
+--     ユーザーがSupabaseのREST APIを直接叩けば自分のrole/is_master/plan
+--     を書き換えられてしまう問題があった(2026-08 Tech Lead確認依頼
+--     その25で発覚)。service_role以外からのこれらの列の変更を一律拒否
+--     する。UPDATEだけでなくINSERTも対象にし、最初からis_master=true・
+--     plan='pro'で行を作る形での迂回も防ぐ。
+--
+--     正規の変更(招待経由のrole付与、無料お試し開始時のrole付与、
+--     マスターメール判定によるis_master付与、デバッグ用プラン切替)は
+--     すべてアプリ側でservice_roleクライアント(lib/supabase/serviceRole.ts)
+--     に切り替え済み。
+--
+--     2026-09-01追記(バイパス条件): 当初はSupabaseダッシュボード(SQL
+--     Editor等)からの直接操作を「postgresロール=スーパーユーザー扱い」
+--     としてcurrent_setting('is_superuser')でバイパスできる想定だったが、
+--     Supabaseのホスティング環境ではSQL Editorが使うpostgresロールは
+--     真のPostgreSQLスーパーユーザーではなく(is_superuser=off)、この
+--     分岐は実際には一度も機能していなかった。そのため、PostgREST
+--     (SupabaseのREST API)を経由しない書き込みを示す確実なsignalとして
+--     auth.role() is nullも許可条件に加える。REST API経由の書き込みは、
+--     anonキー・authenticatedユーザーのJWT・service_roleキーのいずれで
+--     あっても、PostgRESTが必ずroleクレームをセットするためauth.role()が
+--     nullになることは無い(=元の脆弱性の攻撃経路であるREST直叩きは
+--     引き続き一切救われない)。nullになるのはSQL Editor・psql・
+--     Supabase CLIのマイグレーション等、PostgRESTを経由しない直接DB
+--     接続のみで、その経路にアクセスできる時点でトリガー自体を無効化
+--     する等も可能な、別次元の信頼レベルの操作のため、ここをバイパス
+--     しても防御力は落ちない。
+--
+--     2026-09-01追記(定義位置): この関数・accounts向けトリガーは、
+--     直後の「plan='master'の既存行をfreeへ移行」処理より前に有効化
+--     しておく必要があるため、accountsテーブル作成直後のこの位置に置く
+--     (profiles向けトリガーはprofilesテーブル作成直後の「2a」に別途置く)。
+--     旧・セクション16に両方まとめて置いていたが、それだとこのファイル内
+--     で先に実行されるセクション11-13(管理者アカウントのrole='admin'
+--     付与等)より後になってしまい、「前回実行時点の古いトリガー定義」が
+--     適用されたまま失敗する不具合があった。
+-- ------------------------------------------------------------
+create or replace function public.prevent_privileged_column_self_write()
+returns trigger
+language plpgsql
+as $$
+begin
+  if auth.role() = 'service_role'
+     or current_setting('is_superuser', true) = 'on'
+     or auth.role() is null then
+    return new;
+  end if;
+
+  if tg_table_name = 'profiles' then
+    if tg_op = 'INSERT' then
+      if new.role is not null or new.is_master is true then
+        raise exception 'role/is_masterはこの経路からは設定できません';
+      end if;
+    elsif tg_op = 'UPDATE' then
+      if new.role is distinct from old.role
+         or new.is_master is distinct from old.is_master then
+        raise exception 'role/is_masterはこの経路からは変更できません';
+      end if;
+    end if;
+  elsif tg_table_name = 'accounts' then
+    if tg_op = 'INSERT' then
+      if new.plan is distinct from 'free' then
+        raise exception '新規契約はfreeプランでのみ作成できます';
+      end if;
+    elsif tg_op = 'UPDATE' then
+      if new.plan is distinct from old.plan then
+        raise exception 'planはこの経路からは変更できません';
+      end if;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists accounts_prevent_privileged_self_write on public.accounts;
+create trigger accounts_prevent_privileged_self_write
+  before insert or update on public.accounts
+  for each row
+  execute function public.prevent_privileged_column_self_write();
+
 -- plan列のCHECK制約。マスタープランは廃止したため、既存にplan='master'の
 -- 行が残っていれば先に'free'へ移行してから(そうしないと制約違反になる)、
 -- 'master'を含まない制約を作り直す。マスター権限アカウントは今後、
@@ -107,6 +192,18 @@ create policy "profiles: update own"
   on public.profiles for update
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- ------------------------------------------------------------
+-- 2a. 権限昇格防止トリガー(profiles分)。関数本体・経緯は「1b」参照。
+--     このファイル内で後続のセクション11-13(管理者アカウントへの
+--     role='admin'付与)より前に有効化しておく必要があるため、profiles
+--     テーブル作成直後のこの位置に置く。
+-- ------------------------------------------------------------
+drop trigger if exists profiles_prevent_privileged_self_write on public.profiles;
+create trigger profiles_prevent_privileged_self_write
+  before insert or update on public.profiles
+  for each row
+  execute function public.prevent_privileged_column_self_write();
 
 
 -- ------------------------------------------------------------
@@ -1928,6 +2025,187 @@ create policy "chat-images: delete own"
 
 
 -- ------------------------------------------------------------
+-- 9f-5. chat_message_reactions: トークへの固定絵文字リアクション
+--   (👍 ❤️ 😂 😮 👏 の5種類のみ)。1人1トークにつき1リアクションまでを
+--   (message_id, user_id)のunique制約でDBレベルでも保証する。別の絵文字を
+--   選び直した場合は既存行をupsertで上書きする(アプリ側はon conflictの
+--   upsert、またはviewOnly向けは下のSECURITY DEFINER関数内でon conflict
+--   do updateする)。
+--   配信はchat_messages(9f)と同じ考え方で、既存のavatar-room-{roomId}
+--   broadcastチャンネルにhttpSend()でイベントを流して即時反映し、この
+--   テーブルは「リロード後・再入室後も見える」ための永続化専用に使う。
+-- ------------------------------------------------------------
+create table if not exists public.chat_message_reactions (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references public.chat_messages(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  emoji text not null,
+  created_at timestamptz not null default now(),
+  unique (message_id, user_id)
+);
+
+alter table public.chat_message_reactions drop constraint if exists chat_message_reactions_emoji_check;
+alter table public.chat_message_reactions add constraint chat_message_reactions_emoji_check
+  check (emoji in ('👍', '❤️', '😂', '😮', '👏'));
+
+create index if not exists chat_message_reactions_message_id_idx
+  on public.chat_message_reactions (message_id);
+
+alter table public.chat_message_reactions enable row level security;
+
+-- SELECT: 対象メッセージがRLS上SELECTできる(=そのDM/グループの参加者で
+-- ある)場合のみリアクションも見える。chat_messagesの参加者判定
+-- (1対1/グループ/viewOnly)を重複実装せず、既存のSELECTポリシーに
+-- 判定を委譲する(chat_messagesへのサブクエリ自体がchat_messages側の
+-- RLSに従うため、ここで改めて条件を書き下す必要が無い)。
+drop policy if exists "chat_message_reactions: select thread participant" on public.chat_message_reactions;
+create policy "chat_message_reactions: select thread participant"
+  on public.chat_message_reactions for select
+  using (
+    exists (select 1 from public.chat_messages m where m.id = message_id)
+  );
+
+-- INSERT/UPDATE: 自分のuser_idとしてのみ、かつ対象メッセージが見える
+-- 範囲でのみ追加・上書きできる(他人になりすましたリアクションや、
+-- 本来見えないはずのメッセージへのリアクションを防ぐ)。upsert
+-- (on conflict do update)はinsert時・conflict更新時の両方でそれぞれの
+-- ポリシーが評価されるため、insert/updateどちらにも同じ条件を付ける。
+drop policy if exists "chat_message_reactions: insert own" on public.chat_message_reactions;
+create policy "chat_message_reactions: insert own"
+  on public.chat_message_reactions for insert
+  with check (
+    user_id = auth.uid()
+    and exists (select 1 from public.chat_messages m where m.id = message_id)
+  );
+
+drop policy if exists "chat_message_reactions: update own" on public.chat_message_reactions;
+create policy "chat_message_reactions: update own"
+  on public.chat_message_reactions for update
+  using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and exists (select 1 from public.chat_messages m where m.id = message_id)
+  );
+
+-- DELETE: 自分が付けたリアクションの取り消し用(絵文字を選び直す際の
+-- 内部的な削除、および将来的な「同じ絵文字を再タップで解除」用)。
+drop policy if exists "chat_message_reactions: delete own" on public.chat_message_reactions;
+create policy "chat_message_reactions: delete own"
+  on public.chat_message_reactions for delete
+  using (user_id = auth.uid());
+
+-- viewOnly(招待URL経由の一時ゲスト)向け。1対1DMのRLSは
+-- profiles.account_id経由のアカウント所属を要求するため、viewOnlyでは
+-- 通常のSELECT/INSERT/UPDATEどちらも弾かれる(9f-2と同じ理由)。
+-- edit_chat_message_by_invite_token / delete_chat_message_by_invite_token
+-- と同じ考え方で、招待トークンがそのメッセージの所属ルーム(room_id→
+-- account_id)と一致することをSECURITY DEFINER関数側で検証する。
+-- (グループチャットはchat_group_membersに実際のメンバー行が入るため
+-- 通常のRLSで済み、この関数を経由する必要はない。)
+drop function if exists public.set_chat_message_reaction_by_invite_token(text, uuid, text);
+create function public.set_chat_message_reaction_by_invite_token(
+  token text,
+  p_message_id uuid,
+  p_emoji text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_room_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  if p_emoji not in ('👍', '❤️', '😂', '😮', '👏') then
+    raise exception '不正な絵文字です';
+  end if;
+
+  select r.id into v_room_id
+  from public.chat_messages m
+  join public.rooms r on r.id = m.room_id
+  join public.accounts a on a.id = r.account_id
+  where a.invite_token = token
+    and m.id = p_message_id;
+
+  if v_room_id is null then
+    raise exception 'このメッセージにはリアクションできません';
+  end if;
+
+  insert into public.chat_message_reactions (message_id, user_id, emoji)
+  values (p_message_id, auth.uid(), p_emoji)
+  on conflict (message_id, user_id)
+  do update set emoji = excluded.emoji, created_at = now();
+end;
+$$;
+
+grant execute on function public.set_chat_message_reaction_by_invite_token(text, uuid, text) to authenticated;
+
+drop function if exists public.remove_chat_message_reaction_by_invite_token(text, uuid);
+create function public.remove_chat_message_reaction_by_invite_token(
+  token text,
+  p_message_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  delete from public.chat_message_reactions r
+  using public.chat_messages m,
+        public.rooms rm,
+        public.accounts a
+  where r.message_id = m.id
+    and rm.id = m.room_id
+    and a.id = rm.account_id
+    and a.invite_token = token
+    and r.message_id = p_message_id
+    and r.user_id = auth.uid();
+end;
+$$;
+
+grant execute on function public.remove_chat_message_reaction_by_invite_token(text, uuid) to authenticated;
+
+-- viewOnly向けのリアクション一覧取得。1対1DMのメッセージ一覧
+-- (list_chat_messages_by_invite_token)取得後、そのメッセージID群を渡して
+-- 呼ぶ想定(既存関数の戻り値形状を変えたくないため、別関数として分離)。
+drop function if exists public.list_chat_message_reactions_by_invite_token(text, uuid[]);
+create function public.list_chat_message_reactions_by_invite_token(
+  token text,
+  p_message_ids uuid[]
+)
+returns table (message_id uuid, user_id uuid, emoji text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  return query
+    select r.message_id, r.user_id, r.emoji
+    from public.chat_message_reactions r
+    join public.chat_messages m on m.id = r.message_id
+    join public.rooms rm on rm.id = m.room_id
+    join public.accounts a on a.id = rm.account_id
+    where a.invite_token = token
+      and r.message_id = any(p_message_ids);
+end;
+$$;
+
+grant execute on function public.list_chat_message_reactions_by_invite_token(text, uuid[]) to authenticated;
+
+
+-- ------------------------------------------------------------
 -- 9g. online_sessions: β版の「全顧客合計オンライン人数1000人で新規契約
 --     停止」判定用。ユーザーごとに1行だけ持ち、バーチャル空間に入室中の
 --     クライアントが30秒おきにlast_seen_atを更新する(心拍)。「オンライン」
@@ -2232,70 +2510,16 @@ grant execute on function public.list_banned_participants(uuid) to authenticated
 
 
 -- ------------------------------------------------------------
--- 16. 権限昇格防止トリガー: profiles.role/is_master、accounts.planは
---     「本人の行である」ことしかRLSで表現できておらず(列単位の制限が
---     できない)、ログイン済みユーザーがSupabaseのREST APIを直接叩けば
---     自分のrole/is_master/planを書き換えられてしまう問題があった
---     (2026-08 Tech Lead確認依頼その25で発覚)。
---
---     service_role以外からのこれらの列の変更を一律拒否する。UPDATE
---     だけでなくINSERTも対象にし、最初からis_master=true・plan='pro'
---     で行を作る形での迂回も防ぐ。
---
---     正規の変更(招待経由のrole付与、無料お試し開始時のrole付与、
---     マスターメール判定によるis_master付与、デバッグ用プラン切替)は
---     すべてアプリ側でservice_roleクライアント(lib/supabase/serviceRole.ts)
---     に切り替え済み。Supabaseダッシュボード(SQL Editor等)からの直接
---     操作はpostgresロール(スーパーユーザー)扱いのため、is_superuser
---     判定でも別途バイパスできるようにしておく。
+-- 16. 権限昇格防止トリガー
+--     2026-09-01: このファイル内でセクション11-13(管理者アカウントの
+--     role='admin'付与等)がこのセクションより前で実行されるため、この
+--     位置に定義があると「トリガーがまだ存在しない古い状態」でそれらの
+--     INSERT/UPDATEが走ってしまう(=前回実行時点の古いトリガー定義が
+--     DBに残っていればそちらが適用され、今回のファイル内での修正が
+--     一切反映されないまま失敗する)不具合があった。関数・両トリガーの
+--     定義自体は、保護対象のprofiles/accountsテーブル作成直後
+--     (「1b」「2a」)に移動済み。このセクション番号は欠番として残す。
 -- ------------------------------------------------------------
-create or replace function public.prevent_privileged_column_self_write()
-returns trigger
-language plpgsql
-as $$
-begin
-  if auth.role() = 'service_role' or current_setting('is_superuser', true) = 'on' then
-    return new;
-  end if;
-
-  if tg_table_name = 'profiles' then
-    if tg_op = 'INSERT' then
-      if new.role is not null or new.is_master is true then
-        raise exception 'role/is_masterはこの経路からは設定できません';
-      end if;
-    elsif tg_op = 'UPDATE' then
-      if new.role is distinct from old.role
-         or new.is_master is distinct from old.is_master then
-        raise exception 'role/is_masterはこの経路からは変更できません';
-      end if;
-    end if;
-  elsif tg_table_name = 'accounts' then
-    if tg_op = 'INSERT' then
-      if new.plan is distinct from 'free' then
-        raise exception '新規契約はfreeプランでのみ作成できます';
-      end if;
-    elsif tg_op = 'UPDATE' then
-      if new.plan is distinct from old.plan then
-        raise exception 'planはこの経路からは変更できません';
-      end if;
-    end if;
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists profiles_prevent_privileged_self_write on public.profiles;
-create trigger profiles_prevent_privileged_self_write
-  before insert or update on public.profiles
-  for each row
-  execute function public.prevent_privileged_column_self_write();
-
-drop trigger if exists accounts_prevent_privileged_self_write on public.accounts;
-create trigger accounts_prevent_privileged_self_write
-  before insert or update on public.accounts
-  for each row
-  execute function public.prevent_privileged_column_self_write();
 
 
 -- ------------------------------------------------------------
