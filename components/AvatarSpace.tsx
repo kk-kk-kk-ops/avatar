@@ -124,6 +124,11 @@ function TabIconChat({ className }: { className?: string }) {
   );
 }
 
+// 手描きの単一pathだと中心がずれやすいため、歯を(12,12)中心の回転
+// transformで均等配置する方式にし、確実に歯車の中心と丸の中心が
+// 揃うようにしている。
+const GEAR_TOOTH_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
+
 function TabIconGear({ className }: { className?: string }) {
   return (
     <svg
@@ -135,8 +140,19 @@ function TabIconGear({ className }: { className?: string }) {
       strokeLinejoin="round"
       className={className}
     >
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M19.4 13.5a7.4 7.4 0 0 0 0-3l1.8-1.4-1.5-2.6-2.2.6a7.6 7.6 0 0 0-1.7-1L15.4 4h-3l-.4 2.1a7.6 7.6 0 0 0-1.7 1l-2.2-.6-1.5 2.6L8.4 10.5a7.4 7.4 0 0 0 0 3l-1.8 1.4 1.5 2.6 2.2-.6c.5.4 1.1.8 1.7 1l.4 2.1h3l.4-2.1c.6-.2 1.2-.6 1.7-1l2.2.6 1.5-2.6Z" />
+      {GEAR_TOOTH_ANGLES.map((deg) => (
+        <rect
+          key={deg}
+          x="10.9"
+          y="1.6"
+          width="2.2"
+          height="3.2"
+          rx="0.6"
+          transform={`rotate(${deg} 12 12)`}
+        />
+      ))}
+      <circle cx="12" cy="12" r="6" />
+      <circle cx="12" cy="12" r="2" />
     </svg>
   );
 }
@@ -589,15 +605,21 @@ export default function AvatarSpace({
     isEveryone: boolean;
     createdAt: string;
     readAt: string | null;
+    messageCreatedAt: string;
   };
   const [mentions, setMentions] = useState<MentionNotification[]>([]);
   const [mentionsLoading, setMentionsLoading] = useState(false);
   const [mentionsError, setMentionsError] = useState<string | null>(null);
   const [mentionsRefreshTrigger, setMentionsRefreshTrigger] = useState(0);
   // 開いたら該当メッセージまでスクロールしたい対象(通知一覧からの
-  // ジャンプ用)。グループスレッドの読み込みが終わった後に使うため、
-  // 一覧読み込みエフェクト側でこのrefを見て処理し、使い終わったらnullに戻す。
-  const pendingMentionScrollTargetRef = useRef<string | null>(null);
+  // ジャンプ用)。messageCreatedAtは、対象メッセージが「直近50件」に
+  // 含まれない古いものだった場合に、その時刻を基準にした取得(前後を
+  // まとめて取る)を行うために使う。グループスレッドの読み込み側で
+  // このrefを見て処理し、使い終わったらnullに戻す。
+  const pendingMentionScrollTargetRef = useRef<{
+    messageId: string;
+    createdAt: string;
+  } | null>(null);
 
   // ---- グループチャット ----
   type GroupMessage = {
@@ -621,6 +643,20 @@ export default function AvatarSpace({
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
   }, [selectedGroupId]);
+
+  // 「チャット」タブから他のタブ(参加者/通知/設定)へ移動したら、開いていた
+  // スレッドは閉じる。dm/group-dmのbroadcast受信ハンドラは
+  // 「selectedPeerUserId(またはselectedGroupId)と一致する相手からの新着は
+  // 今まさに見ているので未読扱いにしない」という判定をしており、タブを
+  // 切り替えても選択状態が残ったままだと、実際には見えていないスレッドの
+  // 新着まで既読扱いになり未読バッジに反映されない不具合があった
+  // (2026-09-02報告)。
+  useEffect(() => {
+    if (sidebarTab !== "chat") {
+      setSelectedPeerUserId(null);
+      setSelectedGroupId(null);
+    }
+  }, [sidebarTab]);
   const [groupThreads, setGroupThreads] = useState<
     Record<string, GroupMessage[]>
   >({});
@@ -1242,39 +1278,79 @@ export default function AvatarSpace({
     if (!joined || !selectedGroupId) return;
     let cancelled = false;
     const myUserId = authUserIdRef.current;
+    type MessageRow = {
+      id: string;
+      sender_user_id: string;
+      sender_name: string;
+      message: string;
+      created_at: string;
+      deleted_at: string | null;
+      is_system: boolean;
+      image_path: string | null;
+      chat_message_reactions?: Array<{ user_id: string; emoji: string }>;
+    };
+    const selectCols =
+      "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system, image_path, chat_message_reactions(user_id, emoji)";
     (async () => {
-      const { data, error } = await supabase
-        .from("chat_messages")
-        .select(
-          "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system, image_path, chat_message_reactions(user_id, emoji)",
-        )
-        .eq("room_id", roomId)
-        .eq("group_id", selectedGroupId)
-        .order("created_at", { ascending: false })
-        .limit(50);
-      if (cancelled) return;
-      if (error) {
-        // eslint-disable-next-line no-console
-        console.error("グループチャット履歴の取得に失敗しました", error);
-        setGroupError(
-          `グループチャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
-        );
-        return;
+      // 通知一覧からのジャンプ待ちがある場合、「直近50件」だと対象メッセージ
+      // が範囲外(それより古い)のことがあるため、対象の送信時刻を基準に
+      // 前後(前30件・後20件)をまとめて取得し、範囲内に必ず含めるように
+      // する。通常時は従来通り「直近50件」を取得する。
+      const anchor = pendingMentionScrollTargetRef.current;
+      let rows: MessageRow[];
+      if (anchor) {
+        const [beforeRes, afterRes] = await Promise.all([
+          supabase
+            .from("chat_messages")
+            .select(selectCols)
+            .eq("room_id", roomId)
+            .eq("group_id", selectedGroupId)
+            .lte("created_at", anchor.createdAt)
+            .order("created_at", { ascending: false })
+            .limit(30),
+          supabase
+            .from("chat_messages")
+            .select(selectCols)
+            .eq("room_id", roomId)
+            .eq("group_id", selectedGroupId)
+            .gt("created_at", anchor.createdAt)
+            .order("created_at", { ascending: true })
+            .limit(20),
+        ]);
+        if (cancelled) return;
+        if (beforeRes.error || afterRes.error) {
+          // eslint-disable-next-line no-console
+          console.error(
+            "グループチャット履歴の取得に失敗しました",
+            beforeRes.error ?? afterRes.error,
+          );
+          setGroupError("グループチャット履歴の取得に失敗しました。");
+          return;
+        }
+        rows = [
+          ...((beforeRes.data ?? []) as MessageRow[]).slice().reverse(),
+          ...((afterRes.data ?? []) as MessageRow[]),
+        ];
+      } else {
+        const { data, error } = await supabase
+          .from("chat_messages")
+          .select(selectCols)
+          .eq("room_id", roomId)
+          .eq("group_id", selectedGroupId)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (cancelled) return;
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("グループチャット履歴の取得に失敗しました", error);
+          setGroupError(
+            `グループチャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+          );
+          return;
+        }
+        rows = ((data ?? []) as MessageRow[]).slice().reverse();
       }
-      const rows = (data ?? []) as Array<{
-        id: string;
-        sender_user_id: string;
-        sender_name: string;
-        message: string;
-        created_at: string;
-        deleted_at: string | null;
-        is_system: boolean;
-        image_path: string | null;
-        chat_message_reactions?: Array<{ user_id: string; emoji: string }>;
-      }>;
       const messages: GroupMessage[] = rows
-        .slice()
-        .reverse()
         .filter((row) => !row.deleted_at)
         .map((row) => ({
           id: row.id,
@@ -1318,22 +1394,24 @@ export default function AvatarSpace({
     };
   }, [joined, roomId, supabase, viewOnlyInviteToken, selectedGroupId]);
 
-  // グループチャットのスクロール位置制御(更新のたびに一番下へ)。
+  // グループチャットのスクロール位置制御(更新のたびに一番下へ)。通知
+  // からのジャンプ待ち(pendingMentionScrollTargetRef)がある間は、下の
+  // 「ジャンプ」effectが位置を制御するので、ここでの一番下スクロールは
+  // 行わない(一瞬下端が見えてからジャンプ先へ飛ぶ、というチラつきを防ぐ)。
   useEffect(() => {
-    if (!selectedGroupId) return;
+    if (!selectedGroupId || pendingMentionScrollTargetRef.current) return;
     const el = groupScrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [selectedGroupId, groupThreads]);
 
   // ---- 通知一覧からのジャンプ:対象メッセージまでスクロール+一時強調 ----
-  // 対象メッセージが読み込み済みの50件に含まれていない場合(古いメンション
-  // の場合)は何もしない(ベストエフォート)。
   useEffect(() => {
-    const targetId = pendingMentionScrollTargetRef.current;
-    if (!targetId || !selectedGroupId) return;
+    const target = pendingMentionScrollTargetRef.current;
+    if (!target || !selectedGroupId) return;
     const thread = groupThreads[selectedGroupId];
-    if (!thread || !thread.some((m) => m.id === targetId)) return;
+    if (!thread || !thread.some((m) => m.id === target.messageId)) return;
+    const targetId = target.messageId;
     pendingMentionScrollTargetRef.current = null;
     requestAnimationFrame(() => {
       groupBubbleRefs.current[targetId]?.scrollIntoView({
@@ -1467,7 +1545,7 @@ export default function AvatarSpace({
       const { data, error } = await supabase
         .from("chat_mentions")
         .select(
-          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name)",
+          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name), chat_messages(created_at)",
         )
         .eq("mentioned_user_id", myUserId)
         .order("created_at", { ascending: false })
@@ -1491,6 +1569,7 @@ export default function AvatarSpace({
         created_at: string;
         read_at: string | null;
         chat_groups: Array<{ name: string | null }> | null;
+        chat_messages: Array<{ created_at: string }> | null;
       }>;
       setMentions(
         rows.map((row) => ({
@@ -1502,6 +1581,12 @@ export default function AvatarSpace({
           isEveryone: row.is_everyone,
           createdAt: row.created_at,
           readAt: row.read_at,
+          // 通知一覧のchat_mentions.created_atはメンション作成時刻(メッセージ
+          // 送信とほぼ同時)なので参考程度には使えるが、ジャンプ時のスクロール
+          // 位置合わせ(anchored window取得)には対象メッセージ本体の
+          // created_atを正確に使う必要があるため別で持つ。
+          messageCreatedAt:
+            row.chat_messages?.[0]?.created_at ?? row.created_at,
         })),
       );
     })();
@@ -1531,7 +1616,10 @@ export default function AvatarSpace({
             }
           });
       }
-      pendingMentionScrollTargetRef.current = mention.messageId;
+      pendingMentionScrollTargetRef.current = {
+        messageId: mention.messageId,
+        createdAt: mention.messageCreatedAt,
+      };
       setSelectedPeerUserId(null);
       setSelectedGroupId(mention.groupId);
       setSidebarTab("chat");
@@ -7421,7 +7509,7 @@ export default function AvatarSpace({
                               文字ごとに色を変えられないための代替手段)。 */}
                           <div
                             aria-hidden
-                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white"
+                            className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-white"
                           >
                             {renderTextWithMentions(groupInput, [
                               "全員",
