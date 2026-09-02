@@ -6592,8 +6592,8 @@ export default function AvatarSpace({
             {warpPoints.map((w) => (
               <div key={w.id}>
                 {w.label && (
-                  <p
-                    className="pointer-events-none absolute whitespace-nowrap text-center text-[10px] font-semibold text-white"
+                  <div
+                    className="pointer-events-none absolute flex justify-center"
                     style={{
                       left: w.x - WARP_POINT_RADIUS,
                       top: w.y - WARP_POINT_RADIUS,
@@ -6601,8 +6601,10 @@ export default function AvatarSpace({
                       transform: "translateY(-100%)",
                     }}
                   >
-                    {w.label}
-                  </p>
+                    <span className="whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                      {w.label}
+                    </span>
+                  </div>
                 )}
                 <div
                   className={`pointer-events-none absolute flex items-center justify-center rounded-full border-2 text-xs font-bold text-white ${warpChannelClasses(w.channel)}`}

@@ -1140,8 +1140,8 @@ export default function TemplateEditor({
             {warpPoints.map((w) => (
               <Fragment key={w.id}>
                 {w.label && (
-                  <p
-                    className="pointer-events-none absolute whitespace-nowrap text-center text-[10px] font-semibold text-white"
+                  <div
+                    className="pointer-events-none absolute flex justify-center"
                     style={{
                       left: (w.x - WARP_POINT_RADIUS) * scale,
                       top: (w.y - WARP_POINT_RADIUS) * scale,
@@ -1149,8 +1149,10 @@ export default function TemplateEditor({
                       transform: "translateY(-100%)",
                     }}
                   >
-                    {w.label}
-                  </p>
+                    <span className="whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+                      {w.label}
+                    </span>
+                  </div>
                 )}
                 <div
                   onPointerDown={(e) => handleWarpPointerDown(e, w.id)}
