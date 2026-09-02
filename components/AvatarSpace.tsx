@@ -3698,6 +3698,33 @@ export default function AvatarSpace({
   }, []);
 
   // ---- 入室処理 ----
+  // 表示名をprofiles.display_nameへ保存し、次回ログイン時のデフォルト値に
+  // する(管理者・ゲストいずれのアカウントでも、認証済みユーザーは全員
+  // 自分自身のprofiles行を持つため同じ経路でよい。viewOnly(他人の招待URL
+  // を一時閲覧中)でも自分自身のprofiles行は更新できる)。display_nameは
+  // 権限昇格防止トリガーの対象外の通常の列のため、"profiles: update own"
+  // RLS(user_id = auth.uid())の範囲で直接updateしてよい(2026-09報告:
+  // 以前は入室画面・設定画面どちらで変更してもDBには一切保存されず、
+  // 次回ログイン時には最初にGoogleアカウントから取り込んだ名前に戻って
+  // いた)。
+  const saveDisplayName = useCallback(
+    (name: string) => {
+      const userId = authUserIdRef.current;
+      if (!userId) return;
+      supabase
+        .from("profiles")
+        .update({ display_name: name })
+        .eq("user_id", userId)
+        .then(({ error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error("表示名の保存に失敗しました", error);
+          }
+        });
+    },
+    [supabase],
+  );
+
   const handleJoin = useCallback(() => {
     setRoomJoinError(null);
     const name = nameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
@@ -3725,7 +3752,8 @@ export default function AvatarSpace({
     setSettingsAvatar(selectedAvatar);
     setAssetsReady(false);
     setJoined(true);
-  }, [nameInput, selectedAvatar, obstacles]);
+    saveDisplayName(name);
+  }, [nameInput, selectedAvatar, obstacles, saveDisplayName]);
 
   // ---- 入室直後:自分のアバターの向き別スプライトをプリロードし、完了する
   // まで移動・向き変更操作をロックする(向き変更時に初めて画像取得が走り、
@@ -6172,12 +6200,14 @@ export default function AvatarSpace({
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
     channelRef.current?.track(updated);
     setSidebarTab("participants");
+    saveDisplayName(name);
   }, [
     settingsNameInput,
     settingsAvatar,
     settingsStatus,
     settingsMessageInput,
     settingsShowMessage,
+    saveDisplayName,
   ]);
 
   // 入室前の画面にいる間、ルームのRealtimeチャンネルにpresence観測者として
