@@ -6033,11 +6033,22 @@ export default function AvatarSpace({
   // 自動で「離席中」にした場合のみ、復帰時に「通話可能」へ戻す
   // (autoAwayRefで判定。ユーザーが手動で「取込み中」等を選んでいた
   // 場合にタブ復帰で勝手に上書きしてしまわないようにするため)。
+  // hiddenSinceRefは実際に非表示になった時刻(壁時計)を覚えておき、復帰時に
+  // 実経過時間を計算するために使う(2026-09報告: スマホは画面オフ中に
+  // OSがタブ自体をサスペンドし、setTimeoutが時間通り発火しない/全く発火
+  // しないことがある。その状態で画面をオンに戻すと「退室していないまま」
+  // 扱いになり、LiveKitが自動再接続して相手にアバターが再表示される不具合
+  // があったため、復帰のたびに実時間で猶予を超えていないか検算し、超えて
+  // いれば復帰時点で確実に退室させる)。joined中は同じセッションとして
+  // 値を保持したいので(タブ非表示のままisActiveCallが変化してeffectが
+  // 再実行されても猶予のカウントダウンをリセットしないため)、effect内
+  // ローカル変数ではなくuseRefにしている。
   const isActiveCall = micEnabled || inCall || screenSharing;
+  const autoAwayRef = useRef(false);
+  const hiddenSinceRef = useRef<number | null>(null);
   useEffect(() => {
     if (!joined) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const autoAwayRef = { current: false };
 
     const clearTimer = () => {
       if (timer) {
@@ -6051,36 +6062,50 @@ export default function AvatarSpace({
     const isMobileNow = () =>
       viewportRef.current.width > 0 && viewportRef.current.width < 640;
 
+    const doLeave = () => {
+      clearTimer();
+      autoAwayRef.current = false;
+      hiddenSinceRef.current = null;
+      handleLeaveRoom();
+    };
+
     const enterHidden = () => {
       clearTimer();
-      if (isMobileNow()) {
-        forceMuteMic();
-        stopVideoCall();
-        if (!autoAwayRef.current) {
-          autoAwayRef.current = true;
-          applyAutoPresenceStatus("away");
-        }
-        timer = setTimeout(() => {
-          handleLeaveRoom();
-        }, MOBILE_AUTO_LOGOUT_SECONDS * 1000);
-        return;
-      }
-      if (isActiveCall) return;
+      const mobile = isMobileNow();
+      if (!mobile && isActiveCall) return;
+      const now = Date.now();
       if (!autoAwayRef.current) {
         autoAwayRef.current = true;
+        hiddenSinceRef.current = now;
         applyAutoPresenceStatus("away");
       }
-      timer = setTimeout(() => {
-        handleLeaveRoom();
-      }, DESKTOP_AUTO_LOGOUT_SECONDS * 1000);
+      if (mobile) {
+        forceMuteMic();
+        stopVideoCall();
+      }
+      const thresholdMs =
+        (mobile ? MOBILE_AUTO_LOGOUT_SECONDS : DESKTOP_AUTO_LOGOUT_SECONDS) *
+        1000;
+      const elapsed = now - (hiddenSinceRef.current ?? now);
+      const remainingMs = Math.max(0, thresholdMs - elapsed);
+      timer = setTimeout(doLeave, remainingMs);
     };
 
     const enterVisible = () => {
       clearTimer();
-      if (autoAwayRef.current) {
-        autoAwayRef.current = false;
-        applyAutoPresenceStatus("available");
+      if (!autoAwayRef.current) return;
+      const hiddenSince = hiddenSinceRef.current;
+      const thresholdMs =
+        (isMobileNow()
+          ? MOBILE_AUTO_LOGOUT_SECONDS
+          : DESKTOP_AUTO_LOGOUT_SECONDS) * 1000;
+      autoAwayRef.current = false;
+      hiddenSinceRef.current = null;
+      if (hiddenSince !== null && Date.now() - hiddenSince >= thresholdMs) {
+        handleLeaveRoom();
+        return;
       }
+      applyAutoPresenceStatus("available");
     };
 
     const onVisibilityChange = () => {
@@ -6099,12 +6124,19 @@ export default function AvatarSpace({
     // ため、ページ破棄前でも確実に実行できる。
     const onPageHide = () => {
       if (isMobileNow()) {
-        handleLeaveRoom();
+        doLeave();
       }
     };
 
     if (document.visibilityState === "hidden") {
       enterHidden();
+    } else {
+      // タブが表示された状態での(再)マウント=新しいjoinセッションの
+      // 開始とみなし、前回の在席ブックキーピングを持ち越さない(万一
+      // 外部要因(管理者によるkick等)でリセットされないまま残っていた
+      // 場合の保険)。
+      autoAwayRef.current = false;
+      hiddenSinceRef.current = null;
     }
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("pagehide", onPageHide);
@@ -6264,6 +6296,12 @@ export default function AvatarSpace({
     channelRef.current?.track(updated);
     setSidebarTab("participants");
     saveDisplayName(name);
+    // 入室前画面のname入力(nameInput)は設定変更後も更新されないままだった
+    // ため、同じセッション内で退出→再入室すると、この古い値でhandleJoinが
+    // 再度saveDisplayNameを呼び、DBの表示名を変更前の名前へ上書きして
+    // しまっていた(2026-09報告の「保存しても退出したら元に戻る」の原因)。
+    // ここで同期し、次の入室画面にも直近の保存値が反映されるようにする。
+    setNameInput(name);
   }, [
     settingsNameInput,
     settingsAvatar,
