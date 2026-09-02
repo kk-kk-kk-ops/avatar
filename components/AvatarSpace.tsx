@@ -159,6 +159,21 @@ function TabIconGear({ className }: { className?: string }) {
   );
 }
 
+// ワープのチャンネル(A/B/C)ごとの表示色(半透明)。app/master/
+// TemplateEditor.tsxにも同じ内容を別途持たせている(lib/types.tsは
+// Tailwindのcontentスキャン対象外のため、クラス文字列はcomponents/**・
+// app/**の中にそのまま書く必要がある)。
+function warpChannelClasses(channel: "A" | "B" | "C"): string {
+  switch (channel) {
+    case "A":
+      return "border-red-400 bg-red-500/30";
+    case "B":
+      return "border-yellow-400 bg-yellow-400/30";
+    case "C":
+      return "border-blue-400 bg-blue-500/30";
+  }
+}
+
 // チャットの固定絵文字リアクション(5種類)。DB側のcheck制約
 // (chat_message_reactions_emoji_check)と同じ値を維持すること。
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "👏"] as const;
@@ -3863,6 +3878,7 @@ export default function AvatarSpace({
             channel: w.channel as "A" | "B" | "C",
             x: w.x ?? 0,
             y: w.y ?? 0,
+            label: w.label ?? "",
           }));
         setWarpPoints(loadedWarpPoints);
       }
@@ -6574,17 +6590,31 @@ export default function AvatarSpace({
             {/* ワープポイント。半透明の色付き円で見えるようにする
                 (テンプレート編集画面と同系色)。 */}
             {warpPoints.map((w) => (
-              <div
-                key={w.id}
-                className="pointer-events-none absolute flex items-center justify-center rounded-full border-2 border-purple-400 bg-purple-500/30 text-xs font-bold text-white"
-                style={{
-                  left: w.x - WARP_POINT_RADIUS,
-                  top: w.y - WARP_POINT_RADIUS,
-                  width: WARP_POINT_RADIUS * 2,
-                  height: WARP_POINT_RADIUS * 2,
-                }}
-              >
-                {w.channel}
+              <div key={w.id}>
+                {w.label && (
+                  <p
+                    className="pointer-events-none absolute whitespace-nowrap text-center text-[10px] font-semibold text-white"
+                    style={{
+                      left: w.x - WARP_POINT_RADIUS,
+                      top: w.y - WARP_POINT_RADIUS,
+                      width: WARP_POINT_RADIUS * 2,
+                      transform: "translateY(-100%)",
+                    }}
+                  >
+                    {w.label}
+                  </p>
+                )}
+                <div
+                  className={`pointer-events-none absolute flex items-center justify-center rounded-full border-2 text-xs font-bold text-white ${warpChannelClasses(w.channel)}`}
+                  style={{
+                    left: w.x - WARP_POINT_RADIUS,
+                    top: w.y - WARP_POINT_RADIUS,
+                    width: WARP_POINT_RADIUS * 2,
+                    height: WARP_POINT_RADIUS * 2,
+                  }}
+                >
+                  {w.channel}
+                </div>
               </div>
             ))}
 

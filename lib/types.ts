@@ -309,7 +309,10 @@ export type MeetingZone = Rect & {
 // 片方の円にアバターが入ったらもう片方の円の座標へ瞬間移動する
 // (双方向)。x,yは円の中心座標(Obstacle/MeetingZoneが左上基準なのとは
 // 座標系が異なるので注意)。channelごとに最大1ペア(2点)まで。
-export type WarpPoint = { id: string; channel: "A" | "B" | "C"; x: number; y: number };
+// label: 丸ごとに個別に付けられる任意の名前(未設定なら空扱い)。ワープの
+// 外側(上部)に表示する。同じchannelの2つの丸それぞれに別の名前を
+// 付けられるようにするためのもの(channel自体はA/B/C固定でペア判定用)。
+export type WarpPoint = { id: string; channel: "A" | "B" | "C"; x: number; y: number; label?: string };
 export const WARP_CHANNELS = ["A", "B", "C"] as const;
 export const WARP_POINT_RADIUS = 36; // 円の表示半径・当たり判定半径(px)
 
