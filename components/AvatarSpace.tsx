@@ -1631,7 +1631,7 @@ export default function AvatarSpace({
       const { data, error } = await supabase
         .from("chat_mentions")
         .select(
-          "id, message_id, group_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name)",
+          "id, message_id, group_id, mentioner_user_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name)",
         )
         .eq("mentioned_user_id", myUserId)
         .order("created_at", { ascending: false })
@@ -1650,6 +1650,7 @@ export default function AvatarSpace({
         id: string;
         message_id: string;
         group_id: string;
+        mentioner_user_id: string;
         mentioner_name: string;
         is_everyone: boolean;
         created_at: string;
@@ -1688,6 +1689,35 @@ export default function AvatarSpace({
           }
         }
       }
+      // メンションしてきた相手の表示名は、chat_mentions.mentioner_nameだと
+      // 送信時点のスナップショットのままで、後から表示名を変えても通知
+      // 一覧の表示は古いままだった(2026-09報告)。list_mentioner_names経由
+      // (自分宛てのメンションで実際に名前が出たことのある相手に限定した
+      // SECURITY DEFINER関数。profilesは本人しかSELECTできないRLSのため
+      // 直接は取得できない)で最新のdisplay_nameを取得し、優先的に使う。
+      // 取得できなかった相手(関数エラー等)のみスナップショットを使う。
+      const mentionerUserIds = Array.from(
+        new Set(rows.map((r) => r.mentioner_user_id)),
+      );
+      const mentionerNameById = new Map<string, string>();
+      if (mentionerUserIds.length > 0) {
+        const { data: mentionerRows, error: mentionerError } =
+          await supabase.rpc("list_mentioner_names", {
+            p_mentioner_user_ids: mentionerUserIds,
+          });
+        if (cancelled) return;
+        if (mentionerError) {
+          // eslint-disable-next-line no-console
+          console.error("メンション相手の表示名取得に失敗しました", mentionerError);
+        } else {
+          for (const m of (mentionerRows ?? []) as Array<{
+            user_id: string;
+            display_name: string;
+          }>) {
+            mentionerNameById.set(m.user_id, m.display_name);
+          }
+        }
+      }
       setMentionsLoading(false);
       setMentions(
         rows.map((row) => {
@@ -1697,7 +1727,9 @@ export default function AvatarSpace({
             messageId: row.message_id,
             groupId: row.group_id,
             groupName: row.chat_groups?.[0]?.name ?? "グループ",
-            mentionerName: row.mentioner_name,
+            mentionerName:
+              mentionerNameById.get(row.mentioner_user_id) ??
+              row.mentioner_name,
             isEveryone: row.is_everyone,
             createdAt: row.created_at,
             readAt: row.read_at,
