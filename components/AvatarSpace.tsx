@@ -714,6 +714,16 @@ export default function AvatarSpace({
   // (ポップアップ候補・送信済みメッセージのハイライト両方に使う)。
   type GroupMember = { userId: string; displayName: string };
   const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  // 送信済みメッセージの送信者名表示用。chat_messages.sender_nameは送信時点の
+  // 表示名のスナップショットのため、後から表示名を変更しても過去メッセージ
+  // の表示は古いままだった(2026-09報告)。groupMembersはグループを開く
+  // たびにDBから最新の表示名を取得し直しているため、これで解決できる
+  // 相手(=現メンバー)についてはこちらを優先し、既にグループを抜けた等で
+  // 一覧に無い場合のみsender_nameのスナップショットにフォールバックする。
+  const groupMemberNameById = useMemo(
+    () => new Map(groupMembers.map((m) => [m.userId, m.displayName])),
+    [groupMembers],
+  );
   // 入力中に「@」を打った(かつ直後に空白を含まない)時だけセットする、
   // 候補ポップアップの状態。startは対象の「@」がgroupInput内で始まる
   // 位置(候補選択時、ここから選択範囲までを「@表示名 」で置き換える)。
@@ -6123,8 +6133,17 @@ export default function AvatarSpace({
       applyAutoPresenceStatus("available");
     };
 
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
+    // ①ウインドウの最小化はvisibilitychangeで捕捉できるはずだが、環境に
+    // よっては発火が遅れる/されないことがある(2026-09報告: タブ切替では
+    // 離席中になるのに最小化では反応しないケース)。document.hasFocus()
+    // (ウインドウの最小化・非フォーカス状態でfalseになる、フォーカス系の
+    // 独立したAPI)も合わせて判定することで、タブ切替と最小化を確実に
+    // 同じ扱いにする。
+    const isEffectivelyHidden = () =>
+      document.visibilityState === "hidden" || !document.hasFocus();
+
+    const reconcile = () => {
+      if (isEffectivelyHidden()) {
         enterHidden();
       } else {
         enterVisible();
@@ -6166,22 +6185,26 @@ export default function AvatarSpace({
       doLeave();
     };
 
-    if (document.visibilityState === "hidden") {
+    if (isEffectivelyHidden()) {
       enterHidden();
     } else {
-      // タブが表示された状態での(再)マウント=新しいjoinセッションの
-      // 開始とみなし、前回の在席ブックキーピングを持ち越さない(万一
-      // 外部要因(管理者によるkick等)でリセットされないまま残っていた
-      // 場合の保険)。
+      // タブが表示・フォーカスされた状態での(再)マウント=新しいjoin
+      // セッションの開始とみなし、前回の在席ブックキーピングを持ち越さ
+      // ない(万一外部要因(管理者によるkick等)でリセットされないまま
+      // 残っていた場合の保険)。
       autoAwayRef.current = false;
       hiddenSinceRef.current = null;
     }
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    document.addEventListener("visibilitychange", reconcile);
+    window.addEventListener("blur", reconcile);
+    window.addEventListener("focus", reconcile);
     window.addEventListener("pagehide", onPageHide);
     return () => {
       clearTimer();
       clearInterval(heartbeat);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      document.removeEventListener("visibilitychange", reconcile);
+      window.removeEventListener("blur", reconcile);
+      window.removeEventListener("focus", reconcile);
       window.removeEventListener("pagehide", onPageHide);
     };
   }, [
@@ -7694,7 +7717,8 @@ export default function AvatarSpace({
                               >
                               {!m.isSelf && (
                                 <p className="mb-0.5 text-[10px] font-semibold text-slate-400">
-                                  {m.senderName}
+                                  {groupMemberNameById.get(m.senderUserId) ??
+                                    m.senderName}
                                 </p>
                               )}
                               <div
