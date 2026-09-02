@@ -3614,6 +3614,11 @@ export default function AvatarSpace({
       })
       .on(RoomEvent.Reconnected, () => {
         console.info("[livekit] reconnected (SDK auto-recovery)");
+        // 再接続完了の直後は、近接判定に基づく購読(setSubscribed)が
+        // 反映されない/やり直しが必要なことがあるため明示的に呼び直す
+        // (2026-09報告: スマホの画面オフ→復帰で相手の音声が聞こえない
+        // 不具合の対策)。
+        applyProximitySubscriptionsRef.current();
       })
       .on(RoomEvent.Disconnected, (reason) => {
         if (cancelled) return;
@@ -5750,31 +5755,43 @@ export default function AvatarSpace({
   // 接続そのものはLiveKitのRoom(SFU)へ1本だけなので、ここでは相手ごとの
   // トラック購読(setSubscribed)をオン/オフするだけで済む
   // (以前のPeerConnectionメッシュのような接続の作成/破棄は不要)。
+  // applyProximitySubscriptionsRefに常に最新版を入れておき、依存配列の
+  // 変化を待たずにピンポイントで呼び直せるようにしている(スマホの画面
+  // オフ→復帰でLiveKit SDKが裏で再接続している最中にこのeffectが走ると、
+  // setSubscribed(true)が再接続処理と競合して反映されないことがあり、
+  // 「画面を戻しても相手の声が聞こえず、少し動く(=別の理由でこのeffectが
+  // 再実行される)と聞こえる」不具合の原因になっていた。RoomEvent.Reconnected
+  // 発火時とタブ/画面復帰時に明示的に呼び直すことで解消する)。
+  const applyProximitySubscriptionsRef = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!joined) return;
-    const room = livekitRoomRef.current;
-    if (!room) return;
-    const eligibleSet = new Set(eligiblePeerIds);
-    const audioEligibleSet = new Set(audioEligiblePeerIds);
-    room.remoteParticipants.forEach((participant) => {
-      const shouldSubscribeAudio =
-        !receptionSuspended && audioEligibleSet.has(participant.identity);
-      const shouldSubscribeCamera =
-        !receptionSuspended && eligibleSet.has(participant.identity);
-      participant.audioTrackPublications.forEach((pub) => {
-        if (pub.isSubscribed !== shouldSubscribeAudio) {
-          pub.setSubscribed(shouldSubscribeAudio);
-        }
+    const apply = () => {
+      if (!joined) return;
+      const room = livekitRoomRef.current;
+      if (!room) return;
+      const eligibleSet = new Set(eligiblePeerIds);
+      const audioEligibleSet = new Set(audioEligiblePeerIds);
+      room.remoteParticipants.forEach((participant) => {
+        const shouldSubscribeAudio =
+          !receptionSuspended && audioEligibleSet.has(participant.identity);
+        const shouldSubscribeCamera =
+          !receptionSuspended && eligibleSet.has(participant.identity);
+        participant.audioTrackPublications.forEach((pub) => {
+          if (pub.isSubscribed !== shouldSubscribeAudio) {
+            pub.setSubscribed(shouldSubscribeAudio);
+          }
+        });
+        participant.videoTrackPublications.forEach((pub) => {
+          // ScreenShareは近接判定ではなく「選択視聴」effectが個別に制御する
+          // ため、ここでは対象外とする。
+          if (pub.source !== Track.Source.Camera) return;
+          if (pub.isSubscribed !== shouldSubscribeCamera) {
+            pub.setSubscribed(shouldSubscribeCamera);
+          }
+        });
       });
-      participant.videoTrackPublications.forEach((pub) => {
-        // ScreenShareは近接判定ではなく「選択視聴」effectが個別に制御する
-        // ため、ここでは対象外とする。
-        if (pub.source !== Track.Source.Camera) return;
-        if (pub.isSubscribed !== shouldSubscribeCamera) {
-          pub.setSubscribed(shouldSubscribeCamera);
-        }
-      });
-    });
+    };
+    applyProximitySubscriptionsRef.current = apply;
+    apply();
     // livekitConnectedもdepsに含める。購読対象(eligibleKey/audioEligibleKey)
     // はSupabase presence/meetingZonesの取得から決まり、LiveKitの接続完了とは
     // 非同期に(どちらが先とも限らないタイミングで)確定する。もし購読対象が
@@ -6163,6 +6180,11 @@ export default function AvatarSpace({
       hiddenSinceRef.current = null;
       setReceptionSuspended(false);
       applyAutoPresenceStatus("available");
+      // receptionSuspendedの変化に反応する購読effectはこの直後に走るが、
+      // ちょうどLiveKit SDKが裏で再接続中だと反映されないことがあるため
+      // (RoomEvent.Reconnectedハンドラ参照)、少し待ってからもう一度
+      // 明示的に呼び直す保険をかけておく。
+      window.setTimeout(() => applyProximitySubscriptionsRef.current(), 1500);
     };
 
     // ①ウインドウの最小化はvisibilitychangeで捕捉できるはずだが、環境に
