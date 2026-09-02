@@ -4299,7 +4299,11 @@ export default function AvatarSpace({
         })
         .on("broadcast", { event: "screen-preview" }, ({ payload }) => {
           const { id, dataUrl } = payload as { id: string; dataUrl: string };
-          if (id === selfId.current) return;
+          // 以前は自分自身の分をここで弾いていたが、自分の画面共有
+          // プレビューだけ他の人と違って常にライブ映像になってしまって
+          // いた(2026-09報告)。.send()は自分自身にもループバックする
+          // ため、ここで弾かなければ自分の分もscreenPreviewImagesに
+          // 乗り、他の人の静止画プレビューと同じ表示に揃えられる。
           setScreenPreviewImages((prev) => ({ ...prev, [id]: dataUrl }));
         })
         .on("broadcast", { event: "dm" }, ({ payload }) => {
@@ -6417,106 +6421,6 @@ export default function AvatarSpace({
         </div>
       )}
 
-      {/* 画面共有・ビデオ通話のプレビュー(自分・近くにいる相手)を画面上部に並べて表示 */}
-      {(screenSharing ||
-        inCall ||
-        visibleScreenShares.length > 0 ||
-        visibleVideoCalls.length > 0) && (
-        <div className="flex flex-wrap gap-2 bg-slate-900/80 px-3 py-2">
-          {screenSharing && screenStreamRef.current && (
-            <div className="relative">
-              <RemoteVideo
-                stream={screenStreamRef.current}
-                className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
-              />
-              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                あなたの画面
-              </span>
-              <button
-                onClick={stopScreenShare}
-                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                aria-label="画面共有を終了"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          {videoPausedForScreenView ? (
-            <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300">
-              画面共有視聴中
-            </div>
-          ) : (
-            inCall &&
-            cameraStreamRef.current && (
-              <div className="relative">
-                <RemoteVideo
-                  stream={cameraStreamRef.current}
-                  className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
-                />
-                <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                  あなたのカメラ
-                </span>
-                <button
-                  onClick={stopVideoCall}
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                  aria-label="ビデオ通話を終了"
-                >
-                  ✕
-                </button>
-              </div>
-            )
-          )}
-
-          {/* 画面共有は同時に何人でも共有できるが、視聴は1人だけ選ぶ方式。
-              小さいプレビューは常に共有開始時点の静止画(ライブ映像には
-              しない)、1回のクリックで購読開始と同時に全画面表示へ進む
-              (以前の「黒→静止画プレビュー→全画面」の3段階を、
-              「静止画プレビュー→全画面」の2段階に短縮)。 */}
-          {visibleScreenShares.map((p) => (
-            <button
-              key={`screen-${p.id}`}
-              onClick={() => {
-                setSelectedScreenSharerId(p.id);
-                setExpandedMedia({ peerId: p.id, kind: "screen" });
-              }}
-              className="relative"
-              aria-label={`${p.name}の画面を全画面表示`}
-            >
-              {screenPreviewImages[p.id] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={screenPreviewImages[p.id]}
-                  alt={`${p.name}の画面共有プレビュー`}
-                  className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
-                />
-              ) : (
-                <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
-                  入室中...
-                </div>
-              )}
-              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                {p.name}の画面
-              </span>
-            </button>
-          ))}
-
-          {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
-              全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
-          {visibleVideoCalls.map((p) => (
-            <div key={`call-${p.id}`} className="relative">
-              <RemoteVideo
-                stream={remoteCallStreams[p.id]}
-                className="h-20 w-32 rounded-md border border-slate-500 bg-black object-cover"
-              />
-              <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                {p.name}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* マップ:表示領域は固定し、中の世界をtransformで動かしてカメラ追従を実現。
             transformの更新は毎フレームDOM操作で行うため、ここでは初期値のみ指定する。
@@ -6528,6 +6432,119 @@ export default function AvatarSpace({
           ref={containerRef}
           className="relative min-w-0 flex-1 overflow-hidden bg-slate-700 sm:order-3"
         >
+          {/* 画面共有・ビデオ通話のプレビュー(自分・近くにいる相手)。
+              以前はサイドバーと横並びの上部バーとして画面全幅に表示して
+              いたため、サイドバーの上に覆いかぶさって見えていた
+              (2026-09報告)。アバター空間(このcontainerRef)の上部に
+              浮かせるabsoluteオーバーレイに変更し、サイドバーの右側
+              (=アバター空間の幅の中)だけに収まるようにした。 */}
+          {(screenSharing ||
+            inCall ||
+            visibleScreenShares.length > 0 ||
+            visibleVideoCalls.length > 0) && (
+            <div className="absolute left-0 right-0 top-0 z-20 flex flex-wrap gap-2 bg-slate-900/80 px-3 py-2">
+              {screenSharing && screenStreamRef.current && (
+                <div className="relative">
+                  {screenPreviewImages[selfId.current] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={screenPreviewImages[selfId.current]}
+                      alt="あなたの画面共有プレビュー"
+                      className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-20 w-32 items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
+                      共有中...
+                    </div>
+                  )}
+                  <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                    あなたの画面
+                  </span>
+                  <button
+                    onClick={stopScreenShare}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                    aria-label="画面共有を終了"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
+              {videoPausedForScreenView ? (
+                <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300">
+                  画面共有視聴中
+                </div>
+              ) : (
+                inCall &&
+                cameraStreamRef.current && (
+                  <div className="relative">
+                    <RemoteVideo
+                      stream={cameraStreamRef.current}
+                      className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
+                    />
+                    <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                      あなたのカメラ
+                    </span>
+                    <button
+                      onClick={stopVideoCall}
+                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                      aria-label="ビデオ通話を終了"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )
+              )}
+
+              {/* 画面共有は同時に何人でも共有できるが、視聴は1人だけ選ぶ方式。
+                  小さいプレビューは常に共有開始時点の静止画(ライブ映像には
+                  しない)、1回のクリックで購読開始と同時に全画面表示へ進む
+                  (以前の「黒→静止画プレビュー→全画面」の3段階を、
+                  「静止画プレビュー→全画面」の2段階に短縮)。 */}
+              {visibleScreenShares.map((p) => (
+                <button
+                  key={`screen-${p.id}`}
+                  onClick={() => {
+                    setSelectedScreenSharerId(p.id);
+                    setExpandedMedia({ peerId: p.id, kind: "screen" });
+                  }}
+                  className="relative"
+                  aria-label={`${p.name}の画面を全画面表示`}
+                >
+                  {screenPreviewImages[p.id] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={screenPreviewImages[p.id]}
+                      alt={`${p.name}の画面共有プレビュー`}
+                      className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
+                      入室中...
+                    </div>
+                  )}
+                  <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                    {p.name}の画面
+                  </span>
+                </button>
+              ))}
+
+              {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
+                  全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
+              {visibleVideoCalls.map((p) => (
+                <div key={`call-${p.id}`} className="relative">
+                  <RemoteVideo
+                    stream={remoteCallStreams[p.id]}
+                    className="h-20 w-32 rounded-md border border-slate-500 bg-black object-cover"
+                  />
+                  <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                    {p.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div
             ref={worldRef}
             className="absolute left-0 top-0"
