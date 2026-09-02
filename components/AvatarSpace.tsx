@@ -4640,7 +4640,9 @@ export default function AvatarSpace({
           setForceLeaveMessage(
             reason === "admin-kicked"
               ? "管理者により退出させられました。まもなく退出します..."
-              : "管理者がプランを変更したため、まもなく退出します...",
+              : reason === "room-changed"
+                ? "管理者がルームを変更しました。強制退出されます"
+                : "管理者がプランを変更したため、まもなく退出します...",
           );
           setTimeout(() => window.location.reload(), 1500);
         })
@@ -5531,6 +5533,24 @@ export default function AvatarSpace({
   // チラつきを防いでいる。特に「前回すでに対象だった相手」は、少し動いた
   // だけで音声通話や画面共有が切れてしまわないよう、対象から外れる距離を
   // 大きく広げている(実際にその場を離れるまでは繋がったままにする)。
+  // ミーティングエリア(通常のkind:"meeting"・会議室kind:"conference")は
+  // 近接判定(緑サークル)から完全に隔離する。以前は「同じエリアにいれば
+  // 無条件で対象」を距離判定のOR条件として足しているだけだったため、
+  // 一方だけがエリア内にいる場合には距離判定の方が生きてしまい、エリアの
+  // 境界付近で外の人の緑サークルに入ると音声・映像が漏れる不具合があった
+  // (2026-09報告)。自分または相手のどちらかがこれらのエリアに関与する
+  // 場合は、同じエリアかどうかだけで判定し、距離は一切見ない(=内外を
+  // またぐ組み合わせは常に対象外)。"announcement"(全体アナウンス)は
+  // 仕様上むしろ全員に届けたいエリアのため対象外のまま、"work"は音声・
+  // 映像自体を強制OFFにしているため実質関係ない。
+  const isIsolatedMeetingZone = useCallback(
+    (zoneId: string | null | undefined) => {
+      if (!zoneId) return false;
+      const zone = meetingZonesRef.current.find((z) => z.id === zoneId);
+      return !zone || (zone.kind !== "announcement" && zone.kind !== "work");
+    },
+    [],
+  );
   const eligiblePeerIds = useMemo(() => {
     const self = players[selfId.current];
     if (!self) return [] as string[];
@@ -5538,11 +5558,15 @@ export default function AvatarSpace({
       .filter((p) => {
         if (p.id === selfId.current) return false;
         if (
-          self.meetingZoneId &&
-          p.meetingZoneId &&
-          self.meetingZoneId === p.meetingZoneId
-        )
-          return true;
+          isIsolatedMeetingZone(self.meetingZoneId) ||
+          isIsolatedMeetingZone(p.meetingZoneId)
+        ) {
+          return (
+            !!self.meetingZoneId &&
+            !!p.meetingZoneId &&
+            self.meetingZoneId === p.meetingZoneId
+          );
+        }
         const dist = Math.hypot(p.x - self.x, p.y - self.y);
         const wasEligible = eligiblePeerIdsRef.current.includes(p.id);
         const threshold = wasEligible
