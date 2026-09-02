@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { Fragment, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { MapTemplate, Obstacle, MeetingZone, WarpPoint } from "@/lib/types";
 import {
@@ -66,6 +66,21 @@ type DragState =
 const MAX_DISPLAY_WIDTH = 1200;
 const MIN_MAP_SIZE = 400;
 const MAX_MAP_SIZE = 8000;
+
+// ワープのチャンネル(A/B/C)ごとの表示色(半透明)。lib/types.tsに置くと
+// Tailwindのcontentスキャン対象外(app/**・components/**のみ)になり
+// クラスが生成されないため、ここ(app/**配下)にクラス文字列そのままで
+// 持たせる。AvatarSpace.tsx側にも同じ内容を別途持たせている。
+function warpChannelClasses(channel: "A" | "B" | "C"): string {
+  switch (channel) {
+    case "A":
+      return "border-red-400 bg-red-500/30";
+    case "B":
+      return "border-yellow-400 bg-yellow-400/30";
+    case "C":
+      return "border-blue-400 bg-blue-500/30";
+  }
+}
 
 function clampMapSize(rawInput: string, fallback: number): number {
   const parsed = Number(rawInput);
@@ -437,6 +452,11 @@ export default function TemplateEditor({
 
   const removeWarpPair = (channel: string) =>
     setWarpPoints((prev) => prev.filter((w) => w.channel !== channel));
+
+  const updateWarpLabel = (id: string, label: string) =>
+    setWarpPoints((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, label } : w)),
+    );
 
   const handleSpawnPointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
@@ -820,16 +840,32 @@ export default function TemplateEditor({
             ＋全体アナウンスエリア
           </button>
           {WARP_CHANNELS.map((channel) => {
-            const hasPair = warpPoints.some((w) => w.channel === channel);
+            const pair = warpPoints.filter((w) => w.channel === channel);
+            const hasPair = pair.length > 0;
             return (
-              <button
-                key={channel}
-                onClick={() => addWarpPair(channel)}
-                disabled={hasPair}
-                className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
-              >
-                ＋{channel}ワープ{hasPair ? "(設置済み)" : ""}
-              </button>
+              <div key={channel} className="flex flex-col gap-1">
+                <button
+                  onClick={() => addWarpPair(channel)}
+                  disabled={hasPair}
+                  className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+                >
+                  ＋{channel}ワープ{hasPair ? "(設置済み)" : ""}
+                </button>
+                {hasPair && (
+                  <div className="flex gap-1">
+                    {pair.map((w, i) => (
+                      <input
+                        key={w.id}
+                        value={w.label ?? ""}
+                        onChange={(e) => updateWarpLabel(w.id, e.target.value)}
+                        placeholder={`丸${i + 1}の名前`}
+                        maxLength={20}
+                        className="w-1/2 min-w-0 rounded border border-slate-300 px-1.5 py-1 text-[11px] outline-none focus:border-slate-500"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })}
           <button
@@ -1102,27 +1138,41 @@ export default function TemplateEditor({
             ))}
 
             {warpPoints.map((w) => (
-              <div
-                key={w.id}
-                onPointerDown={(e) => handleWarpPointerDown(e, w.id)}
-                className="absolute flex cursor-move items-center justify-center rounded-full border-2 border-purple-400 bg-purple-500/50 text-xs font-bold text-white"
-                style={{
-                  left: (w.x - WARP_POINT_RADIUS) * scale,
-                  top: (w.y - WARP_POINT_RADIUS) * scale,
-                  width: WARP_POINT_RADIUS * 2 * scale,
-                  height: WARP_POINT_RADIUS * 2 * scale,
-                }}
-              >
-                {w.channel}
-                <button
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => removeWarpPair(w.channel)}
-                  title="このペア(丸2つ)をまとめて削除"
-                  className="absolute -right-1 -top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+              <Fragment key={w.id}>
+                {w.label && (
+                  <p
+                    className="pointer-events-none absolute whitespace-nowrap text-center text-[10px] font-semibold text-white"
+                    style={{
+                      left: (w.x - WARP_POINT_RADIUS) * scale,
+                      top: (w.y - WARP_POINT_RADIUS) * scale,
+                      width: WARP_POINT_RADIUS * 2 * scale,
+                      transform: "translateY(-100%)",
+                    }}
+                  >
+                    {w.label}
+                  </p>
+                )}
+                <div
+                  onPointerDown={(e) => handleWarpPointerDown(e, w.id)}
+                  className={`absolute flex cursor-move items-center justify-center rounded-full border-2 text-xs font-bold text-white ${warpChannelClasses(w.channel)}`}
+                  style={{
+                    left: (w.x - WARP_POINT_RADIUS) * scale,
+                    top: (w.y - WARP_POINT_RADIUS) * scale,
+                    width: WARP_POINT_RADIUS * 2 * scale,
+                    height: WARP_POINT_RADIUS * 2 * scale,
+                  }}
                 >
-                  ×
-                </button>
-              </div>
+                  {w.channel}
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => removeWarpPair(w.channel)}
+                    title="このペア(丸2つ)をまとめて削除"
+                    className="absolute -right-1 -top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                  >
+                    ×
+                  </button>
+                </div>
+              </Fragment>
             ))}
 
             {spawnPoint && (

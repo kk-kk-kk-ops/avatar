@@ -165,6 +165,7 @@ export default async function MasterPage() {
         channel: w.channel as "A" | "B" | "C",
         x: w.x ?? 0,
         y: w.y ?? 0,
+        label: w.label ?? "",
       }));
 
     return {
