@@ -89,6 +89,21 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
     .eq("account_id", account.id);
   if (error) throw new Error("ルームデザインの変更に失敗しました");
 
+  // 変更前のデザインのままそのルームに入っている参加者がいると、背景・
+  // 障害物・ミーティングエリアの座標がズレたまま表示され続けてしまう
+  // ため、強制退出させて再入室時に新デザインを読み込ませる(2026-09
+  // 報告: 以前あったはずのこの通知が無くなっていたのを復活)。通知の
+  // 送信に失敗しても、デザイン変更自体は既に成功しているため
+  // アクション全体は失敗扱いにしない。
+  try {
+    await supabase
+      .channel(`avatar-room-${roomId}`)
+      .httpSend("force-leave", { reason: "room-changed" });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("強制退出の送信に失敗しました", err);
+  }
+
   revalidatePath("/admin");
 }
 
