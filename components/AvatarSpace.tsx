@@ -3988,6 +3988,16 @@ export default function AvatarSpace({
             event: "screen-preview",
             payload: { id: selfState.current.id, dataUrl },
           });
+          // Supabase Realtimeのbroadcastは(broadcast:{self:true}を
+          // 明示しない限り)送信者自身には返ってこないため、上のsend()
+          // だけでは自分自身のscreenPreviewImagesに反映されず、常に
+          // 「共有中...」のプレースホルダのままになっていた(2026-09
+          // 報告)。他の参加者と同じ静止画表示にするため、自分の分は
+          // ここでローカルに直接反映する。
+          setScreenPreviewImages((prev) => ({
+            ...prev,
+            [selfState.current!.id]: dataUrl,
+          }));
         }
       });
     } catch {
@@ -4299,11 +4309,12 @@ export default function AvatarSpace({
         })
         .on("broadcast", { event: "screen-preview" }, ({ payload }) => {
           const { id, dataUrl } = payload as { id: string; dataUrl: string };
-          // 以前は自分自身の分をここで弾いていたが、自分の画面共有
-          // プレビューだけ他の人と違って常にライブ映像になってしまって
-          // いた(2026-09報告)。.send()は自分自身にもループバックする
-          // ため、ここで弾かなければ自分の分もscreenPreviewImagesに
-          // 乗り、他の人の静止画プレビューと同じ表示に揃えられる。
+          // Supabase Realtimeのbroadcastはbroadcast:{self:true}を明示
+          // しない限り送信者自身には返ってこない(このchannelはconfigで
+          // 指定していないため対象外)ため、自分自身の分がここに届くことは
+          // 無い。自分の分は送信元(captureFirstFrameのコールバック)で
+          // 直接setScreenPreviewImagesしている。
+          if (id === selfId.current) return;
           setScreenPreviewImages((prev) => ({ ...prev, [id]: dataUrl }));
         })
         .on("broadcast", { event: "dm" }, ({ payload }) => {
@@ -5991,42 +6002,62 @@ export default function AvatarSpace({
     };
   }, [joined, isInCall, supabase, guestInviteToken, handleLeaveRoom]);
 
-  useEffect(() => {
-    if (!joined || voiceCallDailyLimitSeconds === null) return;
-    const interval = setInterval(() => {
-      if (!isVoiceCallActive) return;
-      supabase
-        .rpc("increment_daily_usage_seconds", {
-          p_kind: "voice_call",
-          seconds: 30,
-        })
-        .then(({ data, error }) => {
-          if (error) {
-            // eslint-disable-next-line no-console
-            console.error("音声通話利用時間の記録に失敗しました", error);
-            return;
-          }
-          const remaining = Math.max(
-            0,
-            voiceCallDailyLimitSeconds - (data ?? 0),
+  // 前回の記録時刻からの実経過時間を計算してサーバーへ加算する。以前は
+  // 「アクティブな間、30秒おきに固定で30秒加算」という作りだったため、
+  // (1) マイクOFF・相手が離れる・退出などで通話が終わった瞬間から次の
+  //     30秒ハートビートまでの端数(最大30秒弱)が記録されないまま失われ、
+  //     再入室すると使用時間がまき戻って見える、
+  // (2) スマホでタブがバックグラウンド化するとsetIntervalの発火が遅延・
+  //     間引かれることがあり、実際の経過時間とズレる
+  // という2つの問題があった(2026-09報告)。実時刻の差分から加算秒数を
+  // 求める方式にすることで両方解消する。
+  const voiceCallLastFlushAtRef = useRef<number | null>(null);
+  const flushVoiceCallUsage = useCallback(() => {
+    const lastAt = voiceCallLastFlushAtRef.current;
+    if (lastAt === null || voiceCallDailyLimitSeconds === null) return;
+    const now = Date.now();
+    voiceCallLastFlushAtRef.current = now;
+    const elapsedSeconds = Math.round((now - lastAt) / 1000);
+    if (elapsedSeconds <= 0) return;
+    supabase
+      .rpc("increment_daily_usage_seconds", {
+        p_kind: "voice_call",
+        seconds: elapsedSeconds,
+      })
+      .then(({ data, error }) => {
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("音声通話利用時間の記録に失敗しました", error);
+          return;
+        }
+        const remaining = Math.max(
+          0,
+          voiceCallDailyLimitSeconds - (data ?? 0),
+        );
+        setVoiceCallRemainingSeconds(remaining);
+        if (remaining <= 0) {
+          setMicError(
+            "本日の音声通話可能時間の上限に達したため、マイクをオフにしました。",
           );
-          setVoiceCallRemainingSeconds(remaining);
-          if (remaining <= 0) {
-            setMicError(
-              "本日の音声通話可能時間の上限に達したため、マイクをオフにしました。",
-            );
-            forceMuteMic();
-          }
-        });
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [
-    joined,
-    isVoiceCallActive,
-    supabase,
-    voiceCallDailyLimitSeconds,
-    forceMuteMic,
-  ]);
+          forceMuteMic();
+        }
+      });
+  }, [supabase, voiceCallDailyLimitSeconds, forceMuteMic]);
+
+  useEffect(() => {
+    if (!joined || voiceCallDailyLimitSeconds === null || !isVoiceCallActive) {
+      return;
+    }
+    voiceCallLastFlushAtRef.current = Date.now();
+    const interval = setInterval(flushVoiceCallUsage, 30000);
+    return () => {
+      clearInterval(interval);
+      // マイクOFF・相手が離れる・退出など、アクティブでなくなる瞬間に
+      // 前回のハートビートからの端数分も必ずここで記録する。
+      flushVoiceCallUsage();
+      voiceCallLastFlushAtRef.current = null;
+    };
+  }, [joined, isVoiceCallActive, voiceCallDailyLimitSeconds, flushVoiceCallUsage]);
 
   useEffect(() => {
     if (!isVoiceCallActive || voiceCallDailyLimitSeconds === null) return;
