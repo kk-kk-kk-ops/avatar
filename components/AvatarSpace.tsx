@@ -517,6 +517,11 @@ export default function AvatarSpace({
   useEffect(() => {
     screenSharingRef.current = screenSharing;
   }, [screenSharing]);
+  // スマホの画面オフ中、相手のマイク・カメラ・画面共有を受信(購読)しない
+  // ようにするためのフラグ(2026-09報告: 画面オフでも近くの人の音声が
+  // スマホから鳴り続けていたため)。送信側の強制ミュートとは別に、
+  // 受信側の購読も止める必要がある。
+  const [receptionSuspended, setReceptionSuspended] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   // 画面共有の「今日の残り利用可能時間(秒)」。nullは「未取得(初回ロード中)」
   // または「プランが無制限」のどちらか(どちらの場合も制限しない、という
@@ -3688,10 +3693,12 @@ export default function AvatarSpace({
   useEffect(() => {
     Object.entries(screenSharePublicationsRef.current).forEach(
       ([identity, publication]) => {
-        publication.setSubscribed(identity === selectedScreenSharerId);
+        publication.setSubscribed(
+          !receptionSuspended && identity === selectedScreenSharerId,
+        );
       },
     );
-  }, [selectedScreenSharerId]);
+  }, [selectedScreenSharerId, receptionSuspended]);
 
   // ---- 退出:バーチャル空間から抜けて入室前の画面に戻る ----
   // joinedをfalseにすることで、Realtimeチャンネルの購読解除・マイクや
@@ -5708,8 +5715,10 @@ export default function AvatarSpace({
     const eligibleSet = new Set(eligiblePeerIds);
     const audioEligibleSet = new Set(audioEligiblePeerIds);
     room.remoteParticipants.forEach((participant) => {
-      const shouldSubscribeAudio = audioEligibleSet.has(participant.identity);
-      const shouldSubscribeCamera = eligibleSet.has(participant.identity);
+      const shouldSubscribeAudio =
+        !receptionSuspended && audioEligibleSet.has(participant.identity);
+      const shouldSubscribeCamera =
+        !receptionSuspended && eligibleSet.has(participant.identity);
       participant.audioTrackPublications.forEach((pub) => {
         if (pub.isSubscribed !== shouldSubscribeAudio) {
           pub.setSubscribed(shouldSubscribeAudio);
@@ -5732,7 +5741,7 @@ export default function AvatarSpace({
     // なることがあった(G-2: 全体アナウンスエリアで先に発信していた相手の
     // 音声・画面共有が、後から入室した人にだけ届かない不具合の原因)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligibleKey, audioEligibleKey, joined, livekitConnected]);
+  }, [eligibleKey, audioEligibleKey, joined, livekitConnected, receptionSuspended]);
 
   // 選択中の相手が画面共有をやめた・近接範囲外に出た場合は選択を解除する。
   // 即座に解除すると、presenceの瞬間的な揺らぎ(A-2で扱った、相手の
@@ -6066,6 +6075,7 @@ export default function AvatarSpace({
       clearTimer();
       autoAwayRef.current = false;
       hiddenSinceRef.current = null;
+      setReceptionSuspended(false);
       handleLeaveRoom();
     };
 
@@ -6082,6 +6092,10 @@ export default function AvatarSpace({
       if (mobile) {
         forceMuteMic();
         stopVideoCall();
+        // 送信(マイク・カメラ)だけでなく受信側の購読も止める。止めない
+        // と、画面がオフでも近くにいる相手のマイク音声がスピーカーから
+        // 鳴り続けてしまう(2026-09報告)。
+        setReceptionSuspended(true);
       }
       const thresholdMs =
         (mobile ? MOBILE_AUTO_LOGOUT_SECONDS : DESKTOP_AUTO_LOGOUT_SECONDS) *
@@ -6099,12 +6113,13 @@ export default function AvatarSpace({
         (isMobileNow()
           ? MOBILE_AUTO_LOGOUT_SECONDS
           : DESKTOP_AUTO_LOGOUT_SECONDS) * 1000;
-      autoAwayRef.current = false;
-      hiddenSinceRef.current = null;
       if (hiddenSince !== null && Date.now() - hiddenSince >= thresholdMs) {
-        handleLeaveRoom();
+        doLeave();
         return;
       }
+      autoAwayRef.current = false;
+      hiddenSinceRef.current = null;
+      setReceptionSuspended(false);
       applyAutoPresenceStatus("available");
     };
 
@@ -6116,16 +6131,39 @@ export default function AvatarSpace({
       }
     };
 
-    // スマホでブラウザ/タブを実際に閉じた場合は、上のタイマー(画面オフ・
-    // アプリ切替と区別できないため一律10分待ち)を待たず即座にルームから
-    // 退室させる(ログアウトはしない)。pagehideはナビゲーションでも
-    // 発火するため誤検知はあるが、副作用はhandleLeaveRoomと同じ「退室」
-    // に留まるため許容する。非同期処理を伴わない同期的な後始末のみの
-    // ため、ページ破棄前でも確実に実行できる。
+    // ②PCのスリープ/休止からの復帰検知。visibilitychangeだけでは通話中
+    // (isActiveCall)の場合にタブ切替と区別できず何もしない仕様のため、
+    // スリープしたまま延々と接続が繋がりっぱなしになってしまう。
+    // setIntervalは通常のタブ切替や多少のGC停止ではほぼ狂わないが、
+    // OSがスリープするとその間タイマー自体が止まるため、次に動き出した
+    // 瞬間の実際の経過時間は本来の間隔を大きく超える。この差分(ドリフト)
+    // でスリープを検知し、通話中かどうかに関わらず即座にマイク・ビデオ・
+    // 画面共有を止めてルームから退出させる(ログアウトはしない)。
+    // シャットダウンで実際にプロセスごと終了した場合はこの検知を待たず
+    // 下のpagehideで対応する。スマホは画面オフ時の専用処理(enterHidden)
+    // で同様のことを行うため対象外とする。
+    const HEARTBEAT_MS = 15000;
+    const SLEEP_DRIFT_MS = 30000;
+    let lastTick = Date.now();
+    const heartbeat = setInterval(() => {
+      const now = Date.now();
+      const gap = now - lastTick;
+      lastTick = now;
+      if (isMobileNow() || gap <= HEARTBEAT_MS + SLEEP_DRIFT_MS) return;
+      forceMuteMic();
+      stopVideoCall();
+      stopScreenShare();
+      doLeave();
+    }, HEARTBEAT_MS);
+
+    // ブラウザ/タブを実際に閉じた場合・PCをシャットダウンした場合は、上の
+    // タイマーやスリープ検知を待たず即座にルームから退室させる
+    // (ログアウトはしない)。pagehideはナビゲーションでも発火するため
+    // 誤検知はあるが、副作用はhandleLeaveRoomと同じ「退室」に留まるため
+    // 許容する。非同期処理を伴わない同期的な後始末のみのため、ページ破棄
+    // 前でも確実に実行できる。
     const onPageHide = () => {
-      if (isMobileNow()) {
-        doLeave();
-      }
+      doLeave();
     };
 
     if (document.visibilityState === "hidden") {
@@ -6142,6 +6180,7 @@ export default function AvatarSpace({
     window.addEventListener("pagehide", onPageHide);
     return () => {
       clearTimer();
+      clearInterval(heartbeat);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pagehide", onPageHide);
     };
@@ -6151,6 +6190,7 @@ export default function AvatarSpace({
     handleLeaveRoom,
     forceMuteMic,
     stopVideoCall,
+    stopScreenShare,
     applyAutoPresenceStatus,
   ]);
 
