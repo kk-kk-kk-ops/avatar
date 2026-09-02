@@ -297,6 +297,23 @@ function formatDmListTime(iso: string): string {
   return date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
 }
 
+// 個々のトーク(メッセージ吹き出し)の送信時刻表示用。当日なら今まで通り
+// 時刻のみ、それより前の日付なら「9/1(火) 23:30」のように日付・曜日を
+// 添える(2026-09報告: 日付をまたいだ履歴を見返す際、時刻だけだと
+// いつのメッセージか分からなかったため)。
+const WEEKDAY_LABELS_JA = ["日", "月", "火", "水", "木", "金", "土"];
+function formatDmMessageTime(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isSameDay) return formatDmClockTime(iso);
+  const weekday = WEEKDAY_LABELS_JA[date.getDay()];
+  return `${date.getMonth() + 1}/${date.getDate()}(${weekday}) ${formatDmClockTime(iso)}`;
+}
+
 // 通知一覧のメンション本文プレビュー用。30文字を超える場合は30文字+「...」
 // に省略する。
 function truncateForPreview(text: string, maxLength = 30): string {
@@ -5983,23 +6000,44 @@ export default function AvatarSpace({
 
   const isVoiceCallActive = micEnabled && eligiblePeerIds.length > 0;
 
-  // ---- タブ非アクティブ・アプリのバックグラウンド化が続いたら自動で退室/ログアウト ----
-  // 永遠ログイン状態(PC)・永遠入室状態を防ぐため。通話中(音声・映像・
-  // 画面共有のいずれか)は時間制限なしで発火させない。通話が終了した時点で
-  // まだ非アクティブなら、そこから改めてカウントを始める(依存配列の
-  // isInCallが変化するたびeffectが再実行され、start関数が呼び直される
-  // ことで実現している)。
-  // スマホ(D-2)とPC(D-3)で挙動が異なる点に注意:
-  // - スマホ: 従来通りアカウントごとログアウト(セッション破棄)する
-  // - PC: F-1でアカウントのログアウトではなく「ルームからの退室」に変更した。
-  //   ログインセッションは維持したまま、handleLeaveRoomと同じ後始末
-  //   (LiveKit切断・アバター消去)だけを行い、ページ遷移はしない
-  //   (再度タブをアクティブにすると、joinedがfalseに戻っているため
-  //   入室前の画面が表示される)。
-  const isInCall = isVoiceCallActive || inCall || screenSharing;
+  // ①③: タブ非アクティブ/バックグラウンド化時に在席ステータスを自動で
+  // 切り替えるための共通ヘルパー(設定画面を経由せず、一時的な在席状態
+  // だけを変える。saveSettingsと同じ「ref更新→setPlayers→channel.track」
+  // のパターン)。
+  const applyAutoPresenceStatus = useCallback((status: PresenceStatus) => {
+    if (!selfState.current || selfState.current.status === status) return;
+    selfState.current.status = status;
+    const updated = selfState.current;
+    setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
+    channelRef.current?.track(updated);
+  }, []);
+
+  // ---- タブ非アクティブ・アプリのバックグラウンド化への対応 ----
+  // 永遠ログイン状態(PC)・永遠入室状態を防ぐため。
+  // PC(①): マイク・ビデオ通話・画面共有のいずれかがON中は、タブを
+  //   切り替えてもステータス変更やカウントダウンは一切行わない
+  //   (isActiveCallでガード。既存のisVoiceCallActiveのような周囲判定
+  //   ではなく、トグルの生の状態で見る)。いずれもOFFの状態でタブを
+  //   非アクティブにした瞬間、即座にステータスを「離席中」にし、8時間
+  //   経過でルームから強制退出させる(handleLeaveRoomと同じ、アカウント
+  //   のログアウトはしない後始末)。タブに戻ると即座に「通話可能」へ戻す。
+  // スマホ(③): PCと異なり、マイク・ビデオがONでも容赦なく画面オフ/
+  //   バックグラウンド化した瞬間に強制マイクオフ・ビデオオフにし、
+  //   ステータスを「離席中」にする(2026-09報告: スマホは画面を伏せても
+  //   通話中判定のまま何もしない旧仕様だと、気づかず延々とマイクが
+  //   繋がりっぱなしになってしまうため)。10分間その状態が続いたら
+  //   ルームから退室させる(ログアウトはしない・ロビーに戻すだけ。
+  //   従来の「アカウントごとログアウト」仕様は廃止した)。タブに戻れば
+  //   在席状態のみ「通話可能」に戻す(マイク・ビデオはOFFのままとし、
+  //   自動では再開しない)。
+  // 自動で「離席中」にした場合のみ、復帰時に「通話可能」へ戻す
+  // (autoAwayRefで判定。ユーザーが手動で「取込み中」等を選んでいた
+  // 場合にタブ復帰で勝手に上書きしてしまわないようにするため)。
+  const isActiveCall = micEnabled || inCall || screenSharing;
   useEffect(() => {
     if (!joined) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const autoAwayRef = { current: false };
 
     const clearTimer = () => {
       if (timer) {
@@ -6008,56 +6046,81 @@ export default function AvatarSpace({
       }
     };
 
-    const mobileLogout = () => {
-      supabase.auth.signOut().finally(() => {
-        window.location.href = guestInviteToken
-          ? `/?invite=${guestInviteToken}`
-          : "/";
-      });
-    };
+    // スマホ/PCの判定は、既存のカメラズーム判定(rAFループ)と同じ
+    // 画面幅の基準(640px未満)に揃えている。
+    const isMobileNow = () =>
+      viewportRef.current.width > 0 && viewportRef.current.width < 640;
 
-    const startTimerIfNeeded = () => {
+    const enterHidden = () => {
       clearTimer();
-      if (document.visibilityState !== "hidden" || isInCall) return;
-      // スマホ/PCの判定は、既存のカメラズーム判定(rAFループ)と同じ
-      // 画面幅の基準(640px未満)に揃えている。
-      const isMobile =
-        viewportRef.current.width > 0 && viewportRef.current.width < 640;
-      const seconds = isMobile
-        ? MOBILE_AUTO_LOGOUT_SECONDS
-        : DESKTOP_AUTO_LOGOUT_SECONDS;
-      timer = setTimeout(() => {
-        if (isMobile) {
-          mobileLogout();
-        } else {
-          handleLeaveRoom();
+      if (isMobileNow()) {
+        forceMuteMic();
+        stopVideoCall();
+        if (!autoAwayRef.current) {
+          autoAwayRef.current = true;
+          applyAutoPresenceStatus("away");
         }
-      }, seconds * 1000);
+        timer = setTimeout(() => {
+          handleLeaveRoom();
+        }, MOBILE_AUTO_LOGOUT_SECONDS * 1000);
+        return;
+      }
+      if (isActiveCall) return;
+      if (!autoAwayRef.current) {
+        autoAwayRef.current = true;
+        applyAutoPresenceStatus("away");
+      }
+      timer = setTimeout(() => {
+        handleLeaveRoom();
+      }, DESKTOP_AUTO_LOGOUT_SECONDS * 1000);
     };
 
-    // スマホでブラウザ/タブを実際に閉じた場合は、上のタイマー(画面オフ・
-    // アプリ切替と区別できないため一律5分待ち)を待たず即座にログアウト
-    // する。pagehideはナビゲーションでも発火するため、通話中は他の端末
-    // への画面遷移などを誤って即ログアウトさせないよう対象外とする。
-    // ただし非同期処理(signOut)がページ破棄前に完了する保証はなく、
-    // 特にiOS Safariでは発火自体が保証されないベストエフォートの実装。
-    const onPageHide = () => {
-      const isMobile =
-        viewportRef.current.width > 0 && viewportRef.current.width < 640;
-      if (isMobile && !isInCall) {
-        mobileLogout();
+    const enterVisible = () => {
+      clearTimer();
+      if (autoAwayRef.current) {
+        autoAwayRef.current = false;
+        applyAutoPresenceStatus("available");
       }
     };
 
-    startTimerIfNeeded();
-    document.addEventListener("visibilitychange", startTimerIfNeeded);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        enterHidden();
+      } else {
+        enterVisible();
+      }
+    };
+
+    // スマホでブラウザ/タブを実際に閉じた場合は、上のタイマー(画面オフ・
+    // アプリ切替と区別できないため一律10分待ち)を待たず即座にルームから
+    // 退室させる(ログアウトはしない)。pagehideはナビゲーションでも
+    // 発火するため誤検知はあるが、副作用はhandleLeaveRoomと同じ「退室」
+    // に留まるため許容する。非同期処理を伴わない同期的な後始末のみの
+    // ため、ページ破棄前でも確実に実行できる。
+    const onPageHide = () => {
+      if (isMobileNow()) {
+        handleLeaveRoom();
+      }
+    };
+
+    if (document.visibilityState === "hidden") {
+      enterHidden();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("pagehide", onPageHide);
     return () => {
       clearTimer();
-      document.removeEventListener("visibilitychange", startTimerIfNeeded);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pagehide", onPageHide);
     };
-  }, [joined, isInCall, supabase, guestInviteToken, handleLeaveRoom]);
+  }, [
+    joined,
+    isActiveCall,
+    handleLeaveRoom,
+    forceMuteMic,
+    stopVideoCall,
+    applyAutoPresenceStatus,
+  ]);
 
   // 前回の記録時刻からの実経過時間を計算してサーバーへ加算する。以前は
   // 「アクティブな間、30秒おきに固定で30秒加算」という作りだったため、
@@ -7294,7 +7357,7 @@ export default function AvatarSpace({
                         </div>
                           </div>
                           <p className="mt-0.5 text-[10px] text-slate-400">
-                            {formatDmClockTime(m.createdAt)}
+                            {formatDmMessageTime(m.createdAt)}
                           </p>
                           {groupedReactions.length > 0 && (
                             <div className="mt-0.5 flex flex-wrap gap-1">
@@ -7692,7 +7755,7 @@ export default function AvatarSpace({
                               </div>
                               </div>
                               <p className="mt-0.5 text-[10px] text-slate-400">
-                                {formatDmClockTime(m.createdAt)}
+                                {formatDmMessageTime(m.createdAt)}
                               </p>
                               {groupedReactions.length > 0 && (
                                 <div className="mt-0.5 flex flex-wrap gap-1">
