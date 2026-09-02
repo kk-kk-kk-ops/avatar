@@ -5106,6 +5106,20 @@ export default function AvatarSpace({
           // (異常切断時はpresenceのleave検知で自動解錠される)。
           // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
           channelRef.current?.track(self);
+          // 自分自身のplayers[selfId.current]のmeetingZoneIdも更新する。
+          // presenceのsyncハンドラは「自分自身の行は上書きしない」設計
+          // (移動loop側が正としてローカルのx,y等を上書きされないための
+          // もの)のため、track()するだけでは自分のplayers上のエントリの
+          // meetingZoneIdは更新されず、eligiblePeerIds側で「自分は今
+          // 会議室に入っている」と正しく判定できない(=会議室内にいる
+          // 本人視点では、外の人の緑サークルに入ると距離判定にフォール
+          // バックして声が漏れて聞こえてしまう)不具合があった
+          // (2026-09報告)。
+          setPlayers((prev) => {
+            const current = prev[self.id];
+            if (!current || current.meetingZoneId === zoneId) return prev;
+            return { ...prev, [self.id]: { ...current, meetingZoneId: zoneId } };
+          });
 
           // 作業エリアに入った瞬間、音声通話・ビデオ通話・画面共有を
           // 強制的にオフにする(ONへ戻すことは各toggle側のガードで禁止する)。
@@ -5268,6 +5282,15 @@ export default function AvatarSpace({
     self.meetingZoneId = zoneId;
     lastTrackedZoneId.current = zoneId;
     channelRef.current?.track(self);
+    // 移動loop側の同種の更新箇所と同じ理由で、自分のplayers上のエントリ
+    // にもmeetingZoneIdを反映する(会議室=conferenceは常にこの確認
+    // ポップアップ経由で入室するため、ここで反映しないと会議室入室時は
+    // 一度もローカルのplayers上のmeetingZoneIdが更新されないままになる)。
+    setPlayers((prev) => {
+      const current = prev[self.id];
+      if (!current) return prev;
+      return { ...prev, [self.id]: { ...current, meetingZoneId: zoneId } };
+    });
     channelRef.current?.send({
       type: "broadcast",
       event: "move",
