@@ -2109,6 +2109,34 @@ $$;
 
 grant execute on function public.create_chat_mentions(uuid, uuid, text, boolean, uuid[]) to authenticated;
 
+-- 通知一覧の「〇〇さんからメンションされました」の表示名を、送信時点の
+-- スナップショット(chat_mentions.mentioner_name)ではなく最新のDB値から
+-- 表示できるようにするための取得関数(2026-09報告: 表示名を変更しても
+-- 過去の通知の表示が古いままだった)。profilesは本人しかSELECTできない
+-- RLSのため、list_chat_group_member_namesと同じ考え方でSECURITY DEFINER
+-- 経由にする。ただし対象はグループ全体ではなく「実際に自分にメンション
+-- 通知を送ってきたことがある相手」に限定し、任意のユーザーの表示名を
+-- 取得できてしまわないようにする。
+drop function if exists public.list_mentioner_names(uuid[]);
+create function public.list_mentioner_names(p_mentioner_user_ids uuid[])
+returns table (user_id uuid, display_name text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select distinct p.user_id, coalesce(p.display_name, p.email, 'ユーザー')
+  from public.profiles p
+  where p.user_id = any(p_mentioner_user_ids)
+    and exists (
+      select 1 from public.chat_mentions cm
+      where cm.mentioner_user_id = p.user_id
+        and cm.mentioned_user_id = auth.uid()
+    );
+$$;
+
+grant execute on function public.list_mentioner_names(uuid[]) to authenticated;
+
 
 -- ------------------------------------------------------------
 -- 9f-4. chat-images: チャットの画像添付機能用Storageバケット。
