@@ -1,5 +1,8 @@
-// 在席ステータス(通話可能/取込み中/離席中)。参加者一覧の丸アイコンの色に使う。
-export type PresenceStatus = "available" | "busy" | "away";
+// 在席ステータス(通話可能/取込み中/離席中/チャットのみ可)。参加者一覧の
+// 丸アイコンの色に使う。chatOnlyは表示上のステータスのみで、現状は
+// マイク・ビデオ通話・画面共有を実際に制限する機能は持たない(work
+// エリアのような強制OFFとは別物)。
+export type PresenceStatus = "available" | "busy" | "away" | "chatOnly";
 
 export type PlayerState = {
   id: string; // ブラウザごとのランダムID(ゲストID)
@@ -32,12 +35,14 @@ export const PRESENCE_STATUS_COLORS: Record<PresenceStatus, string> = {
   available: "#22c55e", // 緑:通話可能
   busy: "#ef4444", // 赤:取込み中
   away: "#eab308", // 黄:離席中
+  chatOnly: "#3b82f6", // 青:チャットのみ可
 };
 
 export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
   available: "通話可能",
   busy: "取込み中",
   away: "離席中",
+  chatOnly: "チャットのみ可",
 };
 
 // public/avatar 内の選択可能なアバター画像一覧。
@@ -258,18 +263,22 @@ export const CHAT_IMAGE_ALLOWED_MIME_TYPES = [
   "image/webp",
 ] as const;
 
-// タブ切替・アプリのバックグラウンド化が続いた際の自動ログアウトまでの
-// 秒数(永遠ログイン状態を防ぐため)。ただし通話中(音声・映像・画面共有の
-// いずれか)は時間制限なしでログアウトさせない。将来的に見直す可能性が
+// タブ切替・アプリのバックグラウンド化が続いた際、ルームから自動退室
+// させるまでの秒数(永遠入室状態を防ぐため)。将来的に見直す可能性が
 // あるため定数として切り出している。
-// PC: タブ非アクティブでもすぐには退出させず、8時間の猶予を持たせる
-// (ログイン状態は維持したままルーム内表示のみ残る想定)。
+// PC: マイク・ビデオ通話・画面共有のいずれもOFFの場合のみ対象。タブ
+// 非アクティブでもすぐには退出させず、8時間の猶予を持たせる(ログイン
+// 状態は維持したままルームから退室するだけ。アカウントのログアウトは
+// しない)。
 export const DESKTOP_AUTO_LOGOUT_SECONDS = 8 * 60 * 60;
 // スマホ: 画面オフ・アプリ切替はブラウザ側の仕様上区別できないため、
-// どちらも同じ「非表示」として扱い、5分の猶予後に自動ログアウトする。
-// ブラウザ自体を閉じた場合は別途pagehideイベントで即座にログアウトする
+// どちらも同じ「非表示」として扱う。通話中かどうかに関わらず強制的に
+// マイク・ビデオをOFFにしたうえで、10分の猶予後にルームから退室させる
+// (2026-09報告によりPCと同じ「退室のみ・ログアウトはしない」挙動に変更。
+// 以前はアカウントごとログアウトしていたが、その仕様は廃止した)。
+// ブラウザ自体を閉じた場合は別途pagehideイベントで即座に退室させる
 // (AvatarSpace.tsx参照。iOS Safariでは発火が保証されない場合がある)。
-export const MOBILE_AUTO_LOGOUT_SECONDS = 5 * 60;
+export const MOBILE_AUTO_LOGOUT_SECONDS = 10 * 60;
 
 export const MAP_WIDTH = 1900;
 export const MAP_HEIGHT = 1900;
