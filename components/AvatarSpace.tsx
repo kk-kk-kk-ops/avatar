@@ -5780,44 +5780,59 @@ export default function AvatarSpace({
     };
   }, [joined, supabase, screenShareDailyLimitSeconds]);
 
-  // 共有中は30秒おきに実利用時間をDBへ加算し、返ってきた本日合計から
-  // 残り時間を再計算する(サーバー側の値を正として同期する)。残り時間が
-  // 尽きたら共有を強制終了する。
-  useEffect(() => {
-    if (!joined || screenShareDailyLimitSeconds === null) return;
-    const interval = setInterval(() => {
-      if (!screenSharing) return;
-      supabase
-        .rpc("increment_daily_usage_seconds", {
-          p_kind: "screen_share",
-          seconds: 30,
-        })
-        .then(({ data, error }) => {
-          if (error) {
-            // eslint-disable-next-line no-console
-            console.error("画面共有利用時間の記録に失敗しました", error);
-            return;
-          }
-          const remaining = Math.max(
-            0,
-            screenShareDailyLimitSeconds - (data ?? 0),
+  // 前回の記録時刻からの実経過時間を計算してサーバーへ加算する
+  // (voiceCallの同種の修正と同じ理由。以前は「共有中、30秒おきに固定で
+  // 30秒加算」だったため、共有終了の瞬間から次のハートビートまでの端数が
+  // 失われ、再開すると使用時間がまき戻って見えていた。2026-09報告)。
+  const screenShareLastFlushAtRef = useRef<number | null>(null);
+  const flushScreenShareUsage = useCallback(() => {
+    const lastAt = screenShareLastFlushAtRef.current;
+    if (lastAt === null || screenShareDailyLimitSeconds === null) return;
+    const now = Date.now();
+    screenShareLastFlushAtRef.current = now;
+    const elapsedSeconds = Math.round((now - lastAt) / 1000);
+    if (elapsedSeconds <= 0) return;
+    supabase
+      .rpc("increment_daily_usage_seconds", {
+        p_kind: "screen_share",
+        seconds: elapsedSeconds,
+      })
+      .then(({ data, error }) => {
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("画面共有利用時間の記録に失敗しました", error);
+          return;
+        }
+        const remaining = Math.max(
+          0,
+          screenShareDailyLimitSeconds - (data ?? 0),
+        );
+        setScreenShareRemainingSeconds(remaining);
+        if (remaining <= 0) {
+          setShareError(
+            "本日の画面共有可能時間の上限に達したため、共有を終了しました。",
           );
-          setScreenShareRemainingSeconds(remaining);
-          if (remaining <= 0) {
-            setShareError(
-              "本日の画面共有可能時間の上限に達したため、共有を終了しました。",
-            );
-            stopScreenShare();
-          }
-        });
-    }, 30000);
-    return () => clearInterval(interval);
+          stopScreenShare();
+        }
+      });
+  }, [supabase, screenShareDailyLimitSeconds, stopScreenShare]);
+
+  useEffect(() => {
+    if (!joined || screenShareDailyLimitSeconds === null || !screenSharing) {
+      return;
+    }
+    screenShareLastFlushAtRef.current = Date.now();
+    const interval = setInterval(flushScreenShareUsage, 30000);
+    return () => {
+      clearInterval(interval);
+      flushScreenShareUsage();
+      screenShareLastFlushAtRef.current = null;
+    };
   }, [
     joined,
     screenSharing,
-    supabase,
     screenShareDailyLimitSeconds,
-    stopScreenShare,
+    flushScreenShareUsage,
   ]);
 
   // 共有中は表示用に1秒おきでローカルカウントダウンする(サーバー同期は
@@ -5856,36 +5871,50 @@ export default function AvatarSpace({
     };
   }, [joined, supabase, videoCallDailyLimitSeconds]);
 
-  useEffect(() => {
-    if (!joined || videoCallDailyLimitSeconds === null) return;
-    const interval = setInterval(() => {
-      if (!inCall) return;
-      supabase
-        .rpc("increment_daily_usage_seconds", {
-          p_kind: "video_call",
-          seconds: 30,
-        })
-        .then(({ data, error }) => {
-          if (error) {
-            // eslint-disable-next-line no-console
-            console.error("ビデオ通話利用時間の記録に失敗しました", error);
-            return;
-          }
-          const remaining = Math.max(
-            0,
-            videoCallDailyLimitSeconds - (data ?? 0),
+  // 理由はscreenShare/voiceCallの同種の修正と同じ(2026-09報告)。
+  const videoCallLastFlushAtRef = useRef<number | null>(null);
+  const flushVideoCallUsage = useCallback(() => {
+    const lastAt = videoCallLastFlushAtRef.current;
+    if (lastAt === null || videoCallDailyLimitSeconds === null) return;
+    const now = Date.now();
+    videoCallLastFlushAtRef.current = now;
+    const elapsedSeconds = Math.round((now - lastAt) / 1000);
+    if (elapsedSeconds <= 0) return;
+    supabase
+      .rpc("increment_daily_usage_seconds", {
+        p_kind: "video_call",
+        seconds: elapsedSeconds,
+      })
+      .then(({ data, error }) => {
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("ビデオ通話利用時間の記録に失敗しました", error);
+          return;
+        }
+        const remaining = Math.max(
+          0,
+          videoCallDailyLimitSeconds - (data ?? 0),
+        );
+        setVideoCallRemainingSeconds(remaining);
+        if (remaining <= 0) {
+          setCallError(
+            "本日のビデオ通話可能時間の上限に達したため、通話を終了しました。",
           );
-          setVideoCallRemainingSeconds(remaining);
-          if (remaining <= 0) {
-            setCallError(
-              "本日のビデオ通話可能時間の上限に達したため、通話を終了しました。",
-            );
-            stopVideoCall();
-          }
-        });
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [joined, inCall, supabase, videoCallDailyLimitSeconds, stopVideoCall]);
+          stopVideoCall();
+        }
+      });
+  }, [supabase, videoCallDailyLimitSeconds, stopVideoCall]);
+
+  useEffect(() => {
+    if (!joined || videoCallDailyLimitSeconds === null || !inCall) return;
+    videoCallLastFlushAtRef.current = Date.now();
+    const interval = setInterval(flushVideoCallUsage, 30000);
+    return () => {
+      clearInterval(interval);
+      flushVideoCallUsage();
+      videoCallLastFlushAtRef.current = null;
+    };
+  }, [joined, inCall, videoCallDailyLimitSeconds, flushVideoCallUsage]);
 
   useEffect(() => {
     if (!inCall || videoCallDailyLimitSeconds === null) return;
