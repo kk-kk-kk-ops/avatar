@@ -2,6 +2,11 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import {
+  SESSION_SUPERSEDED_EVENT,
+  SESSION_SUPERSEDED_WILDCARD,
+  sessionChannelName,
+} from "@/lib/useSessionGuard";
 
 type Props = {
   className?: string;
@@ -12,12 +17,52 @@ type Props = {
   redirectTo?: string;
 };
 
+// 同じアカウントを開いている他のタブ/デバイスにも、このタブでの
+// ログアウトを即座に伝える(2026-09追加。手順9)。無くても、それらの
+// タブは次に認証チェックが走る操作(画面遷移等)をした時点でいずれ
+// ログアウトされるが、それまで通話・画面共有・マイクが動き続けて
+// しまっていたための対策。realtimeの購読が遅い/失敗する場合に
+// ログアウト自体を止めてしまわないよう、短いタイムアウト付きで行う。
+async function notifyOtherTabs(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+) {
+  const channel = supabase.channel(sessionChannelName(userId));
+  await Promise.race([
+    new Promise<void>((resolve) => {
+      channel.subscribe((status) => {
+        if (status !== "SUBSCRIBED") return;
+        channel
+          .send({
+            type: "broadcast",
+            event: SESSION_SUPERSEDED_EVENT,
+            payload: { supersededToken: SESSION_SUPERSEDED_WILDCARD },
+          })
+          .finally(resolve);
+      });
+    }),
+    new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+  ]);
+  supabase.removeChannel(channel);
+}
+
 export default function LogoutButton({ className, redirectTo }: Props) {
   const [loading, setLoading] = useState(false);
 
   const handleLogout = async () => {
     setLoading(true);
     const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      try {
+        await notifyOtherTabs(supabase, user.id);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("他タブへのログアウト通知に失敗しました", err);
+      }
+    }
     await supabase.auth.signOut();
     // ページ全体を再読み込みしてCookie・middlewareの状態を確実にリセットする
     window.location.href = redirectTo ?? "/";

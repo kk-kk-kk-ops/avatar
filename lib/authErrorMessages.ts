@@ -10,4 +10,6 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
     "ネットワークエラーが発生しました。通信環境をご確認のうえ、再度お試しください。",
   invalid_invite:
     "招待リンクが無効です。招待した管理者に再発行を依頼してください。",
+  session_superseded:
+    "別の場所でログインされたため、このセッションは終了しました。",
 };
