@@ -1904,6 +1904,15 @@ export default function AvatarSpace({
           imagePath,
         });
         return true;
+      } catch (err) {
+        // 2026-09 QA指摘: 以前はcatchが無く、送信処理中に例外が発生すると
+        // (Supabaseクライアント側の想定外の例外等)エラーメッセージが
+        // 一切表示されないまま呼び出し元へ例外が伝播し、入力欄の文面も
+        // 復元されない経路があった。
+        // eslint-disable-next-line no-console
+        console.error("チャットメッセージの送信に失敗しました", err);
+        setDmError("送信に失敗しました。時間をおいて再度お試しください。");
+        return false;
       } finally {
         setDmSending(false);
       }
@@ -2016,6 +2025,13 @@ export default function AvatarSpace({
         }
         setChatThreadsRefreshTrigger((n) => n + 1);
         return true;
+      } catch (err) {
+        // 2026-09 QA指摘: postDmMessageと同じ理由でcatchを追加(想定外の
+        // 例外発生時にエラー表示なしで入力内容が失われるのを防ぐ)。
+        // eslint-disable-next-line no-console
+        console.error("グループメッセージの送信に失敗しました", err);
+        setGroupError("送信に失敗しました。時間をおいて再度お試しください。");
+        return false;
       } finally {
         setGroupSending(false);
       }
@@ -3894,6 +3910,11 @@ export default function AvatarSpace({
     if (!joined) return;
     const room = rooms.find((r) => r.id === roomId);
     if (!room?.templateId) return;
+    // 2026-09 QA指摘: 他の大半の非同期effectと異なりcancelledガードが
+    // 無く、テンプレート切替(roomId変更)や退室(joined変更)が短時間に
+    // 連続した場合、既にアンマウント/差し替え済みの古いfetchの結果で
+    // setState群が呼ばれてしまう経路があった。
+    let cancelled = false;
     (async () => {
       const { data } = await supabase
         .from("templates")
@@ -3902,7 +3923,7 @@ export default function AvatarSpace({
         )
         .eq("id", room.templateId)
         .maybeSingle();
-      if (!data) return;
+      if (cancelled || !data) return;
 
       if (data.background_image_url) {
         setBackgroundImageUrl(data.background_image_url);
@@ -3982,6 +4003,9 @@ export default function AvatarSpace({
         setWarpPoints(loadedWarpPoints);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [joined, roomId, rooms, supabase]);
 
   // 作業エリア(kind: "work")内にいる間は音声通話・ビデオ通話・画面共有を
@@ -4104,11 +4128,21 @@ export default function AvatarSpace({
     }
   }, [stopScreenShare, isInWorkZone]);
 
-  const toggleScreenShare = useCallback(() => {
-    if (screenSharing) {
-      stopScreenShare();
-    } else {
-      startScreenShare();
+  // 2026-09 QA指摘: 連打防止の処理中フラグが無く、高速連打でstart/stopの
+  // 呼び出しが二重に走りうる(LiveKit SDKへの重複リクエスト)ため、
+  // トグル関数側に処理中ガードを追加する。
+  const screenShareToggleInFlightRef = useRef(false);
+  const toggleScreenShare = useCallback(async () => {
+    if (screenShareToggleInFlightRef.current) return;
+    screenShareToggleInFlightRef.current = true;
+    try {
+      if (screenSharing) {
+        await stopScreenShare();
+      } else {
+        await startScreenShare();
+      }
+    } finally {
+      screenShareToggleInFlightRef.current = false;
     }
   }, [screenSharing, stopScreenShare, startScreenShare]);
 
@@ -4189,11 +4223,19 @@ export default function AvatarSpace({
     }
   }, [stopVideoCall, isInWorkZone]);
 
-  const toggleVideoCall = useCallback(() => {
-    if (inCall) {
-      stopVideoCall();
-    } else {
-      startVideoCall();
+  // 2026-09 QA指摘: toggleScreenShareと同じ理由で処理中ガードを追加。
+  const videoToggleInFlightRef = useRef(false);
+  const toggleVideoCall = useCallback(async () => {
+    if (videoToggleInFlightRef.current) return;
+    videoToggleInFlightRef.current = true;
+    try {
+      if (inCall) {
+        await stopVideoCall();
+      } else {
+        await startVideoCall();
+      }
+    } finally {
+      videoToggleInFlightRef.current = false;
     }
   }, [inCall, stopVideoCall, startVideoCall]);
 
@@ -5561,7 +5603,11 @@ export default function AvatarSpace({
   // ---- マイクのON/OFF切り替え(LiveKit移行Phase2) ----
   // マイクの取得・送信はlivekitRoomRef(LiveKit)側が担う。ここでは
   // setMicrophoneEnabledの呼び出しとUI状態の同期のみ行う。
+  // 2026-09 QA指摘: toggleScreenShare/toggleVideoCallと同じ理由で処理中
+  // ガードを追加(高速連打でsetMicrophoneEnabledが二重に走るのを防ぐ)。
+  const micToggleInFlightRef = useRef(false);
   const toggleMic = useCallback(async () => {
+    if (micToggleInFlightRef.current) return;
     setMicError(null);
     const next = !micEnabled;
     if (next && isInWorkZone()) {
@@ -5585,6 +5631,7 @@ export default function AvatarSpace({
       );
       return;
     }
+    micToggleInFlightRef.current = true;
     try {
       await room.localParticipant.setMicrophoneEnabled(next);
       setMicEnabled(next);
@@ -5611,6 +5658,8 @@ export default function AvatarSpace({
       setMicError(
         "マイクを使用できませんでした。ブラウザのアドレスバー付近のマイク許可設定を確認してください。",
       );
+    } finally {
+      micToggleInFlightRef.current = false;
     }
   }, [micEnabled, isInWorkZone]);
 

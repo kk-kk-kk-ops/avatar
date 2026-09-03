@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
 import { createClient } from "@/lib/supabase/server";
 import { resolveLivekitServerCredentials } from "@/lib/livekitServers";
 
-// LiveKit移行 Phase1: Token発行のみ。まだAvatarSpace側からは呼ばれない
-// (既存のMetered/自前WebRTCメッシュとは無関係に並行稼働させる)。
+// components/AvatarSpace.tsxから本番導線として呼ばれている。
 // API_SECRETはこのRoute Handler内でしか使わず、クライアントにはJWTのみ返す。
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
@@ -78,8 +77,54 @@ export async function POST(request: Request) {
     );
   }
 
+  const roomName = `avatar-room-${roomId}`;
+
+  // なりすまし対策(2026-09 QA指摘): identityはクライアントが自由に指定できる
+  // 値(components/AvatarSpace.tsxのselfId)で、同室の他参加者はSupabase
+  // Realtime presence経由でお互いのidentityを知ることができる。そのため、
+  // 他人のidentityを指定してこのAPIを呼び直されると、LiveKit側の仕様
+  // (同一identityの新規接続は既存セッションをDUPLICATE_IDENTITYで切断する)
+  // により、任意の参加者を強制的に切断できてしまっていた。
+  //
+  // identityの値そのものはpresenceのidと一致している必要がある(近接判定
+  // による購読先の切り替えがparticipant.identityとpresenceのidを直接
+  // 突き合わせているため、AvatarSpace.tsx側の変更は不要な設計にする)。
+  // そこで値は変えず、「そのidentityを最初に使い始めたのが本当に自分か」を
+  // LiveKit参加者のmetadataに認証済みユーザーIDを埋め込んで検証する。
+  try {
+    const roomService = new RoomServiceClient(url, apiKey, apiSecret);
+    const participants = await roomService.listParticipants(roomName);
+    const existing = participants.find(
+      (p) => p.identity === identity && p.state !== 3 /* DISCONNECTED */,
+    );
+    if (existing?.metadata) {
+      try {
+        const ownerUserId = (
+          JSON.parse(existing.metadata) as { userId?: string }
+        ).userId;
+        if (ownerUserId && ownerUserId !== user.id) {
+          return NextResponse.json(
+            { error: "この識別子は別のユーザーが使用中です" },
+            { status: 409 },
+          );
+        }
+      } catch {
+        // metadataが想定形式でない場合は所有者不明として扱い、ブロックしない
+        // (古いクライアント/移行期の参加者を誤って弾かないため)。
+      }
+    }
+  } catch (err) {
+    // LiveKitサーバーへの参加者一覧取得自体が失敗した場合(サーバー障害等)は、
+    // このなりすましチェックのためだけに正規ユーザーの入室をブロックしない
+    // (どのみちこの後のroom.connect()がLiveKitサーバーへ到達できなければ
+    // 別途失敗する)。
+    // eslint-disable-next-line no-console
+    console.error("LiveKit参加者一覧の取得に失敗しました", err);
+  }
+
   const at = new AccessToken(apiKey, apiSecret, {
     identity,
+    metadata: JSON.stringify({ userId: user.id }),
     ttl: 21600, // 6時間
   });
   at.addGrant({

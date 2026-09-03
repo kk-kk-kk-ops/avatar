@@ -79,6 +79,16 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
     return () => clearInterval(interval);
   }, []);
 
+  // roomsはサーバーコンポーネント側で毎回新しい配列として生成されるため、
+  // このページでrevalidatePathが呼ばれるたびに(ルームの中身自体は
+  // 変わっていなくても)参照が変わる。依存配列にrooms自体を使うとその都度
+  // 全チャンネルを張り直してしまい、再購読の間だけオンライン人数・負荷
+  // スコアが0にリセットされて見える(点滅する)不具合の原因になっていた
+  // (2026-09 QA指摘。app/admin/OnlineCount.tsxで先に対策済みの同じ不具合
+  // パターン)。ルームID列という「内容が変わった時だけ変化する値」に
+  // 依存させる。
+  const roomIds = rooms.map((room) => room.id).join(",");
+
   useEffect(() => {
     if (rooms.length === 0) {
       setStats(EMPTY);
@@ -125,7 +135,8 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
     return () => {
       channels.forEach((channel) => supabase.removeChannel(channel));
     };
-  }, [rooms]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomIds]);
 
   // 負荷スコア: ビデオ通話は1人あたり負荷1。画面共有の実測帯域
   // (送信最大約3.1Mbps、受信最大約625kbps〜2.5Mbps。

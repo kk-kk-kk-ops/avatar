@@ -733,9 +733,22 @@ grant execute on function public.get_daily_usage_used_seconds(text) to authentic
 -- 画像アップロード1日30枚(全プラン共通)の上限管理用。上記の秒数系関数と
 -- 同じ day_key(JST 4:00境界)・テーブルを使うが、加算対象がused_countの
 -- ため専用の関数にする(kindは常に'image_upload'固定でよいため引数化しない)。
+--
+-- 2026-09 QA指摘: 以前はp_limit引数が無く無条件に加算するだけだったため、
+-- 「現在値を取得→上限未満か確認→加算」を呼び出し元(app/api/chat/
+-- compress-image/route.ts)側で行っていた。この2回のRPC呼び出しの間に
+-- 同時に別のアップロードが割り込むと、両方とも「上限未満」と判定して
+-- しまい、1日の上限を多少超過しうるcheck-then-actのレースがあった。
+-- p_limitを渡すと、ON CONFLICT DO UPDATE ... WHEREの行ロックにより
+-- 「現在値の確認」と「加算」を1つの原子的な操作にできる(上限に達して
+-- いる場合はDO UPDATEの対象行が更新されず、この呼び出し全体がFOUND=false
+-- になるため、加算されなかったことをnullで呼び出し元に伝える)。
+-- p_limitを省略(null)した場合は上限チェックをせず常に加算する
+-- (呼び出し元で別途チェック済みの場合のための後方互換)。
 drop function if exists public.increment_daily_image_upload_count();
+drop function if exists public.increment_daily_image_upload_count(integer);
 
-create function public.increment_daily_image_upload_count()
+create function public.increment_daily_image_upload_count(p_limit integer default null)
 returns integer
 language plpgsql
 security definer
@@ -755,13 +768,20 @@ begin
   on conflict (user_id, day_key, kind) do update
     set used_count = daily_usage.used_count + 1,
         updated_at = now()
+    where p_limit is null or daily_usage.used_count < p_limit
   returning used_count into v_total;
+
+  if not found then
+    -- 上限に達しているため加算されなかった。呼び出し元はnullを
+    -- 「今回のアップロードは拒否」として扱う。
+    return null;
+  end if;
 
   return v_total;
 end;
 $$;
 
-grant execute on function public.increment_daily_image_upload_count() to authenticated;
+grant execute on function public.increment_daily_image_upload_count(integer) to authenticated;
 
 drop function if exists public.get_daily_image_upload_count();
 
@@ -917,6 +937,50 @@ create policy "chat_messages: update own dm"
   on public.chat_messages for update
   using (sender_user_id = auth.uid())
   with check (sender_user_id = auth.uid());
+
+-- 9f-1a. sender_nameのなりすまし防止トリガー(2026-09 QA指摘)。
+--   sender_nameは元々「メッセージ送信時点の表示名スナップショット」として
+--   クライアントが自由に送信する設計だったが、RLS「chat_messages: insert
+--   own dm」はsender_user_id = auth.uid()のみを検証しており、sender_name
+--   の値自体はprofiles.display_nameと一切突き合わせていなかった。その
+--   ため、送信者が自分のプロフィール名とは異なる任意の名前(別の実在
+--   参加者の名前等)を騙って送信できてしまっていた。
+--
+--   通常のクライアントは元々「送信時点の自分の表示名」を正しく送っている
+--   ため、INSERT時に必ずprofiles.display_nameで上書きしても正直な利用者
+--   から見た挙動は変わらない(値が一致しているため)。profilesの行が
+--   見つからない場合(理論上ほぼ起こらないが念のため)は、既存の
+--   NEW.sender_nameをそのまま残す(INSERT自体を失敗させない)。
+--   通常ルート(RLS経由の直接INSERT)・招待URL経由の
+--   send_chat_message_by_invite_token()・leave_chat_group()の退出通知
+--   のいずれの経路で挿入されても、BEFORE INSERTトリガーのため一律に適用
+--   される。
+create or replace function public.force_chat_message_sender_name()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_display_name text;
+begin
+  select coalesce(display_name, email) into v_display_name
+  from public.profiles
+  where user_id = new.sender_user_id;
+
+  if v_display_name is not null and v_display_name <> '' then
+    new.sender_name := v_display_name;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists chat_messages_force_sender_name on public.chat_messages;
+create trigger chat_messages_force_sender_name
+  before insert on public.chat_messages
+  for each row
+  execute function public.force_chat_message_sender_name();
 
 -- 9f-2. viewOnly(既に自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
 --       のチャット対応。上記のRLSは「自分のprofiles.account_id = ルームの
