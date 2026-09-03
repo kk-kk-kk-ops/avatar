@@ -757,6 +757,15 @@ export default function AvatarSpace({
     null,
   );
   const [dmInput, setDmInput] = useState("");
+  const dmInputRef = useRef<HTMLInputElement | null>(null);
+  // グループチャットと同じ「@」候補ポップアップをDMにも表示するための状態
+  // (2026-09追加)。DMは相手が1人だけなので機能的な意味は無く、見た目・
+  // 操作感をグループチャットと揃えるためだけのUI。groupMentionQueryと
+  // 同じ形(start=対象の「@」がdmInput内で始まる位置、query=絞り込み文字列)。
+  const [dmMentionQuery, setDmMentionQuery] = useState<{
+    start: number;
+    query: string;
+  } | null>(null);
   const [dmSending, setDmSending] = useState(false);
   const [dmError, setDmError] = useState<string | null>(null);
   const [dmImageUploading, setDmImageUploading] = useState(false);
@@ -2561,6 +2570,52 @@ export default function AvatarSpace({
       });
     },
     [groupMentionQuery, groupInput, autoResizeGroupInput],
+  );
+
+  // DM入力欄の「@」候補ポップアップ(2026-09追加)。handleGroupInputChange
+  // と全く同じ判定ロジック(直前が「(先頭or空白)+@+空白を含まない文字列」
+  // かどうか)を、DMの一行<input>向けに適用する。
+  const handleDmInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      setDmInput(value);
+      const cursor = e.target.selectionStart ?? value.length;
+      const beforeCursor = value.slice(0, cursor);
+      const match = /(?:^|\s)@([^\s@]*)$/.exec(beforeCursor);
+      if (match) {
+        setDmMentionQuery({
+          start: beforeCursor.lastIndexOf("@"),
+          query: match[1],
+        });
+      } else {
+        setDmMentionQuery(null);
+      }
+    },
+    [],
+  );
+
+  // 候補選択(selectGroupMentionCandidateと同じ考え方。DMは相手が1人だけ
+  // なので、常にその相手の表示名が挿入される)。
+  const selectDmMentionCandidate = useCallback(
+    (label: string) => {
+      if (!dmMentionQuery) return;
+      const el = dmInputRef.current;
+      const cursor = el?.selectionStart ?? dmInput.length;
+      const before = dmInput.slice(0, dmMentionQuery.start);
+      const after = dmInput.slice(cursor);
+      const inserted = `@${label} `;
+      const next = before + inserted + after;
+      setDmInput(next);
+      setDmMentionQuery(null);
+      const nextCursor = before.length + inserted.length;
+      requestAnimationFrame(() => {
+        const target = dmInputRef.current;
+        if (!target) return;
+        target.focus();
+        target.setSelectionRange(nextCursor, nextCursor);
+      });
+    },
+    [dmMentionQuery, dmInput],
   );
 
   const sendGroupMessage = useCallback(async () => {
@@ -7395,6 +7450,22 @@ export default function AvatarSpace({
                 (t) => !t.isGroup && t.threadId === selectedPeerUserId,
               );
               const thread = dmThreads[selectedPeerUserId] ?? [];
+              // 「@」候補ポップアップ用(2026-09追加)。DMは相手が1人だけ
+              // なので、上のヘッダー表示と同じ名前解決(オンライン中は
+              // playerList由来のpeer.name、そうでなければlist_chat_threads
+              // 由来のthreadName)をそのまま候補ラベルにする。
+              const dmMentionCandidateLabel =
+                peer?.name ?? threadSummary?.threadName ?? null;
+              const dmMentionCandidates =
+                dmMentionQuery && dmMentionCandidateLabel && selectedPeerUserId
+                  ? [
+                      { key: selectedPeerUserId, label: dmMentionCandidateLabel },
+                    ].filter((c) =>
+                      c.label
+                        .toLowerCase()
+                        .includes(dmMentionQuery.query.toLowerCase()),
+                    )
+                  : [];
               return (
                 <>
                   <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
@@ -7745,38 +7816,73 @@ export default function AvatarSpace({
                     >
                       {dmImageUploading ? "…" : "+"}
                     </button>
-                    <input
-                      value={dmInput}
-                      onChange={(e) => setDmInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                          if (dmEditingMessageId) {
-                            updateDmMessage();
-                          } else {
-                            sendDmMessage();
+                    <div className="relative min-w-0 flex-1">
+                      {dmMentionQuery && dmMentionCandidates.length > 0 && (
+                        <div className="absolute bottom-full left-0 right-0 z-30 mb-1 max-h-40 overflow-y-auto rounded-lg bg-slate-800 py-1 text-xs text-white shadow-lg">
+                          {dmMentionCandidates.map((c) => (
+                            <button
+                              key={c.key}
+                              type="button"
+                              // mousedownでフォーカスが入力欄から外れる前に
+                              // onClickより先に発火させ、blurでポップアップが
+                              // 消える競合を防ぐ(groupMentionCandidatesと同じ)。
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => selectDmMentionCandidate(c.label)}
+                              className="block w-full px-3 py-1.5 text-left hover:bg-slate-700"
+                            >
+                              @{c.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <input
+                        ref={dmInputRef}
+                        value={dmInput}
+                        onChange={handleDmInputChange}
+                        onKeyDown={(e) => {
+                          if (e.nativeEvent.isComposing) return;
+                          if (
+                            e.key === "Enter" &&
+                            dmMentionQuery &&
+                            dmMentionCandidates.length > 0
+                          ) {
+                            e.preventDefault();
+                            selectDmMentionCandidate(dmMentionCandidates[0].label);
+                            return;
                           }
-                        }
-                      }}
-                      onPaste={(e) => {
-                        const items = e.clipboardData?.items;
-                        if (!items) return;
-                        const imageFiles: File[] = [];
-                        for (let i = 0; i < items.length; i++) {
-                          const item = items[i];
-                          if (item.type.startsWith("image/")) {
-                            const file = item.getAsFile();
-                            if (file) imageFiles.push(file);
+                          if (e.key === "Escape" && dmMentionQuery) {
+                            setDmMentionQuery(null);
+                            return;
                           }
-                        }
-                        if (imageFiles.length > 0) {
-                          e.preventDefault();
-                          stageDmImages(imageFiles);
-                        }
-                      }}
-                      maxLength={500}
-                      placeholder="メッセージを入力"
-                      className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
-                    />
+                          if (e.key === "Enter") {
+                            if (dmEditingMessageId) {
+                              updateDmMessage();
+                            } else {
+                              sendDmMessage();
+                            }
+                          }
+                        }}
+                        onPaste={(e) => {
+                          const items = e.clipboardData?.items;
+                          if (!items) return;
+                          const imageFiles: File[] = [];
+                          for (let i = 0; i < items.length; i++) {
+                            const item = items[i];
+                            if (item.type.startsWith("image/")) {
+                              const file = item.getAsFile();
+                              if (file) imageFiles.push(file);
+                            }
+                          }
+                          if (imageFiles.length > 0) {
+                            e.preventDefault();
+                            stageDmImages(imageFiles);
+                          }
+                        }}
+                        maxLength={500}
+                        placeholder="メッセージを入力"
+                        className="w-full rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
+                      />
+                    </div>
                     <button
                       onClick={dmEditingMessageId ? updateDmMessage : sendDmMessage}
                       disabled={
