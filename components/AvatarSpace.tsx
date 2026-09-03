@@ -3908,20 +3908,51 @@ export default function AvatarSpace({
   // 各ルームで個別に保存する必要がない。
   useEffect(() => {
     if (!joined) return;
-    const room = rooms.find((r) => r.id === roomId);
-    if (!room?.templateId) return;
     // 2026-09 QA指摘: 他の大半の非同期effectと異なりcancelledガードが
     // 無く、テンプレート切替(roomId変更)や退室(joined変更)が短時間に
     // 連続した場合、既にアンマウント/差し替え済みの古いfetchの結果で
     // setState群が呼ばれてしまう経路があった。
     let cancelled = false;
     (async () => {
+      // 2026-09 QA指摘(新規不具合): 以前はここで props の rooms(=
+      // app/page.tsxのサーバーコンポーネントがページ表示時に1回だけ
+      // 取得したスナップショット)からtemplate_idを読んでいた。招待URL
+      // 経由のゲストが入室前のロビー画面で待っている間に管理者がルーム
+      // デザインを変更すると、既に入室済みの参加者はforce-leaveの
+      // broadcastで強制退出・再入室させられる一方、まだRealtime
+      // チャンネルを購読していないロビー待機中のゲストにはbroadcastが
+      // 届かない。その結果、ロビーで待っていたゲストだけが古い
+      // template_idのまま入室してしまい、見た目上は別のルームデザインに
+      // 見えるのに、実際には同じLiveKitルーム(roomIdは変わらないため)
+      // に接続され、音声・映像・画面共有がそのまま繋がってしまっていた。
+      // 入室する瞬間に必ずDBからtemplate_idを取り直すことで解消する。
+      const { data: roomRow } = viewOnlyInviteToken
+        ? await (async () => {
+            const res = await supabase.rpc("list_rooms_by_invite_token", {
+              token: viewOnlyInviteToken,
+            });
+            const matched = (
+              res.data as Array<{
+                id: string;
+                template_id: string | null;
+              }> | null
+            )?.find((r) => r.id === roomId);
+            return { data: matched ? { template_id: matched.template_id } : null };
+          })()
+        : await supabase
+            .from("rooms")
+            .select("template_id")
+            .eq("id", roomId)
+            .maybeSingle();
+      if (cancelled || !roomRow?.template_id) return;
+      const templateId = roomRow.template_id;
+
       const { data } = await supabase
         .from("templates")
         .select(
           "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y",
         )
-        .eq("id", room.templateId)
+        .eq("id", templateId)
         .maybeSingle();
       if (cancelled || !data) return;
 
@@ -4006,7 +4037,7 @@ export default function AvatarSpace({
     return () => {
       cancelled = true;
     };
-  }, [joined, roomId, rooms, supabase]);
+  }, [joined, roomId, viewOnlyInviteToken, supabase]);
 
   // 作業エリア(kind: "work")内にいる間は音声通話・ビデオ通話・画面共有を
   // 一切ONにできない(既にONの場合は入室時点でoffMeetingZone側で強制OFF
