@@ -6589,10 +6589,61 @@ export default function AvatarSpace({
     };
   }, [joined, rooms, supabase]);
 
+  // 入室前ロビー画面のプレビュー画像・ルーム名を常に最新化する
+  // (2026-09報告)。roomsはapp/page.tsxがページ表示時に1回だけ取得した
+  // スナップショットのため、管理者がロビー待機中にルームデザインを変更
+  // すると、入室後の表示(別途fetchし直すよう修正済み)はともかく、この
+  // 入室前プレビューのサムネイル・ルーム名はpropsの古い値のまま変化せず、
+  // 入退室してもブラウザを再読み込みするまで直らなかった。ロビー画面に
+  // 戻ってくるたび(=joinedがfalseになるたび)にDBから最新のname/
+  // preview_imageを取り直す。
+  const [lobbyRoomInfo, setLobbyRoomInfo] = useState<{
+    name: string;
+    previewImage: string;
+  } | null>(null);
+  useEffect(() => {
+    if (joined) return;
+    const room = rooms[0];
+    if (!room) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = viewOnlyInviteToken
+        ? await (async () => {
+            const res = await supabase.rpc("list_rooms_by_invite_token", {
+              token: viewOnlyInviteToken,
+            });
+            const matched = (
+              res.data as Array<{
+                id: string;
+                name: string;
+                preview_image: string;
+              }> | null
+            )?.find((r) => r.id === room.id);
+            return { data: matched ?? null };
+          })()
+        : await supabase
+            .from("rooms")
+            .select("name, preview_image")
+            .eq("id", room.id)
+            .maybeSingle();
+      if (cancelled || !data) return;
+      setLobbyRoomInfo({ name: data.name, previewImage: data.preview_image });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, rooms, viewOnlyInviteToken, supabase]);
+
   // ---- 入室前:ルームプレビュー(選択不可)・アバター選択・名前入力 ----
   // F-2でルーム選択画面を廃止し、ログイン後は直接この画面へ来る。
   if (!joined) {
-    const room = rooms[0];
+    const room = rooms[0]
+      ? {
+          ...rooms[0],
+          name: lobbyRoomInfo?.name ?? rooms[0].name,
+          previewImage: lobbyRoomInfo?.previewImage ?? rooms[0].previewImage,
+        }
+      : undefined;
     return (
       <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
         <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
