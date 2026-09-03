@@ -1760,7 +1760,14 @@ begin
     from public.chat_messages m
     where m.group_id = p_group_id and m.image_path is not null;
 
-    delete from public.chat_groups where id = p_group_id;
+    -- 2026-09 QA指摘(不具合1): この関数はreturns table (id uuid, ...)の
+    -- ため、id という名前のPL/pgSQL変数(戻り値列)が暗黙に存在する。
+    -- 以前はここが「where id = p_group_id」と無修飾だったため、
+    -- テーブル列chat_groups.idなのか関数の戻り値idなのかで
+    -- "column reference \"id\" is ambiguous"(42702)エラーになり、
+    -- 最後の1人が退出しようとすると必ず失敗していた(関数作成時からの
+    -- 潜在バグ。この分岐は今回のQAで初めて実機で通されるまで未検出だった)。
+    delete from public.chat_groups where chat_groups.id = p_group_id;
   end if;
 
   return query
