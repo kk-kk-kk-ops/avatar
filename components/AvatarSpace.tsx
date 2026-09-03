@@ -6505,9 +6505,21 @@ export default function AvatarSpace({
       expandedMediaHadStreamRef.current = true;
       return;
     }
-    if (expandedMediaHadStreamRef.current) {
+    if (!expandedMediaHadStreamRef.current) return;
+    // 2026-09報告: スマホで画面共有を最大化表示すると、そのtrackSidを
+    // 初めて購読した時だけ一瞬で解除されてしまう不具合があった。原因は
+    // 上のTrackSubscribedハンドラにあるD-1(黒画面固まり)対策のキーフレーム
+    // 再要求(購読を一度false→true に切り替える、最大約1.8秒のkick処理)で、
+    // その間remoteScreenStreamsから一瞬だけストリームが消えることを、この
+    // effectが「相手が共有をやめた」と誤検知して即座に閉じていたため
+    // (kickはtrackSidごとに1回しか走らないため、2回目以降の視聴では
+    // 再現しない)。selectedScreenSharerIdの離脱判定(数十行下、同じ理由の
+    // 5秒猶予)と同じ考え方で、猶予を置いてから本当に消えたままかを
+    // 確認してから閉じるようにする。
+    const timer = setTimeout(() => {
       setExpandedMedia(null);
-    }
+    }, 3000);
+    return () => clearTimeout(timer);
   }, [expandedMedia, remoteScreenStreams, remoteCallStreams]);
 
   // ---- スマホ用タッチ操作(既存のkeysDownセットに仮想キーを追加/削除するだけ) ----
