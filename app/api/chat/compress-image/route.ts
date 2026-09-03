@@ -162,7 +162,25 @@ export async function POST(request: Request) {
   }
 
   await serviceClient.storage.from("chat-images").remove([rawPath]);
-  await supabase.rpc("increment_daily_image_upload_count");
+
+  // 76-85行目の事前チェックはcheck-then-actのため、同時に複数リクエストが
+  // 走ると上限を多少超過しうる(2026-09 QA指摘)。ここでの最終加算は
+  // p_limitを渡し、DB側の行ロックで「チェックと加算」を1つの原子的な
+  // 操作にした関数を使うことで、同時リクエストでも上限を厳密に守る
+  // (supabase/consolidated_setup.sql 9e節参照)。
+  const { data: newCount } = await supabase.rpc(
+    "increment_daily_image_upload_count",
+    { p_limit: DAILY_IMAGE_UPLOAD_LIMIT },
+  );
+  if (newCount === null) {
+    // 上限に達していたため加算されなかった(同時アップロードによる競合)。
+    // 既にアップロード済みの最終画像を巻き戻す。
+    await serviceClient.storage.from("chat-images").remove([finalPath]);
+    return NextResponse.json(
+      { error: `1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです` },
+      { status: 429 },
+    );
+  }
 
   return NextResponse.json({ imagePath: finalPath });
 }

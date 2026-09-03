@@ -12,11 +12,17 @@ export const runtime = "nodejs";
 // app/api/cron/cleanup-chat-history/route.tsと同じ方針でここだけ
 // Service Role経由のStorage APIを使う)。
 //
-// leave_chat_group自体が「本人が実際にそのグループのメンバーだったか」を
-// 検証済みであることを前提に、ここでは「ログイン済みかどうか」のみを
-// 確認する(グループは既に削除済みのため、この時点でDB照合はできない。
-// パスはUUIDを含み推測不可能なため、認証済みユーザーからの誤ったパス
-// 指定があっても実害は無い)。
+// 2026-09 QA指摘: 以前は「ログイン済みかどうか」のみを確認しており、
+// 認証済みユーザーであれば会話の当事者かどうかに関わらず、正規のAPI
+// レスポンス経由で知り得る任意のimage_pathを指定してService Role権限で
+// 削除できてしまっていた(パスの推測不可能性はなりすまし対策にならない。
+// 会話相手には画像一覧取得の一部として正規に見えているため)。
+// leave_chat_group()は「グループごと削除された(=chat_messagesもcascade
+// 削除済み)」ときにだけこの一覧を返す設計のため、「そのimage_pathを
+// 参照するchat_messages行が現在1件も存在しない」ことをここで検証すれば、
+// 新しいテーブルを追加せずに「本当に空になったグループの画像か」を
+// 確認できる(進行中の会話の画像はまだ対応するメッセージ行が残っている
+// ため、この検証で弾かれる)。
 export async function POST(request: NextRequest) {
   const supabase = createClient();
   const {
@@ -27,8 +33,12 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => null);
-  const imagePaths = body?.imagePaths as string[] | undefined;
-  if (!imagePaths || !Array.isArray(imagePaths) || imagePaths.length === 0) {
+  const requestedPaths = body?.imagePaths as string[] | undefined;
+  if (
+    !requestedPaths ||
+    !Array.isArray(requestedPaths) ||
+    requestedPaths.length === 0
+  ) {
     return NextResponse.json({ deletedImages: 0 });
   }
 
@@ -43,6 +53,34 @@ export async function POST(request: NextRequest) {
   const serviceClient = createSupabaseClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   });
+
+  // 現在もchat_messagesに参照が残っているパス(=進行中の会話の画像、または
+  // 不正に指定されたパス)を除外し、本当に孤立したパスだけを削除対象にする。
+  const { data: stillReferenced, error: refError } = await serviceClient
+    .from("chat_messages")
+    .select("image_path")
+    .in("image_path", requestedPaths);
+  if (refError) {
+    console.error("画像参照の検証に失敗しました", refError);
+    return NextResponse.json(
+      { error: "画像の削除に失敗しました" },
+      { status: 500 },
+    );
+  }
+  const referencedSet = new Set(
+    (stillReferenced ?? []).map((row) => row.image_path as string),
+  );
+  const imagePaths = requestedPaths.filter((p) => !referencedSet.has(p));
+  const rejectedCount = requestedPaths.length - imagePaths.length;
+  if (rejectedCount > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `cleanup-group-images: ${rejectedCount}件のパスが現在も参照されているため削除をスキップしました(user=${user.id})`,
+    );
+  }
+  if (imagePaths.length === 0) {
+    return NextResponse.json({ deletedImages: 0 });
+  }
 
   const { error } = await serviceClient.storage
     .from("chat-images")
