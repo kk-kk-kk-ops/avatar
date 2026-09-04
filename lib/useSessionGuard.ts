@@ -65,7 +65,14 @@ export function useSessionGuard(
       if (cancelled) return;
       cancelled = true;
       onForceLogoutRef.current?.();
-      supabase.auth.signOut().finally(() => {
+      // 2026-09 実機確認で判明: scopeを指定しない signOut() は既定で
+      // "global"(そのユーザーの全セッションを一括で無効化)になる。
+      // ここは「このタブ(=乗っ取られた側)だけをログアウトさせたい」
+      // 場面のため、"local"を明示しないと、後から正当にログインした
+      // 側(=乗っ取った側)のセッションまで巻き添えで無効化されてしまい、
+      // 以後の認証付きリクエスト(LiveKitトークン取得等)が軒並み失敗する
+      // 重大な不具合になっていた。
+      supabase.auth.signOut({ scope: "local" }).finally(() => {
         const base = redirectToRef.current ?? "/";
         const separator = base.includes("?") ? "&" : "?";
         window.location.href = `${base}${separator}error=session_superseded`;
