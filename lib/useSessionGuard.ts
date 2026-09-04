@@ -39,9 +39,20 @@ function getOrCreateSessionToken(): string {
 // "前"に呼ばれる(LiveKit接続の明示的な切断など、呼び出し元固有の
 // 後片付けが必要な場合に使う。無くても遷移自体でWebRTC接続は破棄
 // されるため省略可)。
-export function useSessionGuard(onForceLogout?: () => void) {
+// redirectTo: 強制ログアウト後の遷移先(省略時は"/")。LogoutButtonの
+// redirectToと同じ考え方で、招待URL経由のゲストの場合は呼び出し元から
+// "/?invite=トークン"を渡すことで、強制ログアウト後も同じ招待URLの
+// ゲスト用ログイン画面に戻れるようにする(2026-09追加。手順9の実機確認で、
+// 招待URLゲストが強制ログアウトされると管理者用ログイン画面に飛ばされて
+// しまう不具合が見つかったための対応)。
+export function useSessionGuard(
+  onForceLogout?: () => void,
+  redirectTo?: string,
+) {
   const onForceLogoutRef = useRef(onForceLogout);
   onForceLogoutRef.current = onForceLogout;
+  const redirectToRef = useRef(redirectTo);
+  redirectToRef.current = redirectTo;
 
   useEffect(() => {
     const supabase = createClient();
@@ -55,7 +66,9 @@ export function useSessionGuard(onForceLogout?: () => void) {
       cancelled = true;
       onForceLogoutRef.current?.();
       supabase.auth.signOut().finally(() => {
-        window.location.href = "/?error=session_superseded";
+        const base = redirectToRef.current ?? "/";
+        const separator = base.includes("?") ? "&" : "?";
+        window.location.href = `${base}${separator}error=session_superseded`;
       });
     };
 
