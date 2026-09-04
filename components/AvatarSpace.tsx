@@ -1208,6 +1208,15 @@ export default function AvatarSpace({
   // 送ってきている相手をpresenceスナップショットの瞬間的な欠落だけで
   // 誤って「不在」と判定しないようにするための参照。
   const lastMoveAtRef = useRef<Map<string, number>>(new Map());
+  // presenceの"leave"イベントは、瞬間的なWebSocket再接続でも一度発火して
+  // しまうことがある(即座に再trackされ在室状況自体は変わっていない)。
+  // 即座に削除すると「実際は在室しているのに参加者一覧から名前が一瞬
+  // 消える」症状になるため(2026-09報告)、猶予時間を置いてから、その
+  // 間にpresenceへ戻ってきていないか確認したうえで削除する
+  // (下のpresenceチャンネル接続エフェクト内で使用)。
+  const pendingLeaveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
   const viewportRef = useRef({ width: 0, height: 0 });
 
   // 画面共有・ビデオ通話のエラーメッセージは5秒で自動的に消す
@@ -4402,6 +4411,9 @@ export default function AvatarSpace({
     if (!joined) return;
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    // presenceの瞬間的なleave→即rejoinを在室状況の変化として扱わない
+    // ための猶予時間(下のleaveハンドラ参照)。
+    const LEAVE_GRACE_MS = 3000;
 
     const connectChannel = () => {
       if (cancelled) return;
@@ -4414,6 +4426,17 @@ export default function AvatarSpace({
       channel
         .on("presence", { event: "sync" }, () => {
           const state = channel.presenceState<PlayerState>();
+
+          // syncで在室が確認できた相手は、下のleaveハンドラが予約した
+          // 「猶予後に削除」のタイマーがあれば取り消す(leave→即rejoinの
+          // 瞬間的な揺れ戻りで、実際には消えていなかったことが確定するため)。
+          Object.keys(state).forEach((key) => {
+            const timer = pendingLeaveTimersRef.current.get(key);
+            if (timer) {
+              clearTimeout(timer);
+              pendingLeaveTimersRef.current.delete(key);
+            }
+          });
 
           // syncイベントは複数人が同時に在室状況を更新した際、瞬間的に
           // 不完全なスナップショットが届くことがある。そのタイミングで
@@ -4505,12 +4528,27 @@ export default function AvatarSpace({
           });
         })
         .on("presence", { event: "leave" }, ({ key }) => {
-          peerPositionsRef.current.delete(key);
-          setPlayers((prev) => {
-            const copy = { ...prev };
-            delete copy[key];
-            return copy;
-          });
+          // 即座には削除せず、猶予時間(LEAVE_GRACE_MS)を置いてから
+          // presenceへ戻ってきていないか再確認する(上のコメント参照)。
+          const existingTimer = pendingLeaveTimersRef.current.get(key);
+          if (existingTimer) clearTimeout(existingTimer);
+          const timer = setTimeout(() => {
+            pendingLeaveTimersRef.current.delete(key);
+            const latestState = channelRef.current?.presenceState<PlayerState>();
+            if (latestState && latestState[key]) {
+              // 猶予中に再trackされ、既に在室状況へ戻っていた
+              return;
+            }
+            peerPositionsRef.current.delete(key);
+            lastMoveAtRef.current.delete(key);
+            setPlayers((prev) => {
+              if (!(key in prev)) return prev;
+              const copy = { ...prev };
+              delete copy[key];
+              return copy;
+            });
+          }, LEAVE_GRACE_MS);
+          pendingLeaveTimersRef.current.set(key, timer);
         })
         .on("broadcast", { event: "move" }, ({ payload }) => {
           const p = payload as PlayerState;
@@ -4520,6 +4558,13 @@ export default function AvatarSpace({
           // なので、下の在室状況の自己修復(2回連続不在で削除)の対象から
           // 外すために記録しておく。
           lastMoveAtRef.current.set(p.id, Date.now());
+          // 同じ理由で、leaveイベント由来の削除猶予タイマーも取り消す
+          // (動き続けている=実際には在室している)。
+          const pendingLeaveTimer = pendingLeaveTimersRef.current.get(p.id);
+          if (pendingLeaveTimer) {
+            clearTimeout(pendingLeaveTimer);
+            pendingLeaveTimersRef.current.delete(p.id);
+          }
 
           // 位置(見た目)はReactのstateを介さず、補間(interpolation)用の
           // target座標だけを更新する。実際の描画は毎フレームのrAFループで行う。
@@ -4981,6 +5026,8 @@ export default function AvatarSpace({
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      pendingLeaveTimersRef.current.forEach((timer) => clearTimeout(timer));
+      pendingLeaveTimersRef.current.clear();
       channelRef.current?.unsubscribe();
       channelRef.current = null;
     };
