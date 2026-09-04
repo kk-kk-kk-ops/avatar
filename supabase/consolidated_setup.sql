@@ -2449,6 +2449,15 @@ create table if not exists public.online_sessions (
   last_seen_at timestamptz not null default now()
 );
 
+-- 多重ログイン(同一user_idでの複数タブ・複数デバイス)検知用
+-- (2026-09追加。手順9)。ブラウザタブごとにクライアント側で生成する
+-- ランダムな値(sessionStorageに保存。タブを閉じるまで同じ値が続く)。
+-- 既存行にはまだ値が無い(null)ため、claim_session側で「以前のセッション
+-- 情報が無い」として扱われ、この列追加直後に誤って誰かを強制ログアウト
+-- させることはない。
+alter table public.online_sessions
+  add column if not exists session_token text;
+
 alter table public.online_sessions enable row level security;
 
 drop policy if exists "online_sessions: upsert own" on public.online_sessions;
@@ -2474,6 +2483,49 @@ as $$
 $$;
 
 grant execute on function public.get_online_session_count() to authenticated;
+
+-- 多重ログイン検知(2026-09追加。手順9)。バーチャル空間・管理画面・
+-- マスター画面のいずれかを開いた時点で、クライアントが自分の
+-- session_token(タブごとのランダム値)を渡してこの関数を呼ぶ。
+-- 「このuser_idに既に別のsession_tokenが記録されていた」場合、その
+-- 古いsession_tokenを返す。呼び出し元(lib/useSessionGuard.ts)は、
+-- 戻り値が非nullであれば、その古いsession_tokenを対象にSupabase
+-- Realtimeのuser-session-{userId}チャンネルへ強制ログアウトの
+-- 通知を配信する(=後からログインした方を優先し、既存セッションを
+-- 強制的に切断する)。
+drop function if exists public.claim_session(text);
+
+create function public.claim_session(p_session_token text)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_previous_token text;
+begin
+  if auth.uid() is null then
+    return null;
+  end if;
+
+  select session_token into v_previous_token
+  from public.online_sessions
+  where user_id = auth.uid();
+
+  insert into public.online_sessions (user_id, session_token, last_seen_at)
+  values (auth.uid(), p_session_token, now())
+  on conflict (user_id) do update
+    set session_token = excluded.session_token,
+        last_seen_at = excluded.last_seen_at;
+
+  if v_previous_token is not null and v_previous_token <> p_session_token then
+    return v_previous_token;
+  end if;
+  return null;
+end;
+$$;
+
+grant execute on function public.claim_session(text) to authenticated;
 
 -- 契約(アカウント)作成時に、どの物理LiveKitサーバーへ割り当てるかを
 -- ラウンドロビンで決めるための集計関数。individual accountの中身は返さず

@@ -14,6 +14,7 @@ import {
 } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
 import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
+import { useSessionGuard } from "@/lib/useSessionGuard";
 import {
   PlayerState,
   PresenceStatus,
@@ -1021,6 +1022,13 @@ export default function AvatarSpace({
   // 音声・映像・画面共有はLiveKit移行(Phase2〜4)でLiveKit経由に切り替えた
   // ため、自前PeerConnectionメッシュ関連の状態はPhase6で全て廃止した。
   const livekitRoomRef = useRef<LiveKitRoom | null>(null);
+
+  // 多重ログイン検知(2026-09追加。手順9)。別のタブ/デバイスで同じ
+  // アカウントが後からログインしてきた場合、このタブを強制ログアウト
+  // させる(通話・画面共有中でも即座に切断する)。詳細はlib/useSessionGuard.ts参照。
+  useSessionGuard(() => {
+    livekitRoomRef.current?.disconnect();
+  });
   // room.connect()が完了した瞬間を検知するためのstate(refと違いレンダーを
   // 起こせる)。G-2対応: 購読対象(eligiblePeerIds等)の計算はLiveKitの接続
   // 完了より先に確定していることがあり(Supabase presenceの同期や

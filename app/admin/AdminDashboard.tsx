@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { PlanId, Room } from "@/lib/types";
+import { useSessionGuard } from "@/lib/useSessionGuard";
 import LogoutButton from "@/components/auth/LogoutButton";
 import OnlineCount from "./OnlineCount";
 import RoomManager from "./RoomManager";
@@ -52,6 +53,11 @@ export default function AdminDashboard({
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // 多重ログイン検知(2026-09追加。手順9)。別のタブ/デバイスで同じ
+  // アカウントが後からログインしてきた場合、この管理画面セッションを
+  // 強制ログアウトさせる。
+  useSessionGuard();
 
   const selectTab = (t: Tab) => {
     setTab(t);
