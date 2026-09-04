@@ -6307,8 +6307,24 @@ export default function AvatarSpace({
         applyAutoPresenceStatus("away");
       }
       if (mobile) {
-        forceMuteMic();
-        stopVideoCall();
+        // 2026-09報告: マイクを初めてONにする際、getUserMediaの許可
+        // ダイアログが表示されている間、その端末側で(許可ダイアログに
+        // フォーカスが移ることで)windowのblurイベントが発火し、この
+        // enterHiddenが呼ばれてしまうことがあった。許可待ちのtoggleMicが
+        // まだ進行中(micToggleInFlightRef)のところへ、ここのforceMuteMic()
+        // が割り込むと、LiveKit SDK側は「同じソースの発行待ちがある」
+        // ためそれを待ってから直後にmute()してしまい、結果的に「許可した
+        // のにマイクがオンにならず、もう一度ボタンを押す必要がある」不具合
+        // になっていた。進行中のトグルがある間は、ここでの強制OFFを
+        // 見送る(本当にバックグラウンドへ行った場合は、この後の
+        // visibilitychange等で改めてenterHiddenが呼ばれ、その時点では
+        // トグルは完了しているため取りこぼさない)。
+        if (!micToggleInFlightRef.current) {
+          forceMuteMic();
+        }
+        if (!videoToggleInFlightRef.current) {
+          stopVideoCall();
+        }
         // 送信(マイク・カメラ)だけでなく受信側の購読も止める。止めない
         // と、画面がオフでも近くにいる相手のマイク音声がスピーカーから
         // 鳴り続けてしまう(2026-09報告)。
