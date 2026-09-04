@@ -1030,7 +1030,19 @@ export default function AvatarSpace({
     () => {
       livekitRoomRef.current?.disconnect();
     },
-    guestInviteToken ? `/?invite=${guestInviteToken}` : "/",
+    // 2026-09追加(手順9の実機確認で判明): guestInviteTokenだけでは
+    // viewOnly(自分自身の別アカウントを持ちながら他人の招待URLを一時
+    // 閲覧中のケース)をカバーできない。viewOnlyの場合、通常のログアウト
+    // 設計ではあえてguestInviteTokenをnullにして管理者用ログイン画面へ
+    // 戻す仕様になっているが(app/page.tsxのrenderViewOnlyRoomJoin参照)、
+    // 強制ログアウトについては「招待URL経由でアクセスしていたセッション
+    // は、種別を問わずその招待URLへ戻す」方が実態に合うため、
+    // viewOnlyInviteTokenもフォールバックとして見る。
+    guestInviteToken
+      ? `/?invite=${guestInviteToken}`
+      : viewOnlyInviteToken
+        ? `/?invite=${viewOnlyInviteToken}`
+        : "/",
   );
   // room.connect()が完了した瞬間を検知するためのstate(refと違いレンダーを
   // 起こせる)。G-2対応: 購読対象(eligiblePeerIds等)の計算はLiveKitの接続
