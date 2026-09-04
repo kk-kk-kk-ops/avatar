@@ -3,7 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { Obstacle, MeetingZone, WarpPoint } from "@/lib/types";
+import type {
+  Obstacle,
+  MeetingZone,
+  WarpPoint,
+  PlacedObject,
+  TemplateObjectImage,
+} from "@/lib/types";
 
 // Server Actionからthrowしたエラーは、本番ビルドでは詳細メッセージが
 // Next.jsによって「An error occurred in the Server Components render...」
@@ -87,6 +93,7 @@ export async function updateTemplateLayout(
   mapHeight: number,
   spawnPoint: { x: number; y: number } | null,
   warpPoints: WarpPoint[],
+  placedObjects: PlacedObject[],
 ): Promise<ActionResult> {
   const { supabase } = await requireMaster();
   const { error } = await supabase
@@ -99,9 +106,31 @@ export async function updateTemplateLayout(
       spawn_x: spawnPoint?.x ?? null,
       spawn_y: spawnPoint?.y ?? null,
       warp_points: warpPoints,
+      placed_objects: placedObjects,
     })
     .eq("id", templateId);
   if (error) return { ok: false, error: "レイアウトの保存に失敗しました" };
+
+  revalidatePath("/master");
+  return { ok: true };
+}
+
+// 「オブジェクト登録」ライブラリの更新(登録・削除どちらもクライアント側で
+// 配列を組み立てた上でこの1つのアクションを呼ぶ)。壁・エリア等とは異なり、
+// レイアウトの「保存」ボタンを待たずに都度即時保存する(背景画像の変更と
+// 同じ考え方。エディタを保存せずに閉じても、アップロード済みの登録画像
+// 自体は失われないようにするため)。
+export async function updateTemplateObjectLibrary(
+  templateId: string,
+  objectLibrary: TemplateObjectImage[],
+): Promise<ActionResult> {
+  const { supabase } = await requireMaster();
+  const { error } = await supabase
+    .from("templates")
+    .update({ object_library: objectLibrary })
+    .eq("id", templateId);
+  if (error)
+    return { ok: false, error: "オブジェクトライブラリの更新に失敗しました" };
 
   revalidatePath("/master");
   return { ok: true };

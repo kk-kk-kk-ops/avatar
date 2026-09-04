@@ -26,3 +26,30 @@ export async function uploadTemplateImageClient(file: File): Promise<string> {
   } = supabase.storage.from("template-images").getPublicUrl(path);
   return publicUrl;
 }
+
+// 「オブジェクト登録」用の透過PNG画像アップロード(2026-09追加)。背景画像と
+// 同じバケット(template-images)を使うが、"objects/"配下に分けて置く
+// (バケット自体のMIME制限は背景画像と共用のため付けられない。透過PNGのみ
+// という制約はここでのクライアント側チェックで担保する)。
+export async function uploadTemplateObjectImageClient(
+  file: File,
+): Promise<string> {
+  const isPng =
+    file.type === "image/png" || /\.png$/i.test(file.name);
+  if (!isPng) {
+    throw new Error("PNG形式の画像のみ登録できます");
+  }
+  const supabase = createClient();
+  const path = `objects/${crypto.randomUUID()}.png`;
+  const { error } = await supabase.storage
+    .from("template-images")
+    .upload(path, file, { contentType: "image/png" });
+  if (error) {
+    throw new Error(`画像のアップロードに失敗しました: ${error.message}`);
+  }
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from("template-images").getPublicUrl(path);
+  return publicUrl;
+}

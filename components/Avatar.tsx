@@ -81,7 +81,11 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   return (
     <div
       ref={rootRef}
-      className="absolute left-0 top-0 will-change-transform"
+      // z-10: 装飾オブジェクト(2026-09追加、z-20)は常にアバターより
+      // 手前に表示する仕様のため、アバター側に明示的な低いz-indexを
+      // 与えて重なり順をDOM順ではなくz-indexで確定させる
+      // (AvatarSpace.tsxのplacedObjects描画箇所を参照)。
+      className="absolute left-0 top-0 z-10 will-change-transform"
       style={{ width: displaySize, height: displaySize }}
     >
       {/* 名前タグと吹き出しをまとめて1つの基準位置に固定し、吹き出しは
