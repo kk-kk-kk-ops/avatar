@@ -128,6 +128,30 @@ export type MapTemplate = {
   // エリアの左上座標とは座標系が異なるので注意)。未設定ならマップ中心
   // にスポーンする。
   spawnPoint: { x: number; y: number } | null;
+  // マップに配置できる装飾オブジェクト(2026-09追加)。登録済み画像の
+  // ライブラリ(objectLibrary)と、実際にマップへ配置したインスタンス
+  // (placedObjects)は別物。詳細はPlacedObject/TemplateObjectImageの
+  // コメント参照。
+  objectLibrary: TemplateObjectImage[];
+  placedObjects: PlacedObject[];
+};
+
+// 「オブジェクト登録」で登録した透過PNG画像のライブラリ(テンプレートごと)。
+// マップ上への配置はこれとは別のPlacedObjectで、同じimageUrlを何度でも
+// 挿入できる(=1枚の画像から複数のインスタンスを作れる)。ライブラリから
+// 削除しても、既にマップへ配置済みのPlacedObjectはそれぞれ自分自身の
+// imageUrlを持っているため影響を受けない(Storage上の実ファイルも
+// 削除しない。既に配置済みのインスタンスの表示を壊さないため)。
+export type TemplateObjectImage = { id: string; imageUrl: string };
+
+// マップに配置した装飾オブジェクトのインスタンス。壁(Obstacle)と違い、
+// 実際に画像として表示され、当たり判定は持たない(アバターは自由に
+// 通り抜けられる)。バーチャル空間内での重なり順は、背景画像 < アバター
+// < オブジェクト(常に最前面)に固定する(AvatarSpace.tsx参照)。
+export type PlacedObject = Rect & {
+  id: string;
+  imageUrl: string;
+  rotation?: number;
 };
 
 // 契約単位の組織。Supabaseのaccountsテーブルの行に対応する。

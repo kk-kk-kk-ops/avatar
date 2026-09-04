@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { PlacedObject } from "@/lib/types";
 import MicButton from "@/components/MicButton";
 import ScreenShareButton from "@/components/ScreenShareButton";
 import VideoCallButton from "@/components/VideoCallButton";
@@ -20,6 +21,7 @@ export default function TemplateRoomPreview({
   backgroundImageUrl,
   avatarSizePx,
   spawnPoint,
+  placedObjects,
   onClose,
 }: {
   mapWidth: number;
@@ -27,6 +29,7 @@ export default function TemplateRoomPreview({
   backgroundImageUrl: string;
   avatarSizePx: number;
   spawnPoint: { x: number; y: number } | null;
+  placedObjects: PlacedObject[];
   onClose: () => void;
 }) {
   const mapAreaRef = useRef<HTMLDivElement>(null);
@@ -129,7 +132,7 @@ export default function TemplateRoomPreview({
               <img
                 src={AVATAR_FRONT_IMAGE}
                 alt="アバターのプレビュー"
-                className="absolute object-contain"
+                className="absolute z-10 object-contain"
                 style={{
                   left: avatarLeft,
                   top: avatarTop,
@@ -137,6 +140,27 @@ export default function TemplateRoomPreview({
                   height: avatarSizePx,
                 }}
               />
+              {/* 装飾オブジェクト(2026-09追加)。実際の空間(AvatarSpace.tsx)と
+                  同じく、背景 < アバター(z-10) < オブジェクト(z-20)の
+                  重なり順を明示的なz-indexで固定する。 */}
+              {placedObjects.map((o) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={o.id}
+                  src={o.imageUrl}
+                  alt="配置したオブジェクトのプレビュー"
+                  draggable={false}
+                  className="pointer-events-none absolute z-20 select-none object-contain"
+                  style={{
+                    left: o.x,
+                    top: o.y,
+                    width: o.width,
+                    height: o.height,
+                    transform: `rotate(${o.rotation ?? 0}deg)`,
+                    transformOrigin: "50% 50%",
+                  }}
+                />
+              ))}
             </div>
           )}
         </div>

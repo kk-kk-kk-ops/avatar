@@ -2,7 +2,14 @@
 
 import { Fragment, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { MapTemplate, Obstacle, MeetingZone, WarpPoint } from "@/lib/types";
+import type {
+  MapTemplate,
+  Obstacle,
+  MeetingZone,
+  WarpPoint,
+  PlacedObject,
+  TemplateObjectImage,
+} from "@/lib/types";
 import {
   NEW_ITEM_SIZE,
   MIN_ITEM_SIZE,
@@ -20,14 +27,18 @@ import {
 } from "@/lib/types";
 import {
   updateTemplateLayout,
+  updateTemplateObjectLibrary,
   replaceTemplateImage,
   renameTemplate,
 } from "./actions";
-import { uploadTemplateImageClient } from "./uploadTemplateImage";
+import {
+  uploadTemplateImageClient,
+  uploadTemplateObjectImageClient,
+} from "./uploadTemplateImage";
 import ConfirmModal from "@/components/ConfirmModal";
 import TemplateRoomPreview from "./TemplateRoomPreview";
 
-type ItemType = "obstacle" | "zone";
+type ItemType = "obstacle" | "zone" | "object";
 
 type DragState =
   | {
@@ -53,9 +64,10 @@ type DragState =
       rotationDeg: number;
     }
   | {
-      // 壁の回転ドラッグ。中心からポインタへの角度の変化量を回転角へ反映する。
+      // 壁・オブジェクトの回転ドラッグ。中心からポインタへの角度の変化量を
+      // 回転角へ反映する(ミーティングエリア等は回転非対応)。
       mode: "rotate";
-      itemType: "obstacle";
+      itemType: "obstacle" | "object";
       id: string;
       centerX: number;
       centerY: number;
@@ -115,6 +127,19 @@ export default function TemplateEditor({
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     template.backgroundImageUrl,
   );
+  // オブジェクト登録(2026-09追加)。objectLibraryは登録済み画像の一覧
+  // (背景画像と同じく、アップロードのたびに即時保存する。placedObjects
+  // は他の壁・エリア等と同じく「保存」ボタンで一括保存する)。
+  const [objectLibrary, setObjectLibrary] = useState<TemplateObjectImage[]>(
+    template.objectLibrary,
+  );
+  const [placedObjects, setPlacedObjects] = useState<PlacedObject[]>(
+    template.placedObjects,
+  );
+  const [selectedLibraryImageId, setSelectedLibraryImageId] = useState<
+    string | null
+  >(null);
+  const [registeringObject, setRegisteringObject] = useState(false);
   const [saving, setSaving] = useState(false);
   // router.refresh()(サーバー側の最新データの反映)が完了するまで
   // onClose()を遅らせるためのフラグ。refreshingがfalseに戻った時点で
@@ -236,7 +261,12 @@ export default function TemplateEditor({
     mode: "move" | "resize",
   ) => {
     e.stopPropagation();
-    const list = itemType === "obstacle" ? obstacles : meetingZones;
+    const list =
+      itemType === "obstacle"
+        ? obstacles
+        : itemType === "object"
+          ? placedObjects
+          : meetingZones;
     const item = list.find((i) => i.id === id);
     if (!item) return;
     dragState.current =
@@ -259,17 +289,20 @@ export default function TemplateEditor({
             originWidth: item.width,
             originHeight: item.height,
             rotationDeg:
-              itemType === "obstacle" ? (item as Obstacle).rotation ?? 0 : 0,
+              itemType === "obstacle" || itemType === "object"
+                ? (item as Obstacle | PlacedObject).rotation ?? 0
+                : 0,
           };
   };
 
-  // 壁の回転ハンドルのドラッグ開始。ハンドルの親要素(壁本体のdiv、CSSで
-  // 既に回転済み)のgetBoundingClientRectは回転しても中心位置が変わらない
-  // ため、それを壁の中心(画面座標)としてそのまま使える。以降はスクロール
-  // やズームのスケール換算を挟まず、画面座標上の角度の変化量だけで回転量
-  // を計算する。
+  // 壁・オブジェクトの回転ハンドルのドラッグ開始。ハンドルの親要素(壁/
+  // オブジェクト本体のdiv、CSSで既に回転済み)のgetBoundingClientRectは
+  // 回転しても中心位置が変わらないため、それを中心(画面座標)としてそのまま
+  // 使える。以降はスクロールやズームのスケール換算を挟まず、画面座標上の
+  // 角度の変化量だけで回転量を計算する。
   const handleRotatePointerDown = (
     e: React.PointerEvent,
+    itemType: "obstacle" | "object",
     id: string,
     rotation: number,
   ) => {
@@ -281,7 +314,7 @@ export default function TemplateEditor({
     const centerY = rect.top + rect.height / 2;
     dragState.current = {
       mode: "rotate",
-      itemType: "obstacle",
+      itemType,
       id,
       centerX,
       centerY,
@@ -395,9 +428,15 @@ export default function TemplateEditor({
       // Shift押下中は15度単位にスナップし、意図しない中途半端な角度に
       // なりにくくする。
       if (e.shiftKey) rotation = Math.round(rotation / 15) * 15;
-      setObstacles((prev) =>
-        prev.map((o) => (o.id === drag.id ? { ...o, rotation } : o)),
-      );
+      if (drag.itemType === "object") {
+        setPlacedObjects((prev) =>
+          prev.map((o) => (o.id === drag.id ? { ...o, rotation } : o)),
+        );
+      } else {
+        setObstacles((prev) =>
+          prev.map((o) => (o.id === drag.id ? { ...o, rotation } : o)),
+        );
+      }
       return;
     }
     const dx = (e.clientX - drag.startX) / scale;
@@ -406,6 +445,8 @@ export default function TemplateEditor({
       setObstacles((prev) =>
         applyDrag(prev, drag, dx, dy, MIN_OBSTACLE_WIDTH, MIN_OBSTACLE_HEIGHT),
       );
+    } else if (drag.itemType === "object") {
+      setPlacedObjects((prev) => applyDrag(prev, drag, dx, dy));
     } else {
       setMeetingZones((prev) => applyDrag(prev, drag, dx, dy));
     }
@@ -666,6 +707,98 @@ export default function TemplateEditor({
     setObstacles((prev) => prev.filter((o) => o.id !== id));
   const removeMeetingZone = (id: string) =>
     setMeetingZones((prev) => prev.filter((z) => z.id !== id));
+  const removePlacedObject = (id: string) =>
+    setPlacedObjects((prev) => prev.filter((o) => o.id !== id));
+
+  // 「オブジェクト登録」: 選択したPNG画像をアップロードし、ライブラリに
+  // 即時追加・保存する(背景画像の変更と同じ考え方。詳細はobjectLibrary
+  // stateのコメント参照)。
+  const handleRegisterObjectImage = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError(null);
+    setRegisteringObject(true);
+    try {
+      const url = await uploadTemplateObjectImageClient(file);
+      const next = [
+        ...objectLibrary,
+        { id: randomItemId("object-image"), imageUrl: url },
+      ];
+      const result = await updateTemplateObjectLibrary(template.id, next);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setObjectLibrary(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "画像の登録に失敗しました");
+    } finally {
+      setRegisteringObject(false);
+    }
+  };
+
+  // ライブラリから選択中の画像を削除する(Storage上の実ファイルは削除
+  // しない。理由はTemplateObjectImage型のコメント参照。既に配置済みの
+  // インスタンスの表示を壊さないため)。
+  const handleDeleteLibraryImage = async () => {
+    if (!selectedLibraryImageId) return;
+    setError(null);
+    const next = objectLibrary.filter((o) => o.id !== selectedLibraryImageId);
+    const result = await updateTemplateObjectLibrary(template.id, next);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setObjectLibrary(next);
+    setSelectedLibraryImageId(null);
+  };
+
+  // ライブラリから選択中の画像をマップの中央へ配置する。画像の実サイズ
+  // (縦横比)を測ってから、長辺が150pxに収まるデフォルトサイズで配置する
+  // (壁と違い実際に見える画像のため、いびつな正方形に潰れないようにする)。
+  // 位置・サイズ・回転は配置後に壁と同じ操作で自由に変更できる。
+  const insertPlacedObject = () => {
+    const image = objectLibrary.find((o) => o.id === selectedLibraryImageId);
+    if (!image) return;
+    const placeWithSize = (width: number, height: number) => {
+      const center = getVisibleCenterMapPoint();
+      const pos = clampPosition(
+        center.x - width / 2,
+        center.y - height / 2,
+        width,
+        height,
+        mapWidth,
+        mapHeight,
+      );
+      setPlacedObjects((prev) => [
+        ...prev,
+        {
+          id: randomItemId("placed-object"),
+          ...pos,
+          width,
+          height,
+          imageUrl: image.imageUrl,
+        },
+      ]);
+    };
+    const DEFAULT_LONG_SIDE = 150;
+    const el = new Image();
+    el.onload = () => {
+      const naturalWidth = el.naturalWidth || NEW_ITEM_SIZE;
+      const naturalHeight = el.naturalHeight || NEW_ITEM_SIZE;
+      const toDefault = DEFAULT_LONG_SIDE / Math.max(naturalWidth, naturalHeight);
+      placeWithSize(
+        Math.max(MIN_ITEM_SIZE, Math.round(naturalWidth * toDefault)),
+        Math.max(MIN_ITEM_SIZE, Math.round(naturalHeight * toDefault)),
+      );
+    };
+    // 画像の実サイズが取得できない場合も、壁と同じデフォルト正方形で配置する。
+    el.onerror = () => placeWithSize(NEW_ITEM_SIZE, NEW_ITEM_SIZE);
+    el.src = image.imageUrl;
+  };
 
   // router.refresh()完了後にonClose()する(refreshingがfalseに戻った
   // タイミングで実行)。
@@ -689,6 +822,7 @@ export default function TemplateEditor({
       mapHeight,
       spawnPoint,
       warpPoints,
+      placedObjects,
     );
     if (!result.ok) {
       setError(result.error);
@@ -884,6 +1018,60 @@ export default function TemplateEditor({
               disabled={uploading}
             />
           </label>
+          <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
+            {registeringObject ? "登録中..." : "オブジェクト登録"}
+            <input
+              type="file"
+              accept="image/png"
+              className="hidden"
+              onChange={handleRegisterObjectImage}
+              disabled={registeringObject}
+            />
+          </label>
+          {objectLibrary.length > 0 && (
+            <div className="rounded-lg border border-slate-200 p-2">
+              <div className="grid grid-cols-4 gap-1.5">
+                {objectLibrary.map((image) => (
+                  <button
+                    key={image.id}
+                    type="button"
+                    onClick={() => setSelectedLibraryImageId(image.id)}
+                    title="選択"
+                    className={`flex aspect-square items-center justify-center overflow-hidden rounded border-2 bg-slate-50 p-1 ${
+                      selectedLibraryImageId === image.id
+                        ? "border-emerald-500"
+                        : "border-transparent hover:border-slate-300"
+                    }`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={image.imageUrl}
+                      alt="登録済みオブジェクト"
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={insertPlacedObject}
+                  disabled={!selectedLibraryImageId}
+                  className="flex-1 rounded-lg bg-slate-800 px-2 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+                >
+                  挿入
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteLibraryImage}
+                  disabled={!selectedLibraryImageId}
+                  className="flex-1 rounded-lg border border-red-300 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40"
+                >
+                  削除
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div>
@@ -987,6 +1175,12 @@ export default function TemplateEditor({
             <p>・同じアルファベット(A/B/C)の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
             <p>・1チャンネルにつき丸2つまで(削除すると2つまとめて消える)</p>
           </div>
+          <div>
+            <p className="font-semibold text-slate-700">【オブジェクト】</p>
+            <p>・登録した画像(PNGのみ)をマップに自由配置できる装飾</p>
+            <p>・通ることができる(壁と違い当たり判定なし)</p>
+            <p>・常にアバターより手前に表示される</p>
+          </div>
         </div>
 
         <div className="mt-auto flex flex-col gap-2">
@@ -1024,6 +1218,7 @@ export default function TemplateEditor({
           backgroundImageUrl={backgroundImageUrl}
           avatarSizePx={avatarSizePx}
           spawnPoint={spawnPoint}
+          placedObjects={placedObjects}
           onClose={() => setPreviewOpen(false)}
         />
       )}
@@ -1123,7 +1318,7 @@ export default function TemplateEditor({
                     壁本体と一緒に回転するので、常に壁から見て「真上」に付いてくる。 */}
                 <div
                   onPointerDown={(e) =>
-                    handleRotatePointerDown(e, o.id, o.rotation ?? 0)
+                    handleRotatePointerDown(e, "obstacle", o.id, o.rotation ?? 0)
                   }
                   title="ドラッグで回転(Shiftで15度単位)"
                   className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
@@ -1131,6 +1326,54 @@ export default function TemplateEditor({
                 <div
                   onPointerDown={(e) =>
                     handlePointerDown(e, "obstacle", o.id, "resize")
+                  }
+                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                />
+              </div>
+            ))}
+
+            {/* 装飾オブジェクト(2026-09追加)。壁と違い実際に画像として表示
+                され、当たり判定は持たない。ドラッグ・リサイズ・回転の操作感は
+                壁と共通(handlePointerDown/handleRotatePointerDownをitemType
+                "object"で呼ぶ)。 */}
+            {placedObjects.map((o) => (
+              <div
+                key={o.id}
+                onPointerDown={(e) => handlePointerDown(e, "object", o.id, "move")}
+                className="absolute cursor-move rounded border border-dashed border-violet-400"
+                style={{
+                  left: o.x * scale,
+                  top: o.y * scale,
+                  width: o.width * scale,
+                  height: o.height * scale,
+                  transform: `rotate(${o.rotation ?? 0}deg)`,
+                  transformOrigin: "50% 50%",
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={o.imageUrl}
+                  alt="配置したオブジェクト"
+                  draggable={false}
+                  className="pointer-events-none h-full w-full select-none object-contain"
+                />
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => removePlacedObject(o.id)}
+                  className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                >
+                  ×
+                </button>
+                <div
+                  onPointerDown={(e) =>
+                    handleRotatePointerDown(e, "object", o.id, o.rotation ?? 0)
+                  }
+                  title="ドラッグで回転(Shiftで15度単位)"
+                  className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-violet-600 bg-white"
+                />
+                <div
+                  onPointerDown={(e) =>
+                    handlePointerDown(e, "object", o.id, "resize")
                   }
                   className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
                 />

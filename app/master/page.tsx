@@ -12,6 +12,8 @@ import {
   type Obstacle,
   type MeetingZone,
   type WarpPoint,
+  type PlacedObject,
+  type TemplateObjectImage,
   type AccountSummary,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
@@ -123,7 +125,7 @@ export default async function MasterPage() {
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
-      "id, name, background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y",
+      "id, name, background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, object_library, placed_objects",
     )
     .order("created_at", { ascending: true });
 
@@ -168,6 +170,31 @@ export default async function MasterPage() {
         label: w.label ?? "",
       }));
 
+    const rawObjectLibrary = Array.isArray(t.object_library)
+      ? t.object_library
+      : [];
+    const objectLibrary: TemplateObjectImage[] = rawObjectLibrary
+      .filter((o: Partial<TemplateObjectImage>) => !!o.imageUrl)
+      .map((o: Partial<TemplateObjectImage>, i: number) => ({
+        id: o.id ?? `object-image-${i}`,
+        imageUrl: o.imageUrl as string,
+      }));
+
+    const rawPlacedObjects = Array.isArray(t.placed_objects)
+      ? t.placed_objects
+      : [];
+    const placedObjects: PlacedObject[] = rawPlacedObjects
+      .filter((o: Partial<PlacedObject>) => !!o.imageUrl)
+      .map((o: Partial<PlacedObject>, i: number) => ({
+        id: o.id ?? `placed-object-${i}`,
+        imageUrl: o.imageUrl as string,
+        x: o.x ?? 0,
+        y: o.y ?? 0,
+        width: o.width ?? NEW_ITEM_SIZE,
+        height: o.height ?? NEW_ITEM_SIZE,
+        rotation: o.rotation ?? 0,
+      }));
+
     return {
       id: t.id,
       name: t.name,
@@ -181,6 +208,8 @@ export default async function MasterPage() {
         t.spawn_x != null && t.spawn_y != null
           ? { x: t.spawn_x, y: t.spawn_y }
           : null,
+      objectLibrary,
+      placedObjects,
     };
   });
 

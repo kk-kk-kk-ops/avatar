@@ -38,6 +38,7 @@ import {
   Obstacle,
   MeetingZone,
   WarpPoint,
+  PlacedObject,
   WARP_POINT_RADIUS,
   DEFAULT_OBSTACLES,
   DEFAULT_MEETING_ZONES,
@@ -1002,6 +1003,10 @@ export default function AvatarSpace({
   const meetingZonesRef = useRef<MeetingZone[]>(DEFAULT_MEETING_ZONES);
   const [warpPoints, setWarpPoints] = useState<WarpPoint[]>([]);
   const warpPointsRef = useRef<WarpPoint[]>([]);
+  // 装飾オブジェクト(2026-09追加)。壁と違い当たり判定を持たないため、
+  // 移動ループ(rAF)から同期的に読む必要がなく、refでの同期は不要
+  // (通常のReact stateのみで十分)。
+  const [placedObjects, setPlacedObjects] = useState<PlacedObject[]>([]);
   // ワープ直後、瞬間移動先の丸にも重なっているため、そのまま同じフレームで
   // 逆方向へワープし直してしまう(行ったり来たりの無限ループ)のを防ぐため、
   // 「現在重なっている(と扱っている)ワープ地点のID」を記録する。時間経過
@@ -4028,7 +4033,7 @@ export default function AvatarSpace({
       const { data } = await supabase
         .from("templates")
         .select(
-          "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y",
+          "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, placed_objects",
         )
         .eq("id", templateId)
         .maybeSingle();
@@ -4110,6 +4115,24 @@ export default function AvatarSpace({
             label: w.label ?? "",
           }));
         setWarpPoints(loadedWarpPoints);
+      }
+
+      const rawPlacedObjects = data.placed_objects;
+      if (Array.isArray(rawPlacedObjects)) {
+        const loadedPlacedObjects = (
+          rawPlacedObjects as Array<Partial<PlacedObject>>
+        )
+          .filter((o) => !!o.imageUrl)
+          .map((o, i) => ({
+            id: o.id ?? `placed-object-${i}`,
+            imageUrl: o.imageUrl as string,
+            x: o.x ?? 0,
+            y: o.y ?? 0,
+            width: o.width ?? NEW_ITEM_SIZE,
+            height: o.height ?? NEW_ITEM_SIZE,
+            rotation: o.rotation ?? 0,
+          }));
+        setPlacedObjects(loadedPlacedObjects);
       }
     })();
     return () => {
@@ -7192,6 +7215,31 @@ export default function AvatarSpace({
                   top: o.y,
                   width: o.width,
                   height: o.height,
+                }}
+              />
+            ))}
+
+            {/* 装飾オブジェクト(2026-09追加)。壁と違い実際に画像として表示
+                され、当たり判定は持たない(obstaclesRefには含めないため
+                アバターは自由に通り抜けられる)。重なり順は背景 < アバター
+                (z-10、Avatar.tsx) < オブジェクト(z-20、常に最前面)に
+                明示的なz-indexで固定する(マスターの配置操作はテンプレート
+                編集画面側のみで、この空間内では表示のみ)。 */}
+            {placedObjects.map((o) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={o.id}
+                src={o.imageUrl}
+                alt=""
+                draggable={false}
+                className="pointer-events-none absolute z-20 select-none object-contain"
+                style={{
+                  left: o.x,
+                  top: o.y,
+                  width: o.width,
+                  height: o.height,
+                  transform: `rotate(${o.rotation ?? 0}deg)`,
+                  transformOrigin: "50% 50%",
                 }}
               />
             ))}

@@ -283,6 +283,17 @@ alter table public.templates
 alter table public.templates
   add column if not exists warp_points jsonb not null default '[]'::jsonb;
 
+-- 装飾オブジェクト機能(2026-09追加)。
+-- object_library: 「オブジェクト登録」で登録した透過PNG画像のライブラリ
+-- (TemplateObjectImage[]、lib/types.ts参照)。テンプレートごとに独立
+-- (他のテンプレートとは共有しない)。
+-- placed_objects: 実際にマップへ配置したインスタンス(PlacedObject[])。
+-- 壁(obstacles)と違い実際に画像として表示され、当たり判定は持たない。
+alter table public.templates
+  add column if not exists object_library jsonb not null default '[]'::jsonb;
+alter table public.templates
+  add column if not exists placed_objects jsonb not null default '[]'::jsonb;
+
 alter table public.templates enable row level security;
 
 drop policy if exists "templates: select authenticated" on public.templates;
