@@ -107,21 +107,6 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
   revalidatePath("/admin");
 }
 
-export async function renameRoom(roomId: string, name: string) {
-  const { supabase, account } = await requireAdminAccount();
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("ルーム名を入力してください");
-
-  const { error } = await supabase
-    .from("rooms")
-    .update({ name: trimmed })
-    .eq("id", roomId)
-    .eq("account_id", account.id);
-  if (error) throw new Error("ルーム名の変更に失敗しました");
-
-  revalidatePath("/admin");
-}
-
 export async function deleteRoom(roomId: string) {
   const { supabase, account } = await requireAdminAccount();
 
