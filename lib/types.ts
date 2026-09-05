@@ -196,28 +196,28 @@ export const PLANS: Record<
   free: {
     label: "無料",
     subLabel:
-      "（ミーティングルーム1つ　人数上限：5名／画面共有・ビデオ通話：1日5分まで／音声通話：1日45分まで）",
+      "（ミーティングルーム1つ　人数上限：5名／画面共有・ビデオ通話：1日5分まで／音声通話：無制限）",
     priceLabel: "0円/月",
     priceYen: 0,
     maxRooms: 1,
     maxPeoplePerRoom: 5,
     screenShareDailyMinutes: 5,
     videoCallDailyMinutes: 5,
-    voiceCallDailyMinutes: 45,
+    voiceCallDailyMinutes: null,
     roomCreation: "template-only",
     historyRetentionLabel: "7日",
   },
   light: {
     label: "ライト",
     subLabel:
-      "（ミーティングルーム1つ　人数上限：10名／画面共有・ビデオ通話：1日45分まで／音声通話：1日90分まで）",
+      "（ミーティングルーム1つ　人数上限：10名／画面共有・ビデオ通話：1日45分まで／音声通話：無制限）",
     priceLabel: "2,980円/月",
     priceYen: 2980,
     maxRooms: 1,
     maxPeoplePerRoom: 10,
     screenShareDailyMinutes: 45,
     videoCallDailyMinutes: 45,
-    voiceCallDailyMinutes: 90,
+    voiceCallDailyMinutes: null,
     roomCreation: "template-only",
     historyRetentionLabel: "1ヶ月",
   },
@@ -237,7 +237,8 @@ export const PLANS: Record<
   },
   pro: {
     label: "プロ",
-    subLabel: "（ミーティングルーム1つ　人数上限：25名／画面共有・ビデオ通話：無制限）",
+    subLabel:
+      "（ミーティングルーム1つ　人数上限：25名／画面共有・ビデオ通話・音声通話：無制限）",
     priceLabel: "9,800円/月",
     priceYen: 9800,
     maxRooms: 1,
