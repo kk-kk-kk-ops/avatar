@@ -5423,9 +5423,7 @@ export default function AvatarSpace({
               return;
             }
 
-            const locker = Object.values(playersRef.current).find(
-              (p) => p.lockedMeetingZoneId === zone.id,
-            );
+            const locker = getConferenceZoneLocker(zone.id, playersRef.current);
             const lockedByOther = !!locker && locker.id !== selfId.current;
             const dismissed = dismissedConferenceZonesRef.current.has(zone.id);
             const alreadyPending =
@@ -5758,34 +5756,90 @@ export default function AvatarSpace({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [pendingMeetingEntry, confirmMeetingEntry]);
 
+  // 会議室(conference)の施錠者を決定的に1人選ぶ。presence反映のラグに
+  // より、ほぼ同時に複数人が施錠ボタンを押すと、一時的に複数人の
+  // lockedMeetingZoneIdが同じゾーンを指してしまうことがある(2026-09報告
+  // のバグ:これにより本来の施錠者以外も解錠できてしまっていた)。
+  // 全クライアントが同じ結論に収束するよう、施錠時刻(lockedMeetingZoneAt)
+  // が最も早い人を優先し、同時刻ならid昇順というタイブレークで、常に
+  // 同じ入力から同じ1人を選ぶ。
+  const getConferenceZoneLocker = useCallback(
+    (zoneId: string, playersSnapshot: Record<string, PlayerState>) => {
+      const claimants = Object.values(playersSnapshot).filter(
+        (p) => p.lockedMeetingZoneId === zoneId,
+      );
+      if (claimants.length <= 1) return claimants[0];
+      return claimants.slice().sort((a, b) => {
+        const at = a.lockedMeetingZoneAt ?? 0;
+        const bt = b.lockedMeetingZoneAt ?? 0;
+        if (at !== bt) return at - bt;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      })[0];
+    },
+    [],
+  );
+
   // 鍵アイコン押下:確認ポップアップなしで即座に施錠/解錠を切り替える。
   // 既に自分以外の誰かが施錠している場合のみ、操作不可のエラーを出す。
-  const handleLockIconClick = useCallback((zoneId: string) => {
-    const locker = Object.values(playersRef.current).find(
-      (p) => p.lockedMeetingZoneId === zoneId,
-    );
-    if (locker && locker.id !== selfId.current) {
-      setLockPermissionError({ zoneId });
-      return;
-    }
+  const handleLockIconClick = useCallback(
+    (zoneId: string) => {
+      const locker = getConferenceZoneLocker(zoneId, playersRef.current);
+      if (locker && locker.id !== selfId.current) {
+        setLockPermissionError({ zoneId });
+        return;
+      }
 
+      const self = selfState.current;
+      if (!self) return;
+      const nowLocking = !locker;
+      const lockedMeetingZoneId = nowLocking ? zoneId : null;
+      const lockedMeetingZoneAt = nowLocking ? Date.now() : undefined;
+      self.lockedMeetingZoneId = lockedMeetingZoneId;
+      self.lockedMeetingZoneAt = lockedMeetingZoneAt;
+      channelRef.current?.track(self);
+      // selfState.current(ref)を書き換えただけではReactが再レンダリング
+      // しないため、その場で動かなくても南京錠アイコンが即時に表示される
+      // よう、players Stateも明示的に更新する。
+      setPlayers((prev) => {
+        const current = prev[self.id];
+        if (!current) return prev;
+        return {
+          ...prev,
+          [self.id]: { ...current, lockedMeetingZoneId, lockedMeetingZoneAt },
+        };
+      });
+    },
+    [getConferenceZoneLocker],
+  );
+
+  // presence反映のラグにより、ほぼ同時に複数人が施錠してしまった(二重施錠)
+  // 場合の自動修復(2026-09報告のバグ修正)。決定的な施錠者判定
+  // (getConferenceZoneLocker)で自分が「本当の施錠者」でないと分かった
+  // 時点で、自分の施錠状態を即座に解除する。これにより、負けた側の
+  // 施錠状態がいつまでも残って本来の施錠者以外も解錠できてしまう不具合を
+  // なくし、presenceが同期し次第すぐに全員が同じ1人だけを施錠者とみなす
+  // 状態へ収束する。
+  useEffect(() => {
     const self = selfState.current;
-    if (!self) return;
-    const lockedMeetingZoneId = locker ? null : zoneId;
-    self.lockedMeetingZoneId = lockedMeetingZoneId;
+    if (!self?.lockedMeetingZoneId) return;
+    const locker = getConferenceZoneLocker(self.lockedMeetingZoneId, players);
+    if (locker?.id === self.id) return;
+    self.lockedMeetingZoneId = null;
+    self.lockedMeetingZoneAt = undefined;
     channelRef.current?.track(self);
-    // selfState.current(ref)を書き換えただけではReactが再レンダリング
-    // しないため、その場で動かなくても南京錠アイコンが即時に表示される
-    // よう、players Stateも明示的に更新する。
     setPlayers((prev) => {
       const current = prev[self.id];
       if (!current) return prev;
       return {
         ...prev,
-        [self.id]: { ...current, lockedMeetingZoneId },
+        [self.id]: {
+          ...current,
+          lockedMeetingZoneId: null,
+          lockedMeetingZoneAt: undefined,
+        },
       };
     });
-  }, []);
+  }, [players, getConferenceZoneLocker]);
 
   // ---- ダブルクリックでのアバター移動 ----
   // クリック位置(画面座標)を、worldRef自身の実測サイズ(mapWidthに対する
@@ -7069,6 +7123,15 @@ export default function AvatarSpace({
   // 全体アナウンスエリア)では一切挙動を変えない(2026-09報告により
   // 「部屋にいる全員/近くにいる人全般」ではなく「同じ会議室」限定に修正)。
   const selfInMeetingRoom = isIsolatedMeetingZone(selfPlayer?.meetingZoneId);
+  // 施錠機能があるのは「会議室」(kind: conference)のみ(kind: meetingには
+  // 無い、既存の地図上の鍵アイコンと同じ条件)。会議モードのプレビュー
+  // エリアにも同じ鍵アイコンを出すための算出。
+  const selfConferenceZone = meetingZones.find(
+    (z) => z.id === selfPlayer?.meetingZoneId && z.kind === "conference",
+  );
+  const meetingModalLocker = selfConferenceZone
+    ? getConferenceZoneLocker(selfConferenceZone.id, players)
+    : undefined;
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
   const effectiveViewportWidth = viewport.width / mapScale;
   const effectiveViewportHeight = viewport.height / mapScale;
@@ -7489,6 +7552,21 @@ export default function AvatarSpace({
               要件を自然に満たす。 */}
           {meetingViewOpen && (
             <div className="absolute inset-0 z-30 flex flex-col bg-slate-900">
+              {/* 会議室(conference)の施錠アイコン(2026-09追加)。地図上の
+                  ものと全く同じhandleLockIconClick/判定を使い、挙動を
+                  揃える(施錠した人のみ解錠できる)。会議室に今いる人にだけ
+                  表示する(地図上のアイコンと同条件)。 */}
+              {selfConferenceZone && (
+                <button
+                  type="button"
+                  onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                  className="absolute left-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                  aria-label={meetingModalLocker ? "施錠を解除する" : "施錠する"}
+                  title={meetingModalLocker ? "施錠を解除する" : "施錠する"}
+                >
+                  {meetingModalLocker ? "🔒" : "🔓"}
+                </button>
+              )}
               <button
                 onClick={() => {
                   setMeetingViewOpen(false);
@@ -7654,9 +7732,7 @@ export default function AvatarSpace({
             {meetingZones.map((zone) =>
               zone.kind === "conference" ? (
                 (() => {
-                  const locker = Object.values(players).find(
-                    (p) => p.lockedMeetingZoneId === zone.id,
-                  );
+                  const locker = getConferenceZoneLocker(zone.id, players);
                   return (
                     <div
                       key={zone.id}

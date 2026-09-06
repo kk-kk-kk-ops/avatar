@@ -20,6 +20,11 @@ export type PlayerState = {
   lockedMeetingZoneId?: string | null; // 施錠中の会議室(conference)ゾーンID。
   // このフィールドをpresence上に持たせることで、施錠者が異常切断した際も
   // presenceのleave検知だけで自動的に解錠扱いになる(専用の後始末処理が不要)。
+  lockedMeetingZoneAt?: number; // 施錠した時刻(Date.now())。ほぼ同時に
+  // 複数人が施錠ボタンを押した際、presence反映のラグにより一時的に
+  // 複数人が同じゾーンを施錠済み扱いになることがあるため、最も早く
+  // 施錠した人だけを「本当の施錠者」とみなす決定的な判定に使う
+  // (getConferenceZoneLocker参照)。
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
   // 画面共有開始時点の静止画プレビュー(dataURL)。broadcastは後から入室
