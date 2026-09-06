@@ -7053,10 +7053,11 @@ export default function AvatarSpace({
           <div className="no-scrollbar min-w-0 overflow-x-auto whitespace-nowrap">
             {/* 「オンライン: X人」表示を廃止し、代わりに同じ会議室にいる
                 相手の映像を均等グリッドで見られる「会議画面」ボタンを
-                設置する(2026-09追加)。会議室の外の人には影響しない
-                (対象は既存の近接判定eligiblePeerIdsのまま)。モーダルを
-                開いている間は不要なので隠す。 */}
-            {!meetingViewOpen && (
+                設置する(2026-09追加)。会議室(ミーティングエリア)に
+                入室している間だけ表示し、会議室の外では表示しない
+                (2026-09報告により修正)。モーダルを開いている間は
+                不要なので隠す。 */}
+            {!meetingViewOpen && selfInMeetingRoom && (
               <button
                 onClick={() => {
                   setMeetingViewOpen(true);
@@ -7181,7 +7182,7 @@ export default function AvatarSpace({
         >
           {/* 常時表示プレビュー行(会議室にいる間のみ。自分・同じ会議室に
               いる相手を対象に、ビデオOFFでも黒背景+名前で常時表示する
-              (240×160)。人数が多い場合は横スクロールする。「会議画面」
+              (220×140)。人数が多い場合は横スクロールする。「会議画面」
               モーダルを開いている間はこちらを隠す(モーダル側に同種の
               表示を出す)。以前はサイドバーと横並びの上部バーとして画面
               全幅に表示していたため、サイドバーの上に覆いかぶさって
@@ -7222,7 +7223,7 @@ export default function AvatarSpace({
                 {videoPausedForScreenView ? (
                   <div
                     className="flex items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300"
-                    style={{ width: 240, height: 160 }}
+                    style={{ width: 220, height: 140 }}
                   >
                     画面共有視聴中
                   </div>
@@ -7230,8 +7231,8 @@ export default function AvatarSpace({
                   <VideoTile
                     name="あなた"
                     stream={inCall ? cameraStreamRef.current : null}
-                    widthPx={240}
-                    heightPx={160}
+                    widthPx={220}
+                    heightPx={140}
                     isSelf
                   />
                 )}
@@ -7253,8 +7254,8 @@ export default function AvatarSpace({
                   key={`call-${p.id}`}
                   name={p.name}
                   stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                  widthPx={240}
-                  heightPx={160}
+                  widthPx={220}
+                  heightPx={140}
                 />
               ))}
 
@@ -7423,15 +7424,15 @@ export default function AvatarSpace({
                 ✕
               </button>
               {activeSharerId ? (
-                // 画面共有中は上段に映像を1列(240×160、ビデオと同じ
+                // 画面共有中は上段に映像を1列(220×140、ビデオと同じ
                 // サイズ)、下段いっぱいに画面共有を展開する。
                 <div className="flex h-full min-h-0 flex-col pt-3">
                   <div className="flex shrink-0 gap-2 overflow-x-auto px-3 pb-2">
                     <VideoTile
                       name="あなた"
                       stream={inCall ? cameraStreamRef.current : null}
-                      widthPx={240}
-                      heightPx={160}
+                      widthPx={220}
+                      heightPx={140}
                       isSelf
                     />
                     {otherPlayers.map((p) => (
@@ -7439,8 +7440,8 @@ export default function AvatarSpace({
                         key={`meeting-call-${p.id}`}
                         name={p.name}
                         stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                        widthPx={240}
-                        heightPx={160}
+                        widthPx={220}
+                        heightPx={140}
                       />
                     ))}
                   </div>
@@ -7511,17 +7512,17 @@ export default function AvatarSpace({
                   </div>
                 </div>
               ) : (
-                // 画面共有が無い間は、人数に応じた均等グリッド(240×160)。
+                // 画面共有が無い間は、人数に応じた均等グリッド(220×140)。
                 <div className="flex flex-1 items-center justify-center overflow-auto p-4">
                   <div
                     className="grid gap-3"
-                    style={{ gridTemplateColumns: `repeat(${gridSize}, 240px)` }}
+                    style={{ gridTemplateColumns: `repeat(${gridSize}, 220px)` }}
                   >
                     <VideoTile
                       name="あなた"
                       stream={inCall ? cameraStreamRef.current : null}
-                      widthPx={240}
-                      heightPx={160}
+                      widthPx={220}
+                      heightPx={140}
                       isSelf
                     />
                     {otherPlayers.map((p) => (
@@ -7529,8 +7530,8 @@ export default function AvatarSpace({
                         key={`meeting-grid-${p.id}`}
                         name={p.name}
                         stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                        widthPx={240}
-                        heightPx={160}
+                        widthPx={220}
+                        heightPx={140}
                       />
                     ))}
                   </div>
