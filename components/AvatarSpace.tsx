@@ -526,6 +526,10 @@ export default function AvatarSpace({
   // 会議画面モーダル内、画面共有エリアだけの拡大縮小(自分のブラウザだけの
   // ローカル表示倍率)。共有者が変わった時・モーダルの開閉時にリセットする。
   const [screenAreaZoom, setScreenAreaZoom] = useState(1);
+  // 画面共有の全画面表示(expandedMedia)専用の拡大縮小。プレビュー枠から
+  // 開いても会議画面から開いても使えるようにする(expandedMediaを開く
+  // 箇所すべてで1にリセットする)。
+  const [fullscreenZoom, setFullscreenZoom] = useState(1);
   // 画面共有の排他制御(同じ会議室内では同時に1人まで)用。zoneIdが
   // 一致する主張同士でのみ、後から開始した人を勝者とする(開始時刻
   // claimedAtを比較)。詳細はstartScreenShare/screen-share-claim
@@ -7198,10 +7202,10 @@ export default function AvatarSpace({
                     <img
                       src={screenPreviewImages[selfId.current]}
                       alt="あなたの画面共有プレビュー"
-                      className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
+                      className="h-[140px] w-[220px] rounded-md border border-emerald-400 bg-black object-contain"
                     />
                   ) : (
-                    <div className="flex h-20 w-32 items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
+                    <div className="flex h-[140px] w-[220px] items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
                       共有中...
                     </div>
                   )}
@@ -7266,6 +7270,7 @@ export default function AvatarSpace({
                   key={`screen-${p.id}`}
                   onClick={() => {
                     setSelectedScreenSharerId(p.id);
+                    setFullscreenZoom(1);
                     setExpandedMedia({ peerId: p.id, kind: "screen" });
                   }}
                   className="relative shrink-0"
@@ -7276,10 +7281,10 @@ export default function AvatarSpace({
                     <img
                       src={screenPreviewImages[p.id]}
                       alt={`${p.name}の画面共有プレビュー`}
-                      className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
+                      className="h-[140px] w-[220px] rounded-md border border-slate-500 bg-black object-contain"
                     />
                   ) : (
-                    <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
+                    <div className="flex h-[140px] w-[220px] items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
                       入室中...
                     </div>
                   )}
@@ -7364,6 +7369,7 @@ export default function AvatarSpace({
                     key={`screen-${p.id}`}
                     onClick={() => {
                       setSelectedScreenSharerId(p.id);
+                      setFullscreenZoom(1);
                       setExpandedMedia({ peerId: p.id, kind: "screen" });
                     }}
                     className="relative"
@@ -7446,7 +7452,7 @@ export default function AvatarSpace({
                     ))}
                   </div>
                   <div className="min-h-0 flex-1 px-3 pb-3">
-                    <div className="relative h-full w-full overflow-hidden rounded-md bg-black">
+                    <div className="relative h-full w-full rounded-md bg-black">
                       <span className="absolute left-2 top-2 z-10 rounded bg-black/70 px-2 py-1 text-xs text-white">
                         {activeSharerName}が画面共有中
                       </span>
@@ -7470,43 +7476,50 @@ export default function AvatarSpace({
                           ＋
                         </button>
                         <button
-                          onClick={() =>
+                          onClick={() => {
+                            setFullscreenZoom(1);
                             setExpandedMedia({
                               peerId: activeSharerId,
                               kind: "screen",
                               fromMeetingView: true,
-                            })
-                          }
+                            });
+                          }}
                           className="rounded-full bg-black/60 px-2.5 py-1 text-xs text-white hover:bg-black/80"
                           aria-label="全画面表示"
                         >
                           全画面
                         </button>
                       </div>
-                      <div
-                        className="flex h-full w-full items-center justify-center"
-                        style={{
-                          transform: `scale(${screenAreaZoom})`,
-                          transformOrigin: "center center",
-                        }}
-                      >
-                        {activeSharerStream ? (
-                          <RemoteVideo
-                            stream={activeSharerStream}
-                            className="h-full w-full object-contain"
-                          />
-                        ) : activeSharerPreviewImage ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={activeSharerPreviewImage}
-                            alt={`${activeSharerName}の画面共有プレビュー`}
-                            className="h-full w-full object-contain"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-sm text-slate-300">
-                            共有中...
-                          </div>
-                        )}
+                      {/* 拡大時にはみ出した部分もスクロールして見られるように、
+                          transform: scale ではなく実際のレイアウトサイズ
+                          (width/height の%)を変えることで、はみ出し分を
+                          overflow-autoの本物のスクロール領域にする。 */}
+                      <div className="absolute inset-0 flex items-center justify-center overflow-auto">
+                        <div
+                          className="flex shrink-0 items-center justify-center"
+                          style={{
+                            width: `${screenAreaZoom * 100}%`,
+                            height: `${screenAreaZoom * 100}%`,
+                          }}
+                        >
+                          {activeSharerStream ? (
+                            <RemoteVideo
+                              stream={activeSharerStream}
+                              className="h-full w-full object-contain"
+                            />
+                          ) : activeSharerPreviewImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={activeSharerPreviewImage}
+                              alt={`${activeSharerName}の画面共有プレビュー`}
+                              className="h-full w-full object-contain"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-sm text-slate-300">
+                              共有中...
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -9298,30 +9311,68 @@ export default function AvatarSpace({
           if (!stream) return null;
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
-              <RemoteVideo
-                stream={stream}
-                className={`h-full w-full ${
-                  expandedMedia.kind === "screen"
-                    ? "object-contain"
-                    : "object-cover"
-                }`}
-              />
-              <button
-                onClick={() => {
-                  setExpandedMedia(null);
-                  // 画面共有は視聴終了と同時に購読も止める(見ている人が
-                  // いない間は不要な帯域を使わないため)。ただし会議画面
-                  // モーダルの「全画面」から開いた場合は、閉じるとモーダルに
-                  // 戻るだけで視聴自体は継続しているため購読を維持する。
-                  if (expandedMedia.kind === "screen" && !expandedMedia.fromMeetingView) {
-                    setSelectedScreenSharerId(null);
-                  }
-                }}
-                className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
-                aria-label="全画面表示を閉じる"
-              >
-                ✕
-              </button>
+              {expandedMedia.kind === "screen" ? (
+                // 画面共有は拡大縮小できるようにする(会議画面の共有エリアと
+                // 同じ考え方:transform: scaleではなく実際のレイアウトサイズを
+                // 変えて、はみ出した部分もoverflow-autoで本当にスクロール
+                // できるようにする)。
+                <div className="absolute inset-0 flex items-center justify-center overflow-auto">
+                  <div
+                    className="flex shrink-0 items-center justify-center"
+                    style={{
+                      width: `${fullscreenZoom * 100}%`,
+                      height: `${fullscreenZoom * 100}%`,
+                    }}
+                  >
+                    <RemoteVideo
+                      stream={stream}
+                      className="h-full w-full object-contain"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <RemoteVideo stream={stream} className="h-full w-full object-cover" />
+              )}
+              <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
+                {expandedMedia.kind === "screen" && (
+                  <>
+                    <button
+                      onClick={() =>
+                        setFullscreenZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))
+                      }
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
+                      aria-label="縮小"
+                    >
+                      −
+                    </button>
+                    <button
+                      onClick={() =>
+                        setFullscreenZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))
+                      }
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
+                      aria-label="拡大"
+                    >
+                      ＋
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => {
+                    setExpandedMedia(null);
+                    // 画面共有は視聴終了と同時に購読も止める(見ている人が
+                    // いない間は不要な帯域を使わないため)。ただし会議画面
+                    // モーダルの「全画面」から開いた場合は、閉じるとモーダルに
+                    // 戻るだけで視聴自体は継続しているため購読を維持する。
+                    if (expandedMedia.kind === "screen" && !expandedMedia.fromMeetingView) {
+                      setSelectedScreenSharerId(null);
+                    }
+                  }}
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
+                  aria-label="全画面表示を閉じる"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           );
         })()}
