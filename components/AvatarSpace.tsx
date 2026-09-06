@@ -7237,11 +7237,11 @@ export default function AvatarSpace({
           {/* 「会議モード」ボタン(旧「会議画面」。2026-09報告により
               ヘッダーからアバター空間エリアの上部中央へ移動し、名称も
               変更した)。ビデオプレビュー行(下記、常時表示プレビュー行)
-              とは別の独立したフローティング表示にするため、透過した
-              黒背景のボックスに包んで配置する。会議室(ミーティングエリア)
-              に入室している間だけ表示する。 */}
+              の外側(その下)に来るよう、プレビュー行の高さ(タイル140px+
+              上下パディング16px=156px)より少し下に配置する。会議室
+              (ミーティングエリア)に入室している間だけ表示する。 */}
           {!meetingViewOpen && selfInMeetingRoom && (
-            <div className="absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-lg bg-black/50 p-1.5">
+            <div className="absolute left-1/2 top-[164px] z-30 -translate-x-1/2 rounded-lg bg-black/50 p-1.5">
               <button
                 onClick={() => {
                   setMeetingViewOpen(true);
