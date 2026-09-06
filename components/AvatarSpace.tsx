@@ -530,6 +530,35 @@ export default function AvatarSpace({
   // 開いても会議画面から開いても使えるようにする(expandedMediaを開く
   // 箇所すべてで1にリセットする)。
   const [fullscreenZoom, setFullscreenZoom] = useState(1);
+  // 会議画面モーダルの均等グリッド(画面共有が無い時)の実測サイズ。
+  // 4:3を保ったまま、人数に応じた列・行数でモーダルの枠にちょうど収まる
+  // タイルサイズを計算するために、ResizeObserverで実際の描画領域を測る。
+  // グリッドは画面共有の開始/終了・モーダルの開閉のたびにマウント/
+  // アンマウントされるため、useEffect+useRefではなくコールバックref
+  // (DOMへの実際のアタッチ/デタッチのたびに呼ばれる)でObserverの
+  // 生成・破棄を行う。
+  const [meetingGridContainerSize, setMeetingGridContainerSize] = useState({
+    width: 0,
+    height: 0,
+  });
+  const meetingGridObserverRef = useRef<ResizeObserver | null>(null);
+  const meetingGridCallbackRef = useCallback((el: HTMLDivElement | null) => {
+    if (meetingGridObserverRef.current) {
+      meetingGridObserverRef.current.disconnect();
+      meetingGridObserverRef.current = null;
+    }
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      setMeetingGridContainerSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
+    });
+    observer.observe(el);
+    meetingGridObserverRef.current = observer;
+  }, []);
   // 画面共有の排他制御(同じ会議室内では同時に1人まで)用。zoneIdが
   // 一致する主張同士でのみ、後から開始した人を勝者とする(開始時刻
   // claimedAtを比較)。詳細はstartScreenShare/screen-share-claim
@@ -6962,9 +6991,45 @@ export default function AvatarSpace({
   const otherPlayers = playerList.filter(
     (p) => p.id !== selfId.current && eligibleSetForMeetingView.has(p.id),
   );
-  // 会議画面モーダルの均等グリッドの一辺の数(自分+同じ会議室の相手の
-  // 人数に合わせる。2人→2×2、5人→3×3、10人→4×4、17人→5×5)。
-  const gridSize = Math.max(1, Math.ceil(Math.sqrt(otherPlayers.length + 1)));
+  // 会議画面モーダルの均等グリッド(画面共有が無い時)のレイアウト計算。
+  // 参加人数(自分含む)から列数・行数を決め(2人→2列×1行、5人→3列×2行、
+  // 9人→3列×3行、のようにできるだけ隙間なく並ぶ「ギャラリービュー」の
+  // 標準的な算出方法)、4:3のアスペクト比を保ったまま、モーダルの実測
+  // サイズ(meetingGridContainerSize、ResizeObserverで計測)にちょうど
+  // 収まるタイル寸法を、幅基準・高さ基準のどちらか厳しい方に合わせて
+  // 決める。
+  const meetingGridParticipantCount = otherPlayers.length + 1;
+  const meetingGridCols = Math.max(
+    1,
+    Math.ceil(Math.sqrt(meetingGridParticipantCount)),
+  );
+  const meetingGridRows = Math.max(
+    1,
+    Math.ceil(meetingGridParticipantCount / meetingGridCols),
+  );
+  const MEETING_GRID_GAP = 12; // Tailwindのgap-3(0.75rem)と揃える
+  const MEETING_TILE_ASPECT = 4 / 3;
+  const meetingGridAvailableWidth = Math.max(
+    0,
+    meetingGridContainerSize.width - MEETING_GRID_GAP * (meetingGridCols - 1),
+  );
+  const meetingGridAvailableHeight = Math.max(
+    0,
+    meetingGridContainerSize.height - MEETING_GRID_GAP * (meetingGridRows - 1),
+  );
+  let meetingTileWidth = 210;
+  let meetingTileHeight = 140;
+  if (meetingGridAvailableWidth > 0 && meetingGridAvailableHeight > 0) {
+    const widthBasedTileWidth = meetingGridAvailableWidth / meetingGridCols;
+    const widthBasedTileHeight = widthBasedTileWidth / MEETING_TILE_ASPECT;
+    if (widthBasedTileHeight * meetingGridRows <= meetingGridAvailableHeight) {
+      meetingTileWidth = widthBasedTileWidth;
+      meetingTileHeight = widthBasedTileHeight;
+    } else {
+      meetingTileHeight = meetingGridAvailableHeight / meetingGridRows;
+      meetingTileWidth = meetingTileHeight * MEETING_TILE_ASPECT;
+    }
+  }
 
   // 会議室の外(selfInMeetingRoom=false)の常時表示プレビュー行用:
   // 以前の挙動通り、実際にビデオ通話中でライブ映像を受信できている
@@ -7054,25 +7119,10 @@ export default function AvatarSpace({
       同じスクロール領域に入れてしまうと、幅が足りない時にアイコンごと
       スクロール範囲の外に出てしまい、⚙️などが見えなくなることがあったため。 */}
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-          <div className="no-scrollbar min-w-0 overflow-x-auto whitespace-nowrap">
-            {/* 「オンライン: X人」表示を廃止し、代わりに同じ会議室にいる
-                相手の映像を均等グリッドで見られる「会議画面」ボタンを
-                設置する(2026-09追加)。会議室(ミーティングエリア)に
-                入室している間だけ表示し、会議室の外では表示しない
-                (2026-09報告により修正)。モーダルを開いている間は
-                不要なので隠す。 */}
-            {!meetingViewOpen && selfInMeetingRoom && (
-              <button
-                onClick={() => {
-                  setMeetingViewOpen(true);
-                  setScreenAreaZoom(1);
-                }}
-                className="shrink-0 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
-              >
-                会議画面
-              </button>
-            )}
-          </div>
+          {/* 「オンライン: X人」表示は廃止した。代わりの「会議モード」
+              ボタンはヘッダーではなく、アバター空間エリア(containerRef)の
+              上部中央に独立したフローティング表示として置く
+              (2026-09報告により変更。詳細はcontainerRef内のJSX参照)。 */}
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <div className="flex shrink-0 flex-col items-center">
               <MicButton
@@ -7184,9 +7234,29 @@ export default function AvatarSpace({
           ref={containerRef}
           className="relative min-w-0 flex-1 overflow-hidden bg-slate-700 sm:order-3"
         >
+          {/* 「会議モード」ボタン(旧「会議画面」。2026-09報告により
+              ヘッダーからアバター空間エリアの上部中央へ移動し、名称も
+              変更した)。ビデオプレビュー行(下記、常時表示プレビュー行)
+              とは別の独立したフローティング表示にするため、透過した
+              黒背景のボックスに包んで配置する。会議室(ミーティングエリア)
+              に入室している間だけ表示する。 */}
+          {!meetingViewOpen && selfInMeetingRoom && (
+            <div className="absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-lg bg-black/50 p-1.5">
+              <button
+                onClick={() => {
+                  setMeetingViewOpen(true);
+                  setScreenAreaZoom(1);
+                }}
+                className="shrink-0 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+              >
+                会議モード
+              </button>
+            </div>
+          )}
+
           {/* 常時表示プレビュー行(会議室にいる間のみ。自分・同じ会議室に
               いる相手を対象に、ビデオOFFでも黒背景+名前で常時表示する
-              (220×140)。人数が多い場合は横スクロールする。「会議画面」
+              (210×140)。人数が多い場合は横スクロールする。「会議画面」
               モーダルを開いている間はこちらを隠す(モーダル側に同種の
               表示を出す)。以前はサイドバーと横並びの上部バーとして画面
               全幅に表示していたため、サイドバーの上に覆いかぶさって
@@ -7202,10 +7272,10 @@ export default function AvatarSpace({
                     <img
                       src={screenPreviewImages[selfId.current]}
                       alt="あなたの画面共有プレビュー"
-                      className="h-[140px] w-[220px] rounded-md border border-emerald-400 bg-black object-contain"
+                      className="h-[140px] w-[210px] rounded-md border border-emerald-400 bg-black object-contain"
                     />
                   ) : (
-                    <div className="flex h-[140px] w-[220px] items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
+                    <div className="flex h-[140px] w-[210px] items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
                       共有中...
                     </div>
                   )}
@@ -7227,7 +7297,7 @@ export default function AvatarSpace({
                 {videoPausedForScreenView ? (
                   <div
                     className="flex items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300"
-                    style={{ width: 220, height: 140 }}
+                    style={{ width: 210, height: 140 }}
                   >
                     画面共有視聴中
                   </div>
@@ -7235,7 +7305,7 @@ export default function AvatarSpace({
                   <VideoTile
                     name="あなた"
                     stream={inCall ? cameraStreamRef.current : null}
-                    widthPx={220}
+                    widthPx={210}
                     heightPx={140}
                     isSelf
                   />
@@ -7258,7 +7328,7 @@ export default function AvatarSpace({
                   key={`call-${p.id}`}
                   name={p.name}
                   stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                  widthPx={220}
+                  widthPx={210}
                   heightPx={140}
                 />
               ))}
@@ -7281,10 +7351,10 @@ export default function AvatarSpace({
                     <img
                       src={screenPreviewImages[p.id]}
                       alt={`${p.name}の画面共有プレビュー`}
-                      className="h-[140px] w-[220px] rounded-md border border-slate-500 bg-black object-contain"
+                      className="h-[140px] w-[210px] rounded-md border border-slate-500 bg-black object-contain"
                     />
                   ) : (
-                    <div className="flex h-[140px] w-[220px] items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
+                    <div className="flex h-[140px] w-[210px] items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
                       入室中...
                     </div>
                   )}
@@ -7430,14 +7500,14 @@ export default function AvatarSpace({
                 ✕
               </button>
               {activeSharerId ? (
-                // 画面共有中は上段に映像を1列(220×140、ビデオと同じ
+                // 画面共有中は上段に映像を1列(210×140、ビデオと同じ
                 // サイズ)、下段いっぱいに画面共有を展開する。
                 <div className="flex h-full min-h-0 flex-col pt-3">
                   <div className="flex shrink-0 gap-2 overflow-x-auto px-3 pb-2">
                     <VideoTile
                       name="あなた"
                       stream={inCall ? cameraStreamRef.current : null}
-                      widthPx={220}
+                      widthPx={210}
                       heightPx={140}
                       isSelf
                     />
@@ -7446,7 +7516,7 @@ export default function AvatarSpace({
                         key={`meeting-call-${p.id}`}
                         name={p.name}
                         stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                        widthPx={220}
+                        widthPx={210}
                         heightPx={140}
                       />
                     ))}
@@ -7525,17 +7595,25 @@ export default function AvatarSpace({
                   </div>
                 </div>
               ) : (
-                // 画面共有が無い間は、人数に応じた均等グリッド(220×140)。
-                <div className="flex flex-1 items-center justify-center overflow-auto p-4">
+                // 画面共有が無い間は、人数に応じた均等グリッド。4:3の
+                // アスペクト比を保ったまま、モーダルの枠にちょうど収まる
+                // ようタイルサイズを実測に基づいて算出する(上のコメント
+                // 参照)。
+                <div
+                  ref={meetingGridCallbackRef}
+                  className="flex flex-1 items-center justify-center overflow-auto p-4"
+                >
                   <div
                     className="grid gap-3"
-                    style={{ gridTemplateColumns: `repeat(${gridSize}, 220px)` }}
+                    style={{
+                      gridTemplateColumns: `repeat(${meetingGridCols}, ${meetingTileWidth}px)`,
+                    }}
                   >
                     <VideoTile
                       name="あなた"
                       stream={inCall ? cameraStreamRef.current : null}
-                      widthPx={220}
-                      heightPx={140}
+                      widthPx={meetingTileWidth}
+                      heightPx={meetingTileHeight}
                       isSelf
                     />
                     {otherPlayers.map((p) => (
@@ -7543,8 +7621,8 @@ export default function AvatarSpace({
                         key={`meeting-grid-${p.id}`}
                         name={p.name}
                         stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                        widthPx={220}
-                        heightPx={140}
+                        widthPx={meetingTileWidth}
+                        heightPx={meetingTileHeight}
                       />
                     ))}
                   </div>
@@ -9309,8 +9387,11 @@ export default function AvatarSpace({
               : remoteCallStreams;
           const stream = streamMap[expandedMedia.peerId];
           if (!stream) return null;
+          // ヘッダー(h-16)は隠さずに残す(2026-09報告により変更。以前は
+          // inset-0で画面全体を覆っていた)。ヘッダーから下だけを全画面
+          // 表示エリアにする。
           return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
+            <div className="fixed inset-x-0 bottom-0 top-16 z-50 flex items-center justify-center bg-black">
               {expandedMedia.kind === "screen" ? (
                 // 画面共有は拡大縮小できるようにする(会議画面の共有エリアと
                 // 同じ考え方:transform: scaleではなく実際のレイアウトサイズを
