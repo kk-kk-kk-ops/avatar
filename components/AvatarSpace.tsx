@@ -523,12 +523,14 @@ export default function AvatarSpace({
   // 「会議画面」モーダルの開閉。自分のブラウザだけのローカル状態で、
   // 他の参加者とは同期しない(開いていない人は今まで通りの表示のまま)。
   const [meetingViewOpen, setMeetingViewOpen] = useState(false);
-  // 画面共有の排他制御(同時に1人まで)用。後から開始した人を勝者とする
-  // ため、開始時刻(claimedAt)を比較する。詳細はstartScreenShare/
-  // screen-share-claimハンドラ参照。
+  // 画面共有の排他制御(同じ会議室内では同時に1人まで)用。zoneIdが
+  // 一致する主張同士でのみ、後から開始した人を勝者とする(開始時刻
+  // claimedAtを比較)。詳細はstartScreenShare/screen-share-claim
+  // ハンドラ参照。
   const activeScreenShareClaimRef = useRef<{
     peerId: string;
     claimedAt: number;
+    zoneId: string;
   } | null>(null);
   // スマホの画面オフ中、相手のマイク・カメラ・画面共有を受信(購読)しない
   // ようにするためのフラグ(2026-09報告: 画面オフでも近くの人の音声が
@@ -4246,18 +4248,24 @@ export default function AvatarSpace({
       }
 
       // 画面共有は同じ会議室内では同時に1人まで(必須機能。会議室の外の
-      // 画面共有機能は変更しない)。自分が新たに開始したことを主張
-      // (claim)し、同じ会議室で既に共有中だった相手がいれば強制的に
-      // オフにさせる。範囲の判定は受信側(screen-share-claimハンドラ)で
-      // eligiblePeerIdsにより行う。claimedAtはほぼ同時に2人が開始した
-      // 場合のタイブレーク用。
-      const claimedAt = Date.now();
-      activeScreenShareClaimRef.current = { peerId: selfId.current, claimedAt };
-      channelRef.current?.send({
-        type: "broadcast",
-        event: "screen-share-claim",
-        payload: { peerId: selfId.current, claimedAt },
-      });
+      // 画面共有機能は変更しない)。自分が今いる会議室(ミーティングエリア。
+      // kind: meeting/conference)にいる場合のみ主張(claim)を送り、同じ
+      // 会議室で既に共有中だった相手がいれば強制的にオフにさせる。会議室に
+      // いない場合は主張自体を送らない(=従来通り複数人が同時に共有できる)。
+      const zoneId = selfState.current?.meetingZoneId ?? null;
+      if (zoneId && isIsolatedMeetingZone(zoneId)) {
+        const claimedAt = Date.now();
+        activeScreenShareClaimRef.current = {
+          peerId: selfId.current,
+          claimedAt,
+          zoneId,
+        };
+        channelRef.current?.send({
+          type: "broadcast",
+          event: "screen-share-claim",
+          payload: { peerId: selfId.current, claimedAt, zoneId },
+        });
+      }
 
       // ブラウザ標準の「共有を停止」ボタンが押された場合にも終了処理を行う
       track.mediaStreamTrack.addEventListener("ended", () => {
@@ -4663,27 +4671,28 @@ export default function AvatarSpace({
           setScreenPreviewImages((prev) => ({ ...prev, [id]: dataUrl }));
         })
         .on("broadcast", { event: "screen-share-claim" }, ({ payload }) => {
-          // 画面共有の排他制御(必須機能。startScreenShare参照)。ただし
-          // 「同じ会議室」内に限定する(会議室の外の画面共有機能は変更
-          // しない)。主張してきた相手が今の自分から見て近接判定
-          // (eligiblePeerIds、同じ会議室にいるか・近くにいるか)の対象外
-          // であれば無関係な部屋の出来事なので完全に無視する。対象内で
-          // あれば、自分の主張より新しければ(claimedAtを比較、同時刻なら
-          // peerIdの文字列比較でタイブレーク)受け入れ、自分が共有中で
-          // あれば強制的にオフにする。
-          const { peerId, claimedAt } = payload as {
+          // 画面共有の排他制御(必須機能。startScreenShare参照)。
+          // 「同じ会議室」内(=zoneIdが自分が今いる会議室と完全一致する
+          // 場合)に厳密に限定する(会議室の外・別の会議室の画面共有には
+          // 一切影響しない)。対象内であれば、自分の主張より新しければ
+          // (claimedAtを比較、同時刻ならpeerIdの文字列比較でタイブレーク)
+          // 受け入れ、自分が共有中であれば強制的にオフにする。
+          const { peerId, claimedAt, zoneId } = payload as {
             peerId: string;
             claimedAt: number;
+            zoneId: string;
           };
           if (peerId === selfId.current) return;
-          if (!eligiblePeerIdsRef.current.includes(peerId)) return;
+          if (selfState.current?.meetingZoneId !== zoneId) return;
           const current = activeScreenShareClaimRef.current;
+          const isSameZoneClaim = current?.zoneId === zoneId;
           const incomingWins =
+            !isSameZoneClaim ||
             !current ||
             claimedAt > current.claimedAt ||
             (claimedAt === current.claimedAt && peerId > current.peerId);
           if (!incomingWins) return;
-          activeScreenShareClaimRef.current = { peerId, claimedAt };
+          activeScreenShareClaimRef.current = { peerId, claimedAt, zoneId };
           if (screenSharingRef.current) stopScreenShare();
         })
         .on("broadcast", { event: "dm" }, ({ payload }) => {
@@ -6084,21 +6093,40 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey, audioEligibleKey, joined, livekitConnected, receptionSuspended]);
 
-  // 画面共有の視聴対象を自動追従させる(2026-09変更:「会議画面」機能に
-  // 伴い、同じ会議室(eligiblePeerIds)内での画面共有は排他制御
-  // (startScreenShare/screen-share-claim参照)により常に0〜1人になった
-  // ため、手動選択(クリック)ではなくpresence上でsharingScreen=trueの
-  // 相手へ自動的に追従させる。会議室の外(eligiblePeerIdsに含まれない
-  // 相手)は対象外のまま(=会議室の外の画面共有機能は変更しない)。
-  // presenceの瞬間的な揺らぎ対策(以前はここで5秒待って解除していた)は、
-  // presence leaveイベント自体に猶予時間を設ける修正(2026-09)で吸収済み
-  // のため、追加のタイマーは不要と判断した)。
+  // 画面共有の視聴対象を自動追従させる。会議室(ミーティングエリア。
+  // kind: meeting/conference)内にいる間は、「会議画面」機能に伴う排他
+  // 制御(startScreenShare/screen-share-claim参照)により同じ会議室内の
+  // 画面共有は常に0〜1人になるため、手動選択(クリック)ではなくpresence
+  // 上でsharingScreen=trueの相手へ自動的に追従させる。
+  // 会議室の外にいる間は以前と同じ手動選択のまま(サムネイルクリックで
+  // 設定)なので、ここでは選んだ相手が共有をやめた・近接範囲外に出た
+  // 場合の解除だけを行う(即座に解除すると、presenceの瞬間的な揺らぎで
+  // 誤って解除してしまうことがあるため、5秒待っても状況が変わらなければ
+  // 解除する。会議室内は排他制御自体がpresenceに即反映されるため、この
+  // 猶予は不要)。
   useEffect(() => {
-    const eligibleSet = new Set(eligiblePeerIds);
-    const sharer = Object.values(players).find(
-      (p) => p.id !== selfId.current && p.sharingScreen && eligibleSet.has(p.id),
+    const inMeetingRoom = isIsolatedMeetingZone(
+      selfState.current?.meetingZoneId,
     );
-    setSelectedScreenSharerId(sharer ? sharer.id : null);
+    if (inMeetingRoom) {
+      const eligibleSet = new Set(eligiblePeerIds);
+      const sharer = Object.values(players).find(
+        (p) =>
+          p.id !== selfId.current && p.sharingScreen && eligibleSet.has(p.id),
+      );
+      setSelectedScreenSharerId(sharer ? sharer.id : null);
+      return;
+    }
+    if (!selectedScreenSharerId) return;
+    const eligibleSet = new Set(eligiblePeerIds);
+    const stillSharingNearby =
+      eligibleSet.has(selectedScreenSharerId) &&
+      players[selectedScreenSharerId]?.sharingScreen;
+    if (stillSharingNearby) return;
+    const timer = setTimeout(() => {
+      setSelectedScreenSharerId(null);
+    }, 5000);
+    return () => clearTimeout(timer);
   }, [players, eligiblePeerIds]);
 
   // ---- 誰かの画面共有を視聴中かどうかをpresenceに反映する ----
@@ -6927,6 +6955,13 @@ export default function AvatarSpace({
   // 人数に合わせる。2人→2×2、5人→3×3、10人→4×4、17人→5×5)。
   const gridSize = Math.max(1, Math.ceil(Math.sqrt(otherPlayers.length + 1)));
 
+  // 会議室の外(selfInMeetingRoom=false)の常時表示プレビュー行用:
+  // 以前の挙動通り、実際にビデオ通話中でライブ映像を受信できている
+  // 相手だけを対象にする(プレースホルダーは表示しない)。
+  const activeOtherVideoCalls = otherPlayers.filter(
+    (p) => p.inCall && remoteCallStreams[p.id],
+  );
+
   // 会議画面モーダルで大きく表示する画面共有者(自分自身の共有も含めて
   // 1人に定まる。排他制御により部屋につき常に0〜1人)。
   const activeSharerId = screenSharing
@@ -6952,6 +6987,12 @@ export default function AvatarSpace({
     ? meetingZones.find((z) => z.id === selfPlayer.meetingZoneId)?.kind ===
       "work"
     : false;
+  // 「会議室」(ミーティングエリア。kind: meeting/conference)に今いるか
+  // どうか。「会議画面」機能の常時表示プレビュー・画面共有の排他制御は
+  // すべてこのフラグで判定し、会議室の外(通常のマップ上や作業エリア・
+  // 全体アナウンスエリア)では一切挙動を変えない(2026-09報告により
+  // 「部屋にいる全員/近くにいる人全般」ではなく「同じ会議室」限定に修正)。
+  const selfInMeetingRoom = isIsolatedMeetingZone(selfPlayer?.meetingZoneId);
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
   const effectiveViewportWidth = viewport.width / mapScale;
   const effectiveViewportHeight = viewport.height / mapScale;
@@ -7128,18 +7169,16 @@ export default function AvatarSpace({
           ref={containerRef}
           className="relative min-w-0 flex-1 overflow-hidden bg-slate-700 sm:order-3"
         >
-          {/* 常時表示プレビュー行(自分・同じ会議室にいる相手。2026-09
-              変更:以前は「ビデオ通話中/画面共有中の人がいる時だけ」
-              表示していたが、常時表示に変更した。対象は既存の近接判定
-              (eligiblePeerIds)のままで、会議室の外の人には影響しない。
-              人数が多い場合は横スクロールする。「会議画面」モーダルを
-              開いている間はこちらを隠す(モーダル側に同種の表示を出す)。
-              以前はサイドバーと横並びの上部バーとして画面全幅に表示して
-              いたため、サイドバーの上に覆いかぶさって見えていた
-              (2026-09報告)。アバター空間(このcontainerRef)の上部に
-              浮かせるabsoluteオーバーレイに変更し、サイドバーの右側
-              (=アバター空間の幅の中)だけに収まるようにした。 */}
-          {!meetingViewOpen && (
+          {/* 常時表示プレビュー行(会議室にいる間のみ。自分・同じ会議室に
+              いる相手を対象に、ビデオOFFでも黒背景+名前で常時表示する
+              (240×160)。人数が多い場合は横スクロールする。「会議画面」
+              モーダルを開いている間はこちらを隠す(モーダル側に同種の
+              表示を出す)。以前はサイドバーと横並びの上部バーとして画面
+              全幅に表示していたため、サイドバーの上に覆いかぶさって
+              見えていた(2026-09報告)。アバター空間(このcontainerRef)の
+              上部に浮かせるabsoluteオーバーレイに変更し、サイドバーの
+              右側(=アバター空間の幅の中)だけに収まるようにした。 */}
+          {!meetingViewOpen && selfInMeetingRoom && (
             <div className="absolute left-0 right-0 top-0 z-20 flex items-center gap-2 overflow-x-auto bg-slate-900/80 px-3 py-2">
               {screenSharing && screenStreamRef.current && (
                 <div className="relative shrink-0">
@@ -7173,7 +7212,7 @@ export default function AvatarSpace({
                 {videoPausedForScreenView ? (
                   <div
                     className="flex items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300"
-                    style={{ width: 160, height: 120 }}
+                    style={{ width: 240, height: 160 }}
                   >
                     画面共有視聴中
                   </div>
@@ -7181,8 +7220,8 @@ export default function AvatarSpace({
                   <VideoTile
                     name="あなた"
                     stream={inCall ? cameraStreamRef.current : null}
-                    widthPx={160}
-                    heightPx={120}
+                    widthPx={240}
+                    heightPx={160}
                     isSelf
                   />
                 )}
@@ -7204,17 +7243,20 @@ export default function AvatarSpace({
                   key={`call-${p.id}`}
                   name={p.name}
                   stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                  widthPx={160}
-                  heightPx={120}
+                  widthPx={240}
+                  heightPx={160}
                 />
               ))}
 
-              {/* 画面共有(排他制御により部屋につき常に0〜1人)。小さい
-                  プレビューをクリックすると全画面表示へ進む。 */}
+              {/* 画面共有(排他制御により同じ会議室内では常に0〜1人)。
+                  小さいプレビューをクリックすると全画面表示へ進む。 */}
               {visibleScreenShares.map((p) => (
                 <button
                   key={`screen-${p.id}`}
-                  onClick={() => setExpandedMedia({ peerId: p.id, kind: "screen" })}
+                  onClick={() => {
+                    setSelectedScreenSharerId(p.id);
+                    setExpandedMedia({ peerId: p.id, kind: "screen" });
+                  }}
                   className="relative shrink-0"
                   aria-label={`${p.name}の画面を全画面表示`}
                 >
@@ -7237,6 +7279,118 @@ export default function AvatarSpace({
               ))}
             </div>
           )}
+
+          {/* 常時表示プレビュー行(会議室の外。2026-09報告により、この
+              機能追加より前の挙動に戻した:実際にビデオ通話/画面共有を
+              している人がいる時だけ表示し、サイズも160×120のまま
+              (プレースホルダーは表示しない)。 */}
+          {!meetingViewOpen &&
+            !selfInMeetingRoom &&
+            (screenSharing ||
+              inCall ||
+              visibleScreenShares.length > 0 ||
+              activeOtherVideoCalls.length > 0) && (
+              <div className="absolute left-0 right-0 top-0 z-20 flex flex-wrap gap-2 bg-slate-900/80 px-3 py-2">
+                {screenSharing && screenStreamRef.current && (
+                  <div className="relative">
+                    {screenPreviewImages[selfId.current] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={screenPreviewImages[selfId.current]}
+                        alt="あなたの画面共有プレビュー"
+                        className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
+                      />
+                    ) : (
+                      <div className="flex h-20 w-32 items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
+                        共有中...
+                      </div>
+                    )}
+                    <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                      あなたの画面
+                    </span>
+                    <button
+                      onClick={stopScreenShare}
+                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                      aria-label="画面共有を終了"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {videoPausedForScreenView ? (
+                  <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300">
+                    画面共有視聴中
+                  </div>
+                ) : (
+                  inCall &&
+                  cameraStreamRef.current && (
+                    <div className="relative">
+                      <RemoteVideo
+                        stream={cameraStreamRef.current}
+                        className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
+                      />
+                      <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                        あなたのカメラ
+                      </span>
+                      <button
+                        onClick={stopVideoCall}
+                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                        aria-label="ビデオ通話を終了"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )
+                )}
+
+                {/* 画面共有は同時に何人でも共有できるが、視聴は1人だけ選ぶ方式
+                    (会議室の外では排他制御を行わないため、以前と同じ)。
+                    小さいプレビューは常に共有開始時点の静止画(ライブ映像には
+                    しない)、1回のクリックで購読開始と同時に全画面表示へ進む。 */}
+                {visibleScreenShares.map((p) => (
+                  <button
+                    key={`screen-${p.id}`}
+                    onClick={() => {
+                      setSelectedScreenSharerId(p.id);
+                      setExpandedMedia({ peerId: p.id, kind: "screen" });
+                    }}
+                    className="relative"
+                    aria-label={`${p.name}の画面を全画面表示`}
+                  >
+                    {screenPreviewImages[p.id] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={screenPreviewImages[p.id]}
+                        alt={`${p.name}の画面共有プレビュー`}
+                        className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
+                      />
+                    ) : (
+                      <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
+                        入室中...
+                      </div>
+                    )}
+                    <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                      {p.name}の画面
+                    </span>
+                  </button>
+                ))}
+
+                {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
+                    全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
+                {activeOtherVideoCalls.map((p) => (
+                  <div key={`call-${p.id}`} className="relative">
+                    <RemoteVideo
+                      stream={remoteCallStreams[p.id]}
+                      className="h-20 w-32 rounded-md border border-slate-500 bg-black object-cover"
+                    />
+                    <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                      {p.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
 
           {/* 「会議画面」モーダル(2026-09追加)。表示対象は同じ会議室に
               いる相手(otherPlayers、既存の近接判定eligiblePeerIdsのまま)
@@ -7298,7 +7452,7 @@ export default function AvatarSpace({
                   </div>
                 </div>
               ) : (
-                // 画面共有が無い間は、人数に応じた均等グリッド(240×180)。
+                // 画面共有が無い間は、人数に応じた均等グリッド(240×160)。
                 <div className="flex flex-1 items-center justify-center overflow-auto p-4">
                   <div
                     className="grid gap-3"
@@ -7308,7 +7462,7 @@ export default function AvatarSpace({
                       name="あなた"
                       stream={inCall ? cameraStreamRef.current : null}
                       widthPx={240}
-                      heightPx={180}
+                      heightPx={160}
                       isSelf
                     />
                     {otherPlayers.map((p) => (
@@ -7317,7 +7471,7 @@ export default function AvatarSpace({
                         name={p.name}
                         stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
                         widthPx={240}
-                        heightPx={180}
+                        heightPx={160}
                       />
                     ))}
                   </div>
