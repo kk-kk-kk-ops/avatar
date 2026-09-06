@@ -3609,12 +3609,12 @@ export default function AvatarSpace({
       publication.source === Track.Source.Camera ||
       publication.source === Track.Source.ScreenShare;
 
-    // Camera(ビデオ通話)は「会議画面」機能により、近接判定に関わらず
-    // 部屋にいる全員分を常時購読する(2026-09変更。以前は近接判定
-    // (eligiblePeerIds)に応じていた)。Audio(近接音声通話)は従来通り
-    // 全体アナウンスエリアの相手も含むaudioEligiblePeerIdsを使う。
-    // ScreenShareだけは対象外とし、「自動視聴」effect
-    // (selectedScreenSharerId)側で個別に制御する。
+    // Camera(ビデオ通話)は近接判定(eligiblePeerIds、同じ会議室にいるか・
+    // 近くにいるか)に応じて自動購読する。「会議画面」機能(2026-09追加)も
+    // この近接判定をそのまま使い、会議室の外の人には影響しない。
+    // Audio(近接音声通話)は全体アナウンスエリアの相手も含む
+    // audioEligiblePeerIdsを使う。ScreenShareだけは対象外とし、「自動視聴」
+    // effect(selectedScreenSharerId)側で個別に制御する。
     const applySubscription = (
       publication: RemoteTrackPublication,
       participant: RemoteParticipant,
@@ -3626,7 +3626,9 @@ export default function AvatarSpace({
         return;
       }
       if (publication.source !== Track.Source.Camera) return;
-      publication.setSubscribed(true);
+      publication.setSubscribed(
+        eligiblePeerIdsRef.current.includes(participant.identity),
+      );
     };
 
     const clearScreenShare = (identity: string) => {
@@ -4243,10 +4245,12 @@ export default function AvatarSpace({
         channelRef.current?.track(selfState.current);
       }
 
-      // 画面共有は部屋につき同時に1人まで(必須機能)。自分が新たに開始
-      // したことを主張(claim)し、既に共有中だった相手がいれば強制的に
-      // オフにさせる。claimedAtはほぼ同時に2人が開始した場合のタイブレーク
-      // 用(screen-share-claimハンドラ参照)。
+      // 画面共有は同じ会議室内では同時に1人まで(必須機能。会議室の外の
+      // 画面共有機能は変更しない)。自分が新たに開始したことを主張
+      // (claim)し、同じ会議室で既に共有中だった相手がいれば強制的に
+      // オフにさせる。範囲の判定は受信側(screen-share-claimハンドラ)で
+      // eligiblePeerIdsにより行う。claimedAtはほぼ同時に2人が開始した
+      // 場合のタイブレーク用。
       const claimedAt = Date.now();
       activeScreenShareClaimRef.current = { peerId: selfId.current, claimedAt };
       channelRef.current?.send({
@@ -4659,15 +4663,20 @@ export default function AvatarSpace({
           setScreenPreviewImages((prev) => ({ ...prev, [id]: dataUrl }));
         })
         .on("broadcast", { event: "screen-share-claim" }, ({ payload }) => {
-          // 画面共有の排他制御(必須機能。startScreenShare参照)。他の誰かが
-          // 新たに画面共有を主張してきたら、自分の主張より新しければ
-          // (claimedAtを比較、同時刻ならpeerIdの文字列比較でタイブレーク)
-          // 受け入れ、自分が共有中であれば強制的にオフにする。
+          // 画面共有の排他制御(必須機能。startScreenShare参照)。ただし
+          // 「同じ会議室」内に限定する(会議室の外の画面共有機能は変更
+          // しない)。主張してきた相手が今の自分から見て近接判定
+          // (eligiblePeerIds、同じ会議室にいるか・近くにいるか)の対象外
+          // であれば無関係な部屋の出来事なので完全に無視する。対象内で
+          // あれば、自分の主張より新しければ(claimedAtを比較、同時刻なら
+          // peerIdの文字列比較でタイブレーク)受け入れ、自分が共有中で
+          // あれば強制的にオフにする。
           const { peerId, claimedAt } = payload as {
             peerId: string;
             claimedAt: number;
           };
           if (peerId === selfId.current) return;
+          if (!eligiblePeerIdsRef.current.includes(peerId)) return;
           const current = activeScreenShareClaimRef.current;
           const incomingWins =
             !current ||
@@ -6021,9 +6030,10 @@ export default function AvatarSpace({
     audioEligiblePeerIdsRef.current = audioEligiblePeerIds;
   }, [audioEligiblePeerIds]);
 
-  // ---- LiveKit(音声・カメラ・画面共有):購読を切り替える ----
-  // カメラは「会議画面」機能により近接判定なしで全員分を常時購読する
-  // (2026-09変更)。音声は引き続き近接方式(audioEligiblePeerIds)。
+  // ---- LiveKit(音声・カメラ・画面共有):近接方式に合わせて購読を切り替える ----
+  // 「会議画面」機能(2026-09追加)もこの近接判定(eligiblePeerIds、同じ
+  // 会議室にいるか・近くにいるか)をそのまま使う。会議室の外の人には
+  // 一切影響しない。
   // 接続そのものはLiveKitのRoom(SFU)へ1本だけなので、ここでは相手ごとの
   // トラック購読(setSubscribed)をオン/オフするだけで済む
   // (以前のPeerConnectionメッシュのような接続の作成/破棄は不要)。
@@ -6041,10 +6051,12 @@ export default function AvatarSpace({
       const room = livekitRoomRef.current;
       if (!room) return;
       const audioEligibleSet = new Set(audioEligiblePeerIds);
+      const eligibleSet = new Set(eligiblePeerIds);
       room.remoteParticipants.forEach((participant) => {
         const shouldSubscribeAudio =
           !receptionSuspended && audioEligibleSet.has(participant.identity);
-        const shouldSubscribeCamera = !receptionSuspended;
+        const shouldSubscribeCamera =
+          !receptionSuspended && eligibleSet.has(participant.identity);
         participant.audioTrackPublications.forEach((pub) => {
           if (pub.isSubscribed !== shouldSubscribeAudio) {
             pub.setSubscribed(shouldSubscribeAudio);
@@ -6062,29 +6074,32 @@ export default function AvatarSpace({
     };
     applyProximitySubscriptionsRef.current = apply;
     apply();
-    // livekitConnectedもdepsに含める。購読対象(audioEligibleKey)は
-    // Supabase presence/meetingZonesの取得から決まり、LiveKitの接続完了とは
+    // livekitConnectedもdepsに含める。購読対象(eligibleKey/audioEligibleKey)
+    // はSupabase presence/meetingZonesの取得から決まり、LiveKitの接続完了とは
     // 非同期に(どちらが先とも限らないタイミングで)確定する。もし購読対象が
     // 既に確定した"後"でLiveKitが接続完了した場合、depsに変化がないため
     // このeffectは再実行されず、接続直後に一度も購読が反映されないままに
     // なることがあった(G-2: 全体アナウンスエリアで先に発信していた相手の
     // 音声・画面共有が、後から入室した人にだけ届かない不具合の原因)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioEligibleKey, joined, livekitConnected, receptionSuspended]);
+  }, [eligibleKey, audioEligibleKey, joined, livekitConnected, receptionSuspended]);
 
   // 画面共有の視聴対象を自動追従させる(2026-09変更:「会議画面」機能に
-  // 伴い、画面共有は排他制御(startScreenShare/screen-share-claim参照)に
-  // より部屋につき常に0〜1人になったため、手動選択(クリック)ではなく
-  // presence上でsharingScreen=trueの相手へ自動的に追従させる。presenceの
-  // 瞬間的な揺らぎ対策(以前はここで5秒待って解除していた)は、presence
-  // leaveイベント自体に猶予時間を設ける修正(2026-09)で吸収済みのため、
-  // 追加のタイマーは不要と判断した)。
+  // 伴い、同じ会議室(eligiblePeerIds)内での画面共有は排他制御
+  // (startScreenShare/screen-share-claim参照)により常に0〜1人になった
+  // ため、手動選択(クリック)ではなくpresence上でsharingScreen=trueの
+  // 相手へ自動的に追従させる。会議室の外(eligiblePeerIdsに含まれない
+  // 相手)は対象外のまま(=会議室の外の画面共有機能は変更しない)。
+  // presenceの瞬間的な揺らぎ対策(以前はここで5秒待って解除していた)は、
+  // presence leaveイベント自体に猶予時間を設ける修正(2026-09)で吸収済み
+  // のため、追加のタイマーは不要と判断した)。
   useEffect(() => {
+    const eligibleSet = new Set(eligiblePeerIds);
     const sharer = Object.values(players).find(
-      (p) => p.id !== selfId.current && p.sharingScreen,
+      (p) => p.id !== selfId.current && p.sharingScreen && eligibleSet.has(p.id),
     );
     setSelectedScreenSharerId(sharer ? sharer.id : null);
-  }, [players]);
+  }, [players, eligiblePeerIds]);
 
   // ---- 誰かの画面共有を視聴中かどうかをpresenceに反映する ----
   // マスター画面の「画面共有視聴中」人数集計のために使う。実際に映像を
@@ -6888,19 +6903,29 @@ export default function AvatarSpace({
   );
   const mentionsUnreadCount = mentions.filter((m) => !m.readAt).length;
 
-  // 画面共有中の相手(排他制御により部屋につき常に0〜1人、startScreenShare/
-  // screen-share-claim参照)。自動視聴のため、ライブ映像(remoteScreenStreams)
-  // は常にこの相手のものが届く(静止画プレビューは届くまでの一時的な代替)。
+  // 同じ会議室にいる(=近接判定 eligiblePeerIds を満たす)、画面共有中の
+  // 相手。排他制御により同じ会議室内では常に0〜1人になる
+  // (startScreenShare/screen-share-claim参照)。自動視聴のため、ライブ
+  // 映像(remoteScreenStreams)は常にこの相手のものが届く(静止画
+  // プレビューは届くまでの一時的な代替)。
+  const eligibleSetForMeetingView = new Set(eligiblePeerIds);
   const visibleScreenShares = playerList.filter(
-    (p) => p.id !== selfId.current && p.sharingScreen,
+    (p) =>
+      p.id !== selfId.current &&
+      p.sharingScreen &&
+      eligibleSetForMeetingView.has(p.id),
   );
 
-  // 自分以外の全員(常時表示プレビュー行・会議画面モーダルで共通利用。
-  // 「会議画面」機能により近接判定は行わず、部屋にいる全員が対象)。
-  const otherPlayers = playerList.filter((p) => p.id !== selfId.current);
-  // 会議画面モーダルの均等グリッドの一辺の数(2人→2×2、5人→3×3、
-  // 10人→4×4、17人→5×5、のように参加人数に合わせる)。
-  const gridSize = Math.max(1, Math.ceil(Math.sqrt(playerList.length)));
+  // 同じ会議室にいる、自分以外の相手(常時表示プレビュー行・会議画面
+  // モーダルで共通利用)。「会議画面」機能は既存の近接判定
+  // (eligiblePeerIds、同じ会議室にいるか・近くにいるか)をそのまま使い、
+  // 会議室の外の人には一切影響しない。
+  const otherPlayers = playerList.filter(
+    (p) => p.id !== selfId.current && eligibleSetForMeetingView.has(p.id),
+  );
+  // 会議画面モーダルの均等グリッドの一辺の数(自分+同じ会議室の相手の
+  // 人数に合わせる。2人→2×2、5人→3×3、10人→4×4、17人→5×5)。
+  const gridSize = Math.max(1, Math.ceil(Math.sqrt(otherPlayers.length + 1)));
 
   // 会議画面モーダルで大きく表示する画面共有者(自分自身の共有も含めて
   // 1人に定まる。排他制御により部屋につき常に0〜1人)。
@@ -6978,9 +7003,11 @@ export default function AvatarSpace({
       スクロール範囲の外に出てしまい、⚙️などが見えなくなることがあったため。 */}
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
           <div className="no-scrollbar min-w-0 overflow-x-auto whitespace-nowrap">
-            {/* 「オンライン: X人」表示を廃止し、代わりに部屋にいる全員の
-                映像を均等グリッドで見られる「会議画面」ボタンを設置する
-                (2026-09追加)。モーダルを開いている間は不要なので隠す。 */}
+            {/* 「オンライン: X人」表示を廃止し、代わりに同じ会議室にいる
+                相手の映像を均等グリッドで見られる「会議画面」ボタンを
+                設置する(2026-09追加)。会議室の外の人には影響しない
+                (対象は既存の近接判定eligiblePeerIdsのまま)。モーダルを
+                開いている間は不要なので隠す。 */}
             {!meetingViewOpen && (
               <button
                 onClick={() => setMeetingViewOpen(true)}
@@ -7101,8 +7128,10 @@ export default function AvatarSpace({
           ref={containerRef}
           className="relative min-w-0 flex-1 overflow-hidden bg-slate-700 sm:order-3"
         >
-          {/* 常時表示プレビュー行(自分・部屋にいる全員。2026-09変更:
-              「会議画面」機能により近接判定は行わず全員を対象にする。
+          {/* 常時表示プレビュー行(自分・同じ会議室にいる相手。2026-09
+              変更:以前は「ビデオ通話中/画面共有中の人がいる時だけ」
+              表示していたが、常時表示に変更した。対象は既存の近接判定
+              (eligiblePeerIds)のままで、会議室の外の人には影響しない。
               人数が多い場合は横スクロールする。「会議画面」モーダルを
               開いている間はこちらを隠す(モーダル側に同種の表示を出す)。
               以前はサイドバーと横並びの上部バーとして画面全幅に表示して
@@ -7168,8 +7197,8 @@ export default function AvatarSpace({
                 )}
               </div>
 
-              {/* 自分以外の全員のビデオ通話プレビュー(常時表示。OFF中は
-                  黒背景+名前)。 */}
+              {/* 同じ会議室にいる、自分以外の相手のビデオ通話プレビュー
+                  (常時表示。OFF中は黒背景+名前)。 */}
               {otherPlayers.map((p) => (
                 <VideoTile
                   key={`call-${p.id}`}
@@ -7209,12 +7238,14 @@ export default function AvatarSpace({
             </div>
           )}
 
-          {/* 「会議画面」モーダル(2026-09追加)。自分のブラウザだけの
-              ローカル表示切り替えで、他の参加者の画面には影響しない。
-              containerRef(サイドバーと同じ行の残り幅いっぱい・同じ高さ)
-              全体を覆うabsoluteオーバーレイにすることで、「サイドバーと
-              同じ高さ・サイドバーの右側いっぱいの幅」という要件を自然に
-              満たす。 */}
+          {/* 「会議画面」モーダル(2026-09追加)。表示対象は同じ会議室に
+              いる相手(otherPlayers、既存の近接判定eligiblePeerIdsのまま)
+              のみで、会議室の外の人はグリッドに含まれない。自分の
+              ブラウザだけのローカル表示切り替えで、他の参加者の画面には
+              影響しない。containerRef(サイドバーと同じ行の残り幅いっぱい・
+              同じ高さ)全体を覆うabsoluteオーバーレイにすることで、
+              「サイドバーと同じ高さ・サイドバーの右側いっぱいの幅」という
+              要件を自然に満たす。 */}
           {meetingViewOpen && (
             <div className="absolute inset-0 z-30 flex flex-col bg-slate-900">
               <button
