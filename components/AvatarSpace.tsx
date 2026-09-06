@@ -523,6 +523,9 @@ export default function AvatarSpace({
   // 「会議画面」モーダルの開閉。自分のブラウザだけのローカル状態で、
   // 他の参加者とは同期しない(開いていない人は今まで通りの表示のまま)。
   const [meetingViewOpen, setMeetingViewOpen] = useState(false);
+  // 会議画面モーダル内、画面共有エリアだけの拡大縮小(自分のブラウザだけの
+  // ローカル表示倍率)。共有者が変わった時・モーダルの開閉時にリセットする。
+  const [screenAreaZoom, setScreenAreaZoom] = useState(1);
   // 画面共有の排他制御(同じ会議室内では同時に1人まで)用。zoneIdが
   // 一致する主張同士でのみ、後から開始した人を勝者とする(開始時刻
   // claimedAtを比較)。詳細はstartScreenShare/screen-share-claim
@@ -597,6 +600,10 @@ export default function AvatarSpace({
   const [expandedMedia, setExpandedMedia] = useState<{
     peerId: string;
     kind: "screen" | "camera";
+    // 会議画面モーダル内の「全画面」ボタンから開いた場合はtrue。閉じた際に
+    // 視聴購読(selectedScreenSharerId)を解除するかどうかの分岐に使う
+    // (会議画面モーダルに戻る場合は購読を維持したままにする)。
+    fromMeetingView?: boolean;
   } | null>(null);
   // I-2: 相手の画面共有を全画面視聴している間、自分のビデオ通話を一時停止
   // して負荷を下げる。videoPausedForScreenViewはUI表示切り替え用、
@@ -7051,7 +7058,10 @@ export default function AvatarSpace({
                 開いている間は不要なので隠す。 */}
             {!meetingViewOpen && (
               <button
-                onClick={() => setMeetingViewOpen(true)}
+                onClick={() => {
+                  setMeetingViewOpen(true);
+                  setScreenAreaZoom(1);
+                }}
                 className="shrink-0 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
               >
                 会議画面
@@ -7403,22 +7413,25 @@ export default function AvatarSpace({
           {meetingViewOpen && (
             <div className="absolute inset-0 z-30 flex flex-col bg-slate-900">
               <button
-                onClick={() => setMeetingViewOpen(false)}
+                onClick={() => {
+                  setMeetingViewOpen(false);
+                  setScreenAreaZoom(1);
+                }}
                 className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
                 aria-label="会議画面を閉じる"
               >
                 ✕
               </button>
               {activeSharerId ? (
-                // 画面共有中は上段に映像を1列(160×120)、下段いっぱいに
-                // 画面共有を展開する。
+                // 画面共有中は上段に映像を1列(240×160、ビデオと同じ
+                // サイズ)、下段いっぱいに画面共有を展開する。
                 <div className="flex h-full min-h-0 flex-col pt-3">
                   <div className="flex shrink-0 gap-2 overflow-x-auto px-3 pb-2">
                     <VideoTile
                       name="あなた"
                       stream={inCall ? cameraStreamRef.current : null}
-                      widthPx={160}
-                      heightPx={120}
+                      widthPx={240}
+                      heightPx={160}
                       isSelf
                     />
                     {otherPlayers.map((p) => (
@@ -7426,29 +7439,75 @@ export default function AvatarSpace({
                         key={`meeting-call-${p.id}`}
                         name={p.name}
                         stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
-                        widthPx={160}
-                        heightPx={120}
+                        widthPx={240}
+                        heightPx={160}
                       />
                     ))}
                   </div>
                   <div className="min-h-0 flex-1 px-3 pb-3">
-                    {activeSharerStream ? (
-                      <RemoteVideo
-                        stream={activeSharerStream}
-                        className="h-full w-full rounded-md bg-black object-contain"
-                      />
-                    ) : activeSharerPreviewImage ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={activeSharerPreviewImage}
-                        alt={`${activeSharerName}の画面共有プレビュー`}
-                        className="h-full w-full rounded-md bg-black object-contain"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center rounded-md bg-black text-sm text-slate-300">
-                        共有中...
+                    <div className="relative h-full w-full overflow-hidden rounded-md bg-black">
+                      <span className="absolute left-2 top-2 z-10 rounded bg-black/70 px-2 py-1 text-xs text-white">
+                        {activeSharerName}が画面共有中
+                      </span>
+                      <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+                        <button
+                          onClick={() =>
+                            setScreenAreaZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))
+                          }
+                          className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                          aria-label="画面共有エリアを縮小"
+                        >
+                          −
+                        </button>
+                        <button
+                          onClick={() =>
+                            setScreenAreaZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))
+                          }
+                          className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                          aria-label="画面共有エリアを拡大"
+                        >
+                          ＋
+                        </button>
+                        <button
+                          onClick={() =>
+                            setExpandedMedia({
+                              peerId: activeSharerId,
+                              kind: "screen",
+                              fromMeetingView: true,
+                            })
+                          }
+                          className="rounded-full bg-black/60 px-2.5 py-1 text-xs text-white hover:bg-black/80"
+                          aria-label="全画面表示"
+                        >
+                          全画面
+                        </button>
                       </div>
-                    )}
+                      <div
+                        className="flex h-full w-full items-center justify-center"
+                        style={{
+                          transform: `scale(${screenAreaZoom})`,
+                          transformOrigin: "center center",
+                        }}
+                      >
+                        {activeSharerStream ? (
+                          <RemoteVideo
+                            stream={activeSharerStream}
+                            className="h-full w-full object-contain"
+                          />
+                        ) : activeSharerPreviewImage ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={activeSharerPreviewImage}
+                            alt={`${activeSharerName}の画面共有プレビュー`}
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-sm text-slate-300">
+                            共有中...
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -9250,8 +9309,10 @@ export default function AvatarSpace({
                 onClick={() => {
                   setExpandedMedia(null);
                   // 画面共有は視聴終了と同時に購読も止める(見ている人が
-                  // いない間は不要な帯域を使わないため)。
-                  if (expandedMedia.kind === "screen") {
+                  // いない間は不要な帯域を使わないため)。ただし会議画面
+                  // モーダルの「全画面」から開いた場合は、閉じるとモーダルに
+                  // 戻るだけで視聴自体は継続しているため購読を維持する。
+                  if (expandedMedia.kind === "screen" && !expandedMedia.fromMeetingView) {
                     setSelectedScreenSharerId(null);
                   }
                 }}
