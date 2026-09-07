@@ -7718,10 +7718,17 @@ export default function AvatarSpace({
                       {/* 拡大時にはみ出した部分もスクロールして見られるように、
                           transform: scale ではなく実際のレイアウトサイズ
                           (width/height の%)を変えることで、はみ出し分を
-                          overflow-autoの本物のスクロール領域にする。 */}
-                      <div className="absolute inset-0 flex items-center justify-center overflow-auto">
+                          overflow-autoの本物のスクロール領域にする。
+                          2026-09報告: 親側をflex items-center/justify-center
+                          で中央寄せすると、はみ出した領域のうち開始側
+                          (上・左)だけがスクロールで届かなくなる既知の
+                          挙動があったため、親の中央寄せはやめて子側の
+                          margin: autoで中央寄せする(はみ出していない時は
+                          今まで通り中央に表示され、はみ出した時は上下左右
+                          どちらにもスクロールできる)。 */}
+                      <div className="absolute inset-0 flex overflow-auto">
                         <div
-                          className="flex shrink-0 items-center justify-center"
+                          className="m-auto flex shrink-0 items-center justify-center"
                           style={{
                             width: `${screenAreaZoom * 100}%`,
                             height: `${screenAreaZoom * 100}%`,
@@ -9552,10 +9559,13 @@ export default function AvatarSpace({
                 // 画面共有は拡大縮小できるようにする(会議画面の共有エリアと
                 // 同じ考え方:transform: scaleではなく実際のレイアウトサイズを
                 // 変えて、はみ出した部分もoverflow-autoで本当にスクロール
-                // できるようにする)。
-                <div className="absolute inset-0 flex items-center justify-center overflow-auto">
+                // できるようにする)。親をflex items-center/justify-centerで
+                // 中央寄せすると、はみ出した領域の開始側(上・左)だけ
+                // スクロールで届かなくなる既知の挙動があるため、親の中央
+                // 寄せはやめて子側のmargin: autoで中央寄せする(2026-09報告)。
+                <div className="absolute inset-0 flex overflow-auto">
                   <div
-                    className="flex shrink-0 items-center justify-center"
+                    className="m-auto flex shrink-0 items-center justify-center"
                     style={{
                       width: `${fullscreenZoom * 100}%`,
                       height: `${fullscreenZoom * 100}%`,
