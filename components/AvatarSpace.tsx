@@ -4735,6 +4735,31 @@ export default function AvatarSpace({
           activeScreenShareClaimRef.current = { peerId, claimedAt, zoneId };
           if (screenSharingRef.current) stopScreenShare();
         })
+        .on("broadcast", { event: "conference-lock-change" }, ({ payload }) => {
+          // 会議室の施錠/解錠を、presenceの同期を待たずに即座に反映する
+          // (2026-09報告: presence経由だと数百ms〜のラグがあったため)。
+          // 正式な状態(誰が施錠者か)はpresence(lockedMeetingZoneId)の
+          // ままで、こちらはあくまで見た目を素早く更新するための通知。
+          // 実際に施錠できるかどうかの判定(handleLockIconClick)は
+          // 引き続きgetConferenceZoneLockerの決定的なロジックで行うため、
+          // ここで先取りして反映しても不整合は生まれない(presence側が
+          // 追いついた時点で最終的に同じ結論に収束する)。
+          const { peerId, lockedMeetingZoneId, lockedMeetingZoneAt } =
+            payload as {
+              peerId: string;
+              lockedMeetingZoneId: string | null;
+              lockedMeetingZoneAt?: number;
+            };
+          if (peerId === selfId.current) return;
+          setPlayers((prev) => {
+            const current = prev[peerId];
+            if (!current) return prev;
+            return {
+              ...prev,
+              [peerId]: { ...current, lockedMeetingZoneId, lockedMeetingZoneAt },
+            };
+          });
+        })
         .on("broadcast", { event: "dm" }, ({ payload }) => {
           const msg = payload as {
             id: string;
@@ -5797,6 +5822,15 @@ export default function AvatarSpace({
       self.lockedMeetingZoneId = lockedMeetingZoneId;
       self.lockedMeetingZoneAt = lockedMeetingZoneAt;
       channelRef.current?.track(self);
+      // presenceの同期を待たず、broadcastで即座に他の参加者へ通知する
+      // (2026-09報告: presenceだけだと反映に数百ms〜のラグがあったため)。
+      // presence(track)自体も引き続き行い、後から入室した人や、broadcastを
+      // 取りこぼした場合の最終的な状態はpresenceを正とする。
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "conference-lock-change",
+        payload: { peerId: self.id, lockedMeetingZoneId, lockedMeetingZoneAt },
+      });
       // selfState.current(ref)を書き換えただけではReactが再レンダリング
       // しないため、その場で動かなくても南京錠アイコンが即時に表示される
       // よう、players Stateも明示的に更新する。
