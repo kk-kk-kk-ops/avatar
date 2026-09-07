@@ -7400,6 +7400,10 @@ export default function AvatarSpace({
                   {selfConferenceZoneLocker ? "🔒" : "🔓"}
                 </button>
               )}
+              {/* 画面共有中の人のプレビュー(自分・他人問わず、常に一番左。
+                  2026-09報告により順序変更。排他制御により会議室内では
+                  常に0〜1人)。小さいプレビューをクリックすると全画面
+                  表示へ進む。 */}
               {screenSharing && screenStreamRef.current && (
                 <div className="relative shrink-0">
                   {screenPreviewImages[selfId.current] ? (
@@ -7426,8 +7430,37 @@ export default function AvatarSpace({
                   </button>
                 </div>
               )}
+              {visibleScreenShares.map((p) => (
+                <button
+                  key={`screen-${p.id}`}
+                  onClick={() => {
+                    setSelectedScreenSharerId(p.id);
+                    setFullscreenZoom(1);
+                    setExpandedMedia({ peerId: p.id, kind: "screen" });
+                  }}
+                  className="relative shrink-0"
+                  aria-label={`${p.name}の画面を全画面表示`}
+                >
+                  {screenPreviewImages[p.id] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={screenPreviewImages[p.id]}
+                      alt={`${p.name}の画面共有プレビュー`}
+                      className="h-[140px] w-[210px] rounded-md border border-slate-500 bg-black object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-[140px] w-[210px] items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
+                      入室中...
+                    </div>
+                  )}
+                  <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                    {p.name}の画面
+                  </span>
+                </button>
+              ))}
 
-              {/* 自分のビデオ通話プレビュー(常時表示。OFF中は黒背景+名前)。 */}
+              {/* 自分のビデオ通話プレビュー(2番目に表示。常時表示、OFF中は
+                  黒背景+名前)。 */}
               <div className="relative shrink-0">
                 {videoPausedForScreenView ? (
                   <div
@@ -7466,37 +7499,6 @@ export default function AvatarSpace({
                   widthPx={210}
                   heightPx={140}
                 />
-              ))}
-
-              {/* 画面共有(排他制御により同じ会議室内では常に0〜1人)。
-                  小さいプレビューをクリックすると全画面表示へ進む。 */}
-              {visibleScreenShares.map((p) => (
-                <button
-                  key={`screen-${p.id}`}
-                  onClick={() => {
-                    setSelectedScreenSharerId(p.id);
-                    setFullscreenZoom(1);
-                    setExpandedMedia({ peerId: p.id, kind: "screen" });
-                  }}
-                  className="relative shrink-0"
-                  aria-label={`${p.name}の画面を全画面表示`}
-                >
-                  {screenPreviewImages[p.id] ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={screenPreviewImages[p.id]}
-                      alt={`${p.name}の画面共有プレビュー`}
-                      className="h-[140px] w-[210px] rounded-md border border-slate-500 bg-black object-contain"
-                    />
-                  ) : (
-                    <div className="flex h-[140px] w-[210px] items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
-                      入室中...
-                    </div>
-                  )}
-                  <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                    {p.name}の画面
-                  </span>
-                </button>
               ))}
             </div>
           )}
