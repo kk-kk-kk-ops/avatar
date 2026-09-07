@@ -7624,21 +7624,6 @@ export default function AvatarSpace({
               要件を自然に満たす。 */}
           {meetingViewOpen && (
             <div className="absolute inset-0 z-30 flex flex-col bg-slate-900">
-              {/* 会議室(conference)の施錠アイコン(2026-09追加)。地図上の
-                  ものと全く同じhandleLockIconClick/判定を使い、挙動を
-                  揃える(施錠した人のみ解錠できる)。会議室に今いる人にだけ
-                  表示する(地図上のアイコンと同条件)。 */}
-              {selfConferenceZone && (
-                <button
-                  type="button"
-                  onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                  className="absolute left-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                  aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                  title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                >
-                  {selfConferenceZoneLocker ? "🔒" : "🔓"}
-                </button>
-              )}
               <button
                 onClick={() => {
                   setMeetingViewOpen(false);
@@ -7649,10 +7634,33 @@ export default function AvatarSpace({
               >
                 ✕
               </button>
+              {/* 会議室(conference)の施錠アイコン(2026-09追加)。地図上の
+                  ものと全く同じhandleLockIconClick/判定を使い、挙動を
+                  揃える(施錠した人のみ解錠できる)。会議室に今いる人にだけ
+                  表示する(地図上のアイコンと同条件)。以前はabsolute配置で
+                  映像プレビューの上に重ねていたため見づらかった
+                  (2026-09報告)。専用の行として余白を確保し、プレビューとは
+                  重ならないようにした。 */}
+              {selfConferenceZone && (
+                <div className="flex shrink-0 items-center px-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                    aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                    title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                  >
+                    {selfConferenceZoneLocker ? "🔒" : "🔓"}
+                  </button>
+                </div>
+              )}
               {activeSharerId ? (
                 // 画面共有中は上段に映像を1列(210×140、ビデオと同じ
-                // サイズ)、下段いっぱいに画面共有を展開する。
-                <div className="flex h-full min-h-0 flex-col pt-3">
+                // サイズ)、下段いっぱいに画面共有を展開する。施錠アイコンの
+                // 行が既に上の余白を確保している場合は、二重に空けない。
+                <div
+                  className={`flex h-full min-h-0 flex-col ${selfConferenceZone ? "pt-2" : "pt-3"}`}
+                >
                   <div className="flex shrink-0 gap-2 overflow-x-auto px-3 pb-2">
                     <VideoTile
                       name="あなた"
