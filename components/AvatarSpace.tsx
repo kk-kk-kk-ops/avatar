@@ -7383,7 +7383,7 @@ export default function AvatarSpace({
               上部に浮かせるabsoluteオーバーレイに変更し、サイドバーの
               右側(=アバター空間の幅の中)だけに収まるようにした。 */}
           {!meetingViewOpen && selfInMeetingRoom && (
-            <div className="absolute left-0 right-0 top-0 z-20 flex items-center gap-2 overflow-x-auto bg-slate-900/80 px-3 py-2">
+            <div className="absolute left-0 right-0 top-0 z-20 flex items-start gap-2 overflow-x-auto bg-slate-900/80 px-3 py-2">
               {/* 会議室(conference)の施錠アイコン(2026-09追加)。地図上の
                   ゾーンの鍵アイコンと、このプレビュー行の位置が画面上で
                   たまたま重なって見えることがあったため(2026-09報告)、
@@ -7761,7 +7761,7 @@ export default function AvatarSpace({
                 // アスペクト比を保ったまま、モーダルの枠にちょうど収まる
                 // ようタイルサイズを実測に基づいて算出する(上のコメント
                 // 参照)。
-                <div className="flex flex-1 items-center gap-2 overflow-auto p-4">
+                <div className="flex flex-1 items-start gap-2 overflow-auto p-4">
                   {/* 会議室(conference)の施錠アイコン。会議室入室時の常時
                       表示プレビュー行と同じく、一番左のプレビュー枠の
                       左側に置く。 */}
