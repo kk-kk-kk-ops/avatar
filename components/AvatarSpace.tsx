@@ -7841,19 +7841,6 @@ export default function AvatarSpace({
                         height: zone.height,
                       }}
                     >
-                      {/* 施錠アイコン:このゾーンに現在いる人にだけ操作させる
-                          (入室していない相手には見せない=押せない)。 */}
-                      {selfPlayer?.meetingZoneId === zone.id && (
-                        <button
-                          type="button"
-                          onClick={() => handleLockIconClick(zone.id)}
-                          className="absolute left-1 top-1 z-20 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-xs text-white shadow hover:bg-black/80"
-                          aria-label={locker ? "施錠を解除する" : "施錠する"}
-                          title={locker ? "施錠を解除する" : "施錠する"}
-                        >
-                          {locker ? "🔒" : "🔓"}
-                        </button>
-                      )}
                     </div>
                   );
                 })()
