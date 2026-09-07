@@ -4556,7 +4556,9 @@ export default function AvatarSpace({
                 current.inCall !== p.inCall ||
                 current.status !== p.status ||
                 current.message !== p.message ||
-                current.showMessage !== p.showMessage
+                current.showMessage !== p.showMessage ||
+                current.lockedMeetingZoneId !== p.lockedMeetingZoneId ||
+                current.lockedMeetingZoneAt !== p.lockedMeetingZoneAt
               ) {
                 next[p.id] = {
                   ...current,
@@ -4569,6 +4571,14 @@ export default function AvatarSpace({
                   status: p.status,
                   message: p.message,
                   showMessage: p.showMessage,
+                  // 会議室の施錠状態(2026-09報告のバグ修正: これまでこの
+                  // 一覧に含まれておらず、既に把握済みの相手の施錠状態が
+                  // presence経由では二度と更新されない不具合があった。
+                  // broadcast(conference-lock-change)による即時反映を
+                  // 補完する、確実に収束させるためのバックストップとして
+                  // 追加する)。
+                  lockedMeetingZoneId: p.lockedMeetingZoneId,
+                  lockedMeetingZoneAt: p.lockedMeetingZoneAt,
                 };
                 changed = true;
               }
@@ -5806,8 +5816,20 @@ export default function AvatarSpace({
 
   // 鍵アイコン押下:確認ポップアップなしで即座に施錠/解錠を切り替える。
   // 既に自分以外の誰かが施錠している場合のみ、操作不可のエラーを出す。
+  // 連打防止(2026-09報告のバグ修正): 短時間に連打すると、自分のtrack()/
+  // broadcastが連続して発生し、相手側での反映順序が入れ替わったり
+  // 一部を取りこぼしたりして、最終的な状態が食い違うことがあった
+  // (相手には施錠中に見えたり解錠中に見えたりがちらつく、その隙に
+  // 相手も施錠できてしまう、等)。クールダウン中の連打は無視する。
+  const lockClickCooldownRef = useRef(false);
   const handleLockIconClick = useCallback(
     (zoneId: string) => {
+      if (lockClickCooldownRef.current) return;
+      lockClickCooldownRef.current = true;
+      setTimeout(() => {
+        lockClickCooldownRef.current = false;
+      }, 800);
+
       const locker = getConferenceZoneLocker(zoneId, playersRef.current);
       if (locker && locker.id !== selfId.current) {
         setLockPermissionError({ zoneId });
@@ -7163,7 +7185,7 @@ export default function AvatarSpace({
   const selfConferenceZone = meetingZones.find(
     (z) => z.id === selfPlayer?.meetingZoneId && z.kind === "conference",
   );
-  const meetingModalLocker = selfConferenceZone
+  const selfConferenceZoneLocker = selfConferenceZone
     ? getConferenceZoneLocker(selfConferenceZone.id, players)
     : undefined;
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
@@ -7362,6 +7384,22 @@ export default function AvatarSpace({
               右側(=アバター空間の幅の中)だけに収まるようにした。 */}
           {!meetingViewOpen && selfInMeetingRoom && (
             <div className="absolute left-0 right-0 top-0 z-20 flex items-center gap-2 overflow-x-auto bg-slate-900/80 px-3 py-2">
+              {/* 会議室(conference)の施錠アイコン(2026-09追加)。地図上の
+                  ゾーンの鍵アイコンと、このプレビュー行の位置が画面上で
+                  たまたま重なって見えることがあったため(2026-09報告)、
+                  このプレビュー行専用の余白を確保して置く。地図上のものと
+                  全く同じhandleLockIconClick/判定を使い挙動を揃える。 */}
+              {selfConferenceZone && (
+                <button
+                  type="button"
+                  onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                  aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                  title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                >
+                  {selfConferenceZoneLocker ? "🔒" : "🔓"}
+                </button>
+              )}
               {screenSharing && screenStreamRef.current && (
                 <div className="relative shrink-0">
                   {screenPreviewImages[selfId.current] ? (
@@ -7595,10 +7633,10 @@ export default function AvatarSpace({
                   type="button"
                   onClick={() => handleLockIconClick(selfConferenceZone.id)}
                   className="absolute left-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                  aria-label={meetingModalLocker ? "施錠を解除する" : "施錠する"}
-                  title={meetingModalLocker ? "施錠を解除する" : "施錠する"}
+                  aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                  title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
                 >
-                  {meetingModalLocker ? "🔒" : "🔓"}
+                  {selfConferenceZoneLocker ? "🔒" : "🔓"}
                 </button>
               )}
               <button
