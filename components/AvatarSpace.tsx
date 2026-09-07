@@ -7636,34 +7636,29 @@ export default function AvatarSpace({
               >
                 ✕
               </button>
-              {/* 会議室(conference)の施錠アイコン(2026-09追加)。地図上の
-                  ものと全く同じhandleLockIconClick/判定を使い、挙動を
-                  揃える(施錠した人のみ解錠できる)。会議室に今いる人にだけ
-                  表示する(地図上のアイコンと同条件)。以前はabsolute配置で
-                  映像プレビューの上に重ねていたため見づらかった
-                  (2026-09報告)。専用の行として余白を確保し、プレビューとは
-                  重ならないようにした。 */}
-              {selfConferenceZone && (
-                <div className="flex shrink-0 items-center px-3 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                    aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                    title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                  >
-                    {selfConferenceZoneLocker ? "🔒" : "🔓"}
-                  </button>
-                </div>
-              )}
               {activeSharerId ? (
                 // 画面共有中は上段に映像を1列(210×140、ビデオと同じ
-                // サイズ)、下段いっぱいに画面共有を展開する。施錠アイコンの
-                // 行が既に上の余白を確保している場合は、二重に空けない。
-                <div
-                  className={`flex h-full min-h-0 flex-col ${selfConferenceZone ? "pt-2" : "pt-3"}`}
-                >
+                // サイズ)、下段いっぱいに画面共有を展開する。
+                <div className="flex h-full min-h-0 flex-col pt-3">
                   <div className="flex shrink-0 gap-2 overflow-x-auto px-3 pb-2">
+                    {/* 会議室(conference)の施錠アイコン(2026-09追加)。
+                        地図上のものと全く同じhandleLockIconClick/判定を
+                        使い、挙動を揃える(施錠した人のみ解錠できる)。
+                        会議室に今いる人にだけ表示する。会議室入室時の
+                        常時表示プレビュー行と同じく、一番左のプレビュー
+                        枠の左側に置く(2026-09報告により、専用の行に
+                        分けていたのをやめて位置を揃えた)。 */}
+                    {selfConferenceZone && (
+                      <button
+                        type="button"
+                        onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                        aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                        title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                      >
+                        {selfConferenceZoneLocker ? "🔒" : "🔓"}
+                      </button>
+                    )}
                     <VideoTile
                       name="あなた"
                       stream={inCall ? cameraStreamRef.current : null}
@@ -7759,32 +7754,48 @@ export default function AvatarSpace({
                 // アスペクト比を保ったまま、モーダルの枠にちょうど収まる
                 // ようタイルサイズを実測に基づいて算出する(上のコメント
                 // 参照)。
-                <div
-                  ref={meetingGridCallbackRef}
-                  className="flex flex-1 items-center justify-center overflow-auto p-4"
-                >
+                <div className="flex flex-1 items-center gap-2 overflow-auto p-4">
+                  {/* 会議室(conference)の施錠アイコン。会議室入室時の常時
+                      表示プレビュー行と同じく、一番左のプレビュー枠の
+                      左側に置く。 */}
+                  {selfConferenceZone && (
+                    <button
+                      type="button"
+                      onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                      aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                      title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                    >
+                      {selfConferenceZoneLocker ? "🔒" : "🔓"}
+                    </button>
+                  )}
                   <div
-                    className="grid gap-3"
-                    style={{
-                      gridTemplateColumns: `repeat(${meetingGridCols}, ${meetingTileWidth}px)`,
-                    }}
+                    ref={meetingGridCallbackRef}
+                    className="flex h-full flex-1 items-center justify-center"
                   >
-                    <VideoTile
-                      name="あなた"
-                      stream={inCall ? cameraStreamRef.current : null}
-                      widthPx={meetingTileWidth}
-                      heightPx={meetingTileHeight}
-                      isSelf
-                    />
-                    {otherPlayers.map((p) => (
+                    <div
+                      className="grid gap-3"
+                      style={{
+                        gridTemplateColumns: `repeat(${meetingGridCols}, ${meetingTileWidth}px)`,
+                      }}
+                    >
                       <VideoTile
-                        key={`meeting-grid-${p.id}`}
-                        name={p.name}
-                        stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
+                        name="あなた"
+                        stream={inCall ? cameraStreamRef.current : null}
                         widthPx={meetingTileWidth}
                         heightPx={meetingTileHeight}
+                        isSelf
                       />
-                    ))}
+                      {otherPlayers.map((p) => (
+                        <VideoTile
+                          key={`meeting-grid-${p.id}`}
+                          name={p.name}
+                          stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
+                          widthPx={meetingTileWidth}
+                          heightPx={meetingTileHeight}
+                        />
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
