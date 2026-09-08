@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { AccountSummary, MapTemplate, PlanId, Room } from "@/lib/types";
 import { PLANS } from "@/lib/types";
 import { useSessionGuard } from "@/lib/useSessionGuard";
@@ -12,6 +13,10 @@ import TemplateManager from "./TemplateManager";
 import AvatarSettingsPanel from "./AvatarSettingsPanel";
 import AccountServerAssignment from "./AccountServerAssignment";
 import MfaSettingsPanel from "./MfaSettingsPanel";
+import {
+  TemplateEditorGuardContext,
+  type TemplateEditorGuard,
+} from "./templateEditorGuard";
 
 type Tab = "dashboard" | "templates" | "avatar" | "accounts" | "security";
 
@@ -40,6 +45,7 @@ export default function MasterDashboard({
   userEmail: string;
   avatarSizePx: number;
 }) {
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -48,12 +54,50 @@ export default function MasterDashboard({
   // 強制ログアウトさせる。
   useSessionGuard();
 
+  // テンプレート編集中に保存していないレイアウト変更がある状態で、
+  // サイドバーの他の項目(タブ切り替え・「管理画面へ」・「ルームへ」)を
+  // 押して画面遷移しようとした場合に確認するための仕組み。詳細は
+  // ./templateEditorGuard.tsx参照。
+  const editorGuardRef = useRef<TemplateEditorGuard | null>(null);
+  const setGuard = useCallback((guard: TemplateEditorGuard | null) => {
+    editorGuardRef.current = guard;
+  }, []);
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
+  const [pendingNavSaving, setPendingNavSaving] = useState(false);
+
+  // 実際のナビゲーションを行う前に、編集中のテンプレートに未保存の変更が
+  // あるかを確認する。無ければそのまま実行し、あれば確認ポップアップを
+  // 出してユーザーの選択(保存して進む/保存せず進む)を待つ。
+  const guardNavigation = (navigate: () => void) => {
+    if (editorGuardRef.current?.isDirty()) {
+      setPendingNav(() => navigate);
+    } else {
+      navigate();
+    }
+  };
+
+  const resolvePendingNav = async (shouldSave: boolean) => {
+    const navigate = pendingNav;
+    if (!navigate) return;
+    if (shouldSave) {
+      setPendingNavSaving(true);
+      const ok = await editorGuardRef.current?.save();
+      setPendingNavSaving(false);
+      if (!ok) return; // 保存に失敗した場合は遷移させない(エラー表示は編集画面側で行う)
+    }
+    setPendingNav(null);
+    navigate();
+  };
+
   const selectTab = (t: Tab) => {
-    setTab(t);
-    setSidebarOpen(false);
+    guardNavigation(() => {
+      setTab(t);
+      setSidebarOpen(false);
+    });
   };
 
   return (
+    <TemplateEditorGuardContext.Provider value={{ setGuard }}>
     <div className="flex min-h-screen">
       {/* スマホ用ヘッダー */}
       <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-4 py-3 md:hidden">
@@ -162,6 +206,11 @@ export default function MasterDashboard({
           {showAdminLink && (
             <Link
               href="/admin"
+              onClick={(e) => {
+                if (!editorGuardRef.current?.isDirty()) return;
+                e.preventDefault();
+                guardNavigation(() => router.push("/admin"));
+              }}
               className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
             >
               管理画面へ
@@ -172,6 +221,11 @@ export default function MasterDashboard({
               // 通常の"/"はログイン済みマスターを/masterへ戻してしまうため、
               // 自分自身の招待URL経由でルーム入室画面へ進む(F-3)。
               href={`/?invite=${ownInviteToken}`}
+              onClick={(e) => {
+                if (!editorGuardRef.current?.isDirty()) return;
+                e.preventDefault();
+                guardNavigation(() => router.push(`/?invite=${ownInviteToken}`));
+              }}
               className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
             >
               ルームへ
@@ -240,5 +294,33 @@ export default function MasterDashboard({
         {tab === "security" && <MfaSettingsPanel />}
       </main>
     </div>
+
+    {pendingNav && (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+          <p className="text-sm font-bold text-slate-800">保存して終了しますか?</p>
+          <p className="mt-2 text-sm text-slate-600">
+            テンプレートのレイアウトに保存していない変更があります。
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              onClick={() => resolvePendingNav(false)}
+              disabled={pendingNavSaving}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            >
+              いいえ
+            </button>
+            <button
+              onClick={() => resolvePendingNav(true)}
+              disabled={pendingNavSaving}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+            >
+              {pendingNavSaving ? "保存中..." : "はい"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </TemplateEditorGuardContext.Provider>
   );
 }
