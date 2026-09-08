@@ -114,6 +114,14 @@ function warpChannelClasses(channel: "A" | "B" | "C"): string {
   }
 }
 
+// サイドバーのボタン表示名(「Aワープ」等の記号ではなく、上の表示色と
+// 対応した色名で案内する)。
+const WARP_CHANNEL_NAMES: Record<"A" | "B" | "C", string> = {
+  A: "赤",
+  B: "黄",
+  C: "青",
+};
+
 function clampMapSize(rawInput: string, fallback: number): number {
   const parsed = Number(rawInput);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -160,6 +168,7 @@ export default function TemplateEditor({
     string | null
   >(null);
   const [registeringObject, setRegisteringObject] = useState(false);
+  const [deletingLibraryImage, setDeletingLibraryImage] = useState(false);
   const [saving, setSaving] = useState(false);
   // router.refresh()(サーバー側の最新データの反映)が完了するまで
   // onClose()を遅らせるためのフラグ。refreshingがfalseに戻った時点で
@@ -888,14 +897,19 @@ export default function TemplateEditor({
   const handleDeleteLibraryImage = async () => {
     if (!selectedLibraryImageId) return;
     setError(null);
-    const next = objectLibrary.filter((o) => o.id !== selectedLibraryImageId);
-    const result = await updateTemplateObjectLibrary(template.id, next);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    setDeletingLibraryImage(true);
+    try {
+      const next = objectLibrary.filter((o) => o.id !== selectedLibraryImageId);
+      const result = await updateTemplateObjectLibrary(template.id, next);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setObjectLibrary(next);
+      setSelectedLibraryImageId(null);
+    } finally {
+      setDeletingLibraryImage(false);
     }
-    setObjectLibrary(next);
-    setSelectedLibraryImageId(null);
   };
 
   // ライブラリから選択中の画像をマップの中央へ配置する。画像の実サイズ
@@ -1126,10 +1140,20 @@ export default function TemplateEditor({
               </button>
             </div>
           )}
+          <label className="mt-2 block cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
+            {uploading ? "アップロード中..." : "ルーム背景変更"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageChange}
+              disabled={uploading}
+            />
+          </label>
         </div>
 
         <div className="flex items-center gap-1.5">
-          <p className="text-xs font-semibold text-slate-500">レイアウト</p>
+          <p className="text-xs font-semibold text-slate-500">エリア</p>
           <button
             type="button"
             onClick={() => setHelpOpen(true)}
@@ -1158,7 +1182,7 @@ export default function TemplateEditor({
               onClick={addMeetingZone}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋ミーティングエリア
+              ＋ミーティング
             </button>
           </div>
           <div className="flex gap-2">
@@ -1166,20 +1190,20 @@ export default function TemplateEditor({
               onClick={addConferenceRoom}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋会議室
+              ＋会議
             </button>
             <button
               onClick={addWorkArea}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋作業エリア
+              ＋作業
             </button>
           </div>
           <button
             onClick={addAnnouncementZone}
             className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
           >
-            ＋全体アナウンスエリア
+            ＋全体アナウンス
           </button>
           <p className="text-xs font-semibold text-slate-500">ワープ</p>
           {WARP_CHANNELS.map((channel) => {
@@ -1192,7 +1216,8 @@ export default function TemplateEditor({
                   disabled={hasPair}
                   className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
                 >
-                  ＋{channel}ワープ{hasPair ? "(設置済み)" : ""}
+                  ＋{WARP_CHANNEL_NAMES[channel]}ワープ
+                  {hasPair ? "(設置済み)" : ""}
                 </button>
                 {hasPair && (
                   <div className="flex gap-1">
@@ -1212,16 +1237,6 @@ export default function TemplateEditor({
               </div>
             );
           })}
-          <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
-            {uploading ? "アップロード中..." : "ルーム背景変更"}
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleImageChange}
-              disabled={uploading}
-            />
-          </label>
         </div>
 
         <div>
@@ -1277,10 +1292,10 @@ export default function TemplateEditor({
               <button
                 type="button"
                 onClick={handleDeleteLibraryImage}
-                disabled={!selectedLibraryImageId}
+                disabled={!selectedLibraryImageId || deletingLibraryImage}
                 className="flex-1 rounded-lg border border-red-300 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40"
               >
-                削除
+                {deletingLibraryImage ? "削除中..." : "削除"}
               </button>
             </div>
           </div>
@@ -1320,45 +1335,6 @@ export default function TemplateEditor({
           >
             {measuringImageSize ? "取得中..." : "デフォルト(画像の実サイズ)"}
           </button>
-        </div>
-
-        <div>
-          <p className="mb-1 text-xs font-semibold text-slate-500">
-            拡大 {Math.round(zoom * 100)}%
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 100) / 100))}
-              disabled={zoom <= 1}
-              className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-            >
-              －
-            </button>
-            <input
-              type="range"
-              min={1}
-              max={3}
-              step={0.5}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-              className="w-full"
-            />
-            <button
-              onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.5) * 100) / 100))}
-              disabled={zoom >= 3}
-              className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-            >
-              ＋
-            </button>
-          </div>
-          {zoom !== 1 && (
-            <button
-              onClick={() => setZoom(1)}
-              className="mt-1 text-xs text-slate-500 underline hover:text-slate-800"
-            >
-              リセット
-            </button>
-          )}
         </div>
 
         <button
@@ -1481,6 +1457,48 @@ export default function TemplateEditor({
             →
           </button>
         </div>
+
+        {/* 拡大。プレビューエリア下部中央に固定表示する。 */}
+        <div className="absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-slate-300 bg-white/90 px-3 py-1.5 shadow">
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 100) / 100))}
+            disabled={zoom <= 1}
+            className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          >
+            －
+          </button>
+          <input
+            type="range"
+            min={1}
+            max={3}
+            step={0.5}
+            value={zoom}
+            onChange={(e) => setZoom(Number(e.target.value))}
+            className="w-24"
+          />
+          <button
+            type="button"
+            onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.5) * 100) / 100))}
+            disabled={zoom >= 3}
+            className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          >
+            ＋
+          </button>
+          <span className="w-9 shrink-0 text-xs text-slate-500">
+            {Math.round(zoom * 100)}%
+          </span>
+          {zoom !== 1 && (
+            <button
+              type="button"
+              onClick={() => setZoom(1)}
+              className="shrink-0 text-xs text-slate-500 underline hover:text-slate-800"
+            >
+              リセット
+            </button>
+          )}
+        </div>
+
         <div
           ref={scrollRef}
           className="relative touch-none overflow-auto rounded-lg border border-slate-300 bg-slate-700"
@@ -1663,7 +1681,6 @@ export default function TemplateEditor({
                     height: WARP_POINT_RADIUS * 2 * scale,
                   }}
                 >
-                  {w.channel}
                   <button
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => removeWarpPair(w.channel)}
