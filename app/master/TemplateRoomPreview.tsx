@@ -72,8 +72,6 @@ export default function TemplateRoomPreview({
     Math.max(centerY - viewportHeight / 2, Math.min(0, mapHeight - viewportHeight)),
     Math.max(0, mapHeight - viewportHeight),
   );
-  const avatarLeft = centerX - cameraX - avatarSizePx / 2;
-  const avatarTop = centerY - cameraY - avatarSizePx;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-900">
@@ -123,52 +121,56 @@ export default function TemplateRoomPreview({
 
         <div ref={mapAreaRef} className="relative min-w-0 flex-1 overflow-hidden bg-slate-700">
           {areaSize.width > 0 && (
-            <div
-              className="absolute left-0 top-0"
-              style={{
-                width: mapWidth,
-                height: mapHeight,
-                transform: `translate(${-cameraX}px, ${-cameraY}px)`,
-                backgroundImage: `url('${backgroundImageUrl}')`,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                backgroundRepeat: "no-repeat",
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={AVATAR_FRONT_IMAGE}
-                alt="アバターのプレビュー"
-                className="absolute z-10 object-contain"
+            <>
+              <div
+                className="absolute left-0 top-0"
                 style={{
-                  left: avatarLeft,
-                  top: avatarTop,
-                  width: avatarSizePx,
-                  height: avatarSizePx,
+                  width: mapWidth,
+                  height: mapHeight,
+                  transform: `translate(${-cameraX}px, ${-cameraY}px)`,
+                  backgroundImage: `url('${backgroundImageUrl}')`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                  backgroundRepeat: "no-repeat",
                 }}
-              />
-              {/* 装飾オブジェクト(2026-09追加)。実際の空間(AvatarSpace.tsx)と
-                  同じく、背景 < アバター(z-10) < オブジェクト(z-20)の
-                  重なり順を明示的なz-indexで固定する。 */}
-              {placedObjects.map((o) => (
-                // eslint-disable-next-line @next/next/no-img-element
+              >
+                {/* 装飾オブジェクト(2026-09追加)。実際の空間(AvatarSpace.tsx)と
+                    同じく、背景 < アバター(下記、常にプレビュー領域の
+                    真ん中) < オブジェクトの重なり順を明示的なz-indexで
+                    固定する。 */}
+                {placedObjects.map((o) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={o.id}
+                    src={o.imageUrl}
+                    alt="配置したオブジェクトのプレビュー"
+                    draggable={false}
+                    className="pointer-events-none absolute z-20 select-none object-contain"
+                    style={{
+                      left: o.x,
+                      top: o.y,
+                      width: o.width,
+                      height: o.height,
+                      transform: `rotate(${o.rotation ?? 0}deg)`,
+                      transformOrigin: "50% 50%",
+                    }}
+                  />
+                ))}
+              </div>
+              {/* アバターは常にこのプレビュー領域(mapAreaRef)の真ん中に表示する。
+                  上のマップ座標系の計算(カメラ位置)には依存させず、
+                  flexboxで直接中央寄せすることで確実に画面中央に来るように
+                  する(2026-09報告: 座標計算経由だと画面外に出ることがあった)。 */}
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  key={o.id}
-                  src={o.imageUrl}
-                  alt="配置したオブジェクトのプレビュー"
-                  draggable={false}
-                  className="pointer-events-none absolute z-20 select-none object-contain"
-                  style={{
-                    left: o.x,
-                    top: o.y,
-                    width: o.width,
-                    height: o.height,
-                    transform: `rotate(${o.rotation ?? 0}deg)`,
-                    transformOrigin: "50% 50%",
-                  }}
+                  src={AVATAR_FRONT_IMAGE}
+                  alt="アバターのプレビュー"
+                  className="object-contain"
+                  style={{ width: avatarSizePx, height: avatarSizePx }}
                 />
-              ))}
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>
