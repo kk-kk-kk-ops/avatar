@@ -2,8 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { Room } from "@/lib/types";
-import ConfirmModal from "@/components/ConfirmModal";
-import { addRoom, deleteRoom, updateRoomTemplate } from "./actions";
+import { addRoom, updateRoomTemplate } from "./actions";
 
 type RoomDesignOption = {
   id: string;
@@ -11,9 +10,7 @@ type RoomDesignOption = {
   backgroundImageUrl: string;
 };
 
-// どの操作が進行中かを個別に表示するため、useTransitionのpending
-// フラグだけでなく「どのルームの何をしているか」も保持する。
-type PendingAction = { type: "apply" } | { type: "delete"; roomId: string };
+type PendingAction = { type: "apply" };
 
 export default function RoomManager({
   rooms,
@@ -35,7 +32,6 @@ export default function RoomManager({
   const [selectedDesignId, setSelectedDesignId] = useState(
     existingRoom?.templateId ?? templates[0]?.id ?? "",
   );
-  const [deleteTarget, setDeleteTarget] = useState<Room | null>(null);
 
   // ルームカードに表示する名前は、ルーム自体の名前(旧・名前変更機能で
   // 変えられる値)ではなく、現在紐づいているルームデザイン(テンプレート)の
@@ -68,21 +64,6 @@ export default function RoomManager({
     });
   };
 
-  const handleDelete = (roomId: string) => {
-    setError(null);
-    setPendingAction({ type: "delete", roomId });
-    startTransition(async () => {
-      try {
-        await deleteRoom(roomId);
-        setDeleteTarget(null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "ルームの削除に失敗しました");
-      } finally {
-        setPendingAction(null);
-      }
-    });
-  };
-
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
@@ -105,18 +86,6 @@ export default function RoomManager({
               <p className="truncate text-xs font-semibold text-slate-700">
                 {getRoomDisplayName(room)}
               </p>
-              <div className="mt-1 flex gap-2">
-                <button
-                  onClick={() => setDeleteTarget(room)}
-                  disabled={pending}
-                  className="text-[10px] text-red-500 hover:text-red-700 disabled:opacity-60"
-                >
-                  {pendingAction?.type === "delete" &&
-                  pendingAction.roomId === room.id
-                    ? "削除中..."
-                    : "削除"}
-                </button>
-              </div>
             </div>
           </div>
         ))}
@@ -218,19 +187,6 @@ export default function RoomManager({
           </div>
         )}
       </div>
-
-      {deleteTarget && (
-        <ConfirmModal
-          title="ルームを削除"
-          message={`「${getRoomDisplayName(deleteTarget)}」を削除します。この操作は取り消せません。よろしいですか?`}
-          pending={
-            pendingAction?.type === "delete" &&
-            pendingAction.roomId === deleteTarget.id
-          }
-          onConfirm={() => handleDelete(deleteTarget.id)}
-          onCancel={() => setDeleteTarget(null)}
-        />
-      )}
     </div>
   );
 }

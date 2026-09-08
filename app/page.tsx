@@ -12,6 +12,30 @@ import LogoutButton from "@/components/auth/LogoutButton";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { User } from "@supabase/supabase-js";
 
+// ロビー画面(入室前のプレビュー)に表示するルーム名は、ルーム自体の名前
+// (旧・名前変更機能で変えられる値。テンプレート機能導入前の名残で、
+// 現在は編集する手段が無いまま古い値が残っていることがある)ではなく、
+// 現在紐づいているルームデザイン(テンプレート)の名前を表示する
+// (app/admin/RoomManager.tsxのgetRoomDisplayNameと同じ考え方。2026-09報告:
+// テンプレートを切り替えてもロビーの表示名だけが元のルーム名のまま
+// 変わらなかったため)。対応するテンプレートが見つからない場合のみ、
+// 保存済みのルーム名にフォールバックする。1アカウントにつきルームは
+// 常に0〜1件のため、先頭の1件だけを見れば十分。
+async function applyTemplateNameToRooms(
+  supabase: SupabaseClient,
+  rooms: Room[],
+): Promise<Room[]> {
+  const templateId = rooms[0]?.templateId;
+  if (!templateId) return rooms;
+  const { data: template } = await supabase
+    .from("templates")
+    .select("name")
+    .eq("id", templateId)
+    .maybeSingle();
+  if (!template?.name) return rooms;
+  return rooms.map((r, i) => (i === 0 ? { ...r, name: template.name } : r));
+}
+
 // 管理画面ダッシュボードの「強制退出」でBANされたユーザーに表示する画面。
 // 管理者が解除するまで入室させない。
 function BannedNotice({ logoutRedirectTo }: { logoutRedirectTo: string }) {
@@ -75,13 +99,16 @@ async function renderRoomJoin(
       .maybeSingle(),
   ]);
 
-  const rooms: Room[] = (roomRows ?? []).map((r) => ({
-    id: r.id,
-    accountId: r.account_id,
-    templateId: r.template_id,
-    name: r.name,
-    previewImage: r.preview_image,
-  }));
+  const rooms: Room[] = await applyTemplateNameToRooms(
+    supabase,
+    (roomRows ?? []).map((r) => ({
+      id: r.id,
+      accountId: r.account_id,
+      templateId: r.template_id,
+      name: r.name,
+      previewImage: r.preview_image,
+    })),
+  );
 
   const plan = (account?.plan as PlanId) ?? "free";
 
@@ -184,20 +211,23 @@ async function renderViewOnlyRoomJoin(
         .maybeSingle(),
     ]);
 
-  const rooms: Room[] = (roomRows ?? []).map(
-    (r: {
-      id: string;
-      account_id: string;
-      template_id: string | null;
-      name: string;
-      preview_image: string;
-    }) => ({
-      id: r.id,
-      accountId: r.account_id,
-      templateId: r.template_id,
-      name: r.name,
-      previewImage: r.preview_image,
-    }),
+  const rooms: Room[] = await applyTemplateNameToRooms(
+    supabase,
+    (roomRows ?? []).map(
+      (r: {
+        id: string;
+        account_id: string;
+        template_id: string | null;
+        name: string;
+        preview_image: string;
+      }) => ({
+        id: r.id,
+        accountId: r.account_id,
+        templateId: r.template_id,
+        name: r.name,
+        previewImage: r.preview_image,
+      }),
+    ),
   );
 
   const plan = (viewAccount.plan as PlanId) ?? "free";

@@ -57,13 +57,23 @@ export async function GET(request: NextRequest) {
   }
 
   const metadata = user.user_metadata ?? {};
-  // メール/パスワードでの新規登録時はGoogleのようなプロフィール情報が
-  // 無いため、表示名は「ユーザー」に、アイコンはnullにフォールバックする
-  // (表示名は新規登録フォームで入力された場合のみuser_metadata.full_name
-  // に入っている)。
+  // 既にDBに保存済みの表示名(バーチャル空間の設定画面などで自分で変更
+  // した値)があれば、ログインのたびにGoogleアカウント側の名前で上書き
+  // してしまわないよう、そちらを優先する(2026-09報告: ログアウト→
+  // 再ログインを繰り返すたびに、手動で変更した表示名がGoogleアカウントの
+  // 名前へ毎回戻ってしまっていた)。保存済みの値が無い(初回ログイン)
+  // 場合のみ、メール/パスワードでの新規登録時は「ユーザー」に、Google
+  // ログインの場合はGoogleのプロフィール名にフォールバックする。
+  const { data: existingProfile } = await supabase
+    .from("profiles")
+    .select("display_name")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const savedDisplayName = existingProfile?.display_name?.trim();
   const displayName =
-    (metadata.full_name as string | undefined) ??
-    (metadata.name as string | undefined) ??
+    savedDisplayName ||
+    (metadata.full_name as string | undefined) ||
+    (metadata.name as string | undefined) ||
     "ユーザー";
   const avatarUrl =
     (metadata.avatar_url as string | undefined) ?? (metadata.picture as string | undefined) ?? null;
