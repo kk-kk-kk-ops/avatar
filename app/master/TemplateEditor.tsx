@@ -1748,10 +1748,11 @@ export default function TemplateEditor({
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
-                onClick={() => setExitConfirmOpen(false)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                onClick={handleSaveAndExitFromModal}
+                disabled={saving}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
               >
-                閉じる
+                {saving ? "保存中..." : "保存して終了"}
               </button>
               <button
                 onClick={handleDiscardAndExit}
@@ -1760,11 +1761,10 @@ export default function TemplateEditor({
                 保存せず終了
               </button>
               <button
-                onClick={handleSaveAndExitFromModal}
-                disabled={saving}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                onClick={() => setExitConfirmOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
-                {saving ? "保存中..." : "保存して終了"}
+                閉じる
               </button>
             </div>
           </div>
@@ -1866,7 +1866,6 @@ export default function TemplateEditor({
           mapHeight={mapHeight}
           backgroundImageUrl={backgroundImageUrl}
           avatarSizePx={avatarSizePx}
-          spawnPoint={spawnPoint}
           placedObjects={placedObjects}
           onClose={() => setPreviewOpen(false)}
         />
