@@ -1868,15 +1868,14 @@ export default function TemplateEditor({
           <span className="w-9 shrink-0 text-xs text-slate-500">
             {Math.round(zoom * 100)}%
           </span>
-          {zoom !== 1 && (
-            <button
-              type="button"
-              onClick={() => changeZoom(1)}
-              className="shrink-0 text-xs text-slate-500 underline hover:text-slate-800"
-            >
-              リセット
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => changeZoom(1)}
+            disabled={zoom === 1}
+            className="shrink-0 text-xs text-slate-500 underline hover:text-slate-800 disabled:opacity-40"
+          >
+            リセット
+          </button>
         </div>
 
         <div
