@@ -1127,6 +1127,9 @@ export default function AvatarSpace({
   // が完全に外れた時点で退室確定としてここから削除する(詳細は移動ループ内の
   // コメント参照)。
   const insideConferenceZoneIdsRef = useRef<Set<string>>(new Set());
+  // ミーティングエリア(kind: meeting)版のinsideConferenceZoneIdsRef。
+  // 入室確認・施錠を持たないため用途は所属の安定化のみ(2026-09追加)。
+  const insideMeetingZoneIdsRef = useRef<Set<string>>(new Set());
   // 入室確認ポップアップの表示状態。rAFループ(refのみ参照)からも
   // 「既に表示中か」を判定できるよう、state本体とは別にrefでも持つ。
   const [pendingMeetingEntry, setPendingMeetingEntry] = useState<{
@@ -4266,6 +4269,28 @@ export default function AvatarSpace({
     }
   }, []);
 
+  // 画面共有中に(会議室・ミーティングエリアへ)入室した瞬間、その場で
+  // 改めて排他制御の主張(claim)を送り直す。startScreenShare開始時点の
+  // 主張と全く同じ処理を入室時にも行うことで、「エリアの外で共有を
+  // 開始してからエリアに入る」という順序でも正しく排他制御が効くように
+  // する(2026-09報告: この処理が無いと、先にエリア内で共有していた人の
+  // 共有がオフにならず、一時的に2人分表示されてしまっていた)。
+  const claimScreenShareIfSharing = useCallback((zoneId: string) => {
+    const self = selfState.current;
+    if (!self?.sharingScreen) return;
+    const claimedAt = Date.now();
+    activeScreenShareClaimRef.current = {
+      peerId: selfId.current,
+      claimedAt,
+      zoneId,
+    };
+    channelRef.current?.send({
+      type: "broadcast",
+      event: "screen-share-claim",
+      payload: { peerId: selfId.current, claimedAt, zoneId },
+    });
+  }, []);
+
   const startScreenShare = useCallback(async () => {
     setShareError(null);
 
@@ -4324,17 +4349,7 @@ export default function AvatarSpace({
       // いない場合は主張自体を送らない(=従来通り複数人が同時に共有できる)。
       const zoneId = selfState.current?.meetingZoneId ?? null;
       if (zoneId && isIsolatedMeetingZone(zoneId)) {
-        const claimedAt = Date.now();
-        activeScreenShareClaimRef.current = {
-          peerId: selfId.current,
-          claimedAt,
-          zoneId,
-        };
-        channelRef.current?.send({
-          type: "broadcast",
-          event: "screen-share-claim",
-          payload: { peerId: selfId.current, claimedAt, zoneId },
-        });
+        claimScreenShareIfSharing(zoneId);
       }
 
       // ブラウザ標準の「共有を停止」ボタンが押された場合にも終了処理を行う
@@ -4372,7 +4387,7 @@ export default function AvatarSpace({
     } catch {
       // 選択画面でキャンセルした場合などはここに来る。エラー扱いにはしない。
     }
-  }, [stopScreenShare, isInWorkZone]);
+  }, [stopScreenShare, isInWorkZone, claimScreenShareIfSharing]);
 
   // 2026-09 QA指摘: 連打防止の処理中フラグが無く、高速連打でstart/stopの
   // 呼び出しが二重に走りうる(LiveKit SDKへの重複リクエスト)ため、
@@ -5490,22 +5505,38 @@ export default function AvatarSpace({
             }
           }
 
-          // 会議室(conference)ゾーンの入室確認・施錠判定。
-          // 「入室済みかどうか」は、当たり判定(ゾーンとの矩形の重なり)が
-          // 一度でも外れたかどうかで管理する(insideConferenceZoneIdsRef)。
-          // 以前はself.meetingZoneId(アバター中心点がゾーン内かどうかの
-          // 点判定、出入り判定effect側で別途計算)を流用していたが、中心点の
-          // 境界とアバターの当たり判定(矩形)の境界は一致しないため、退室の
-          // 過程で「中心点は外に出たが当たり判定はまだ触れている」という
-          // 一瞬の状態が生じ、そこで「未入室なのに接触した」と誤判定されて
-          // 入室確認ポップアップが再度出てその場で動けなくなるバグがあった。
-          // 当たり判定という単一の基準に統一することでこれを解消する。
+          // ミーティングエリア(meeting)・会議室(conference)ゾーンの所属・
+          // 入室確認・施錠判定。
+          // 「所属しているかどうか」は、当たり判定(ゾーンとの矩形の重なり)が
+          // 一度でも外れたかどうかで管理する(会議室はinsideConferenceZoneIdsRef、
+          // ミーティングエリアはinsideMeetingZoneIdsRef)。以前はself.meetingZoneId
+          // (アバター中心点がゾーン内かどうかの点判定、出入り判定effect側で
+          // 別途計算)を流用していたが、中心点の境界とアバターの当たり判定
+          // (矩形)の境界は一致しないため、退室の過程で「中心点は外に出たが
+          // 当たり判定はまだ触れている」という一瞬の状態が生じ、会議室では
+          // そこで「未入室なのに接触した」と誤判定されて入室確認ポップアップが
+          // 再度出てその場で動けなくなるバグが、ミーティングエリアでは逆に
+          // 「境界ぴったりで止まると所属がゆらぎ、外の人の近接円が届いた
+          // 瞬間に音声・映像が漏れる」バグがあった(2026-09報告)。当たり判定
+          // という単一の基準に統一することでこれを解消する(ミーティング
+          // エリアは会議室と違い入室確認・施錠・移動制限を一切持たない。
+          // 所属の判定だけをこの当たり判定基準に合わせる)。
           meetingZonesRef.current.forEach((zone) => {
-            if (zone.kind !== "conference") return;
+            if (zone.kind !== "conference" && zone.kind !== "meeting") return;
 
             const touchX = rectIntersectsRect(nextX, self.y, halfW, halfH, zone);
             const touchY = rectIntersectsRect(self.x, nextY, halfW, halfH, zone);
             const touching = touchX || touchY;
+
+            if (zone.kind === "meeting") {
+              if (touching) {
+                insideMeetingZoneIdsRef.current.add(zone.id);
+              } else {
+                insideMeetingZoneIdsRef.current.delete(zone.id);
+              }
+              return;
+            }
+
             const wasInside = insideConferenceZoneIdsRef.current.has(zone.id);
 
             if (wasInside) {
@@ -5635,12 +5666,21 @@ export default function AvatarSpace({
           }
         }
 
-        // ミーティングエリアの出入り判定(音声通話の自動接続に使用)
-        const zoneId = findMeetingZoneId(
+        // ミーティングエリアの出入り判定(音声通話の自動接続に使用)。
+        // ミーティングエリア(meeting)は、上のforEachで管理している
+        // 当たり判定ベースの所属(insideMeetingZoneIdsRef)があればそれを
+        // 優先する(中心点の点判定だけだと境界ぴったりで所属がゆらぐため)。
+        // それが無ければ(作業エリア・全体アナウンスエリアなど)従来通り
+        // 中心点の点判定にフォールバックする。
+        const pointZoneId = findMeetingZoneId(
           self.x,
           self.y,
           meetingZonesRef.current,
         );
+        const stickyMeetingZone = meetingZonesRef.current.find(
+          (z) => z.kind === "meeting" && insideMeetingZoneIdsRef.current.has(z.id),
+        );
+        const zoneId = stickyMeetingZone ? stickyMeetingZone.id : pointZoneId;
         self.meetingZoneId = zoneId;
         if (zoneId !== lastTrackedZoneId.current) {
           lastTrackedZoneId.current = zoneId;
@@ -5650,6 +5690,13 @@ export default function AvatarSpace({
           // (異常切断時はpresenceのleave検知で自動解錠される)。
           // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
           channelRef.current?.track(self);
+          // 画面共有中にミーティングエリアへ入室した場合、その場で改めて
+          // 排他制御の主張を送り直す(会議室=conferenceはconfirmMeetingEntry
+          // 側で行うため、ここは主にmeeting向け。詳細はclaimScreenShareIfSharing
+          // 参照)。
+          if (zoneId && isIsolatedMeetingZone(zoneId)) {
+            claimScreenShareIfSharing(zoneId);
+          }
           // 自分自身のplayers[selfId.current]のmeetingZoneIdも更新する。
           // presenceのsyncハンドラは「自分自身の行は上書きしない」設計
           // (移動loop側が正としてローカルのx,y等を上書きされないための
@@ -5840,7 +5887,11 @@ export default function AvatarSpace({
       event: "move",
       payload: self,
     });
-  }, []);
+    // 会議室の外で画面共有を開始したまま入室した場合、この時点まで一度も
+    // 主張(claim)を送っておらず排他制御に参加できていなかった
+    // (2026-09報告)。ここで改めて主張を送り直す。
+    claimScreenShareIfSharing(zoneId);
+  }, [claimScreenShareIfSharing]);
 
   // 「いいえ」:このまま当たり判定が外れるまでは再度ポップアップしない。
   const declineMeetingEntry = useCallback((zoneId: string) => {
