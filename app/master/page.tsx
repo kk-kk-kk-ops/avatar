@@ -140,6 +140,7 @@ export default async function MasterPage() {
         height: o.height ?? NEW_ITEM_SIZE,
         label: o.label ?? "🧱 壁",
         rotation: o.rotation ?? 0,
+        shape: o.shape ?? "rect",
       }),
     );
 

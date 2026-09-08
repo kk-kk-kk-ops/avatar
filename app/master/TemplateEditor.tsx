@@ -2029,32 +2029,35 @@ export default function TemplateEditor({
                     title="ドラッグで回転(Shiftで15度単位)"
                     className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
                   />
-                  {/* リサイズハンドル(4隅)。見た目の白い四角は表示せず、
-                      角のドラッグ操作自体は変わらず4隅どこからでもできる
-                      ようにする(2026-09報告)。 */}
+                  {/* リサイズハンドル(4隅)。四角い壁は縁自体で角の位置が
+                      分かるため見た目の白い四角は表示しないが、丸い壁は
+                      縁が丸く角が視覚的に分からないため、白い四角を表示
+                      して掴む位置が分かるようにする(2026-09報告)。
+                      どちらもドラッグ操作自体は変わらず4隅どこからでも
+                      できる。 */}
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "br")
                     }
-                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize"
+                    className={`absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "tl")
                     }
-                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize"
+                    className={`absolute left-0 top-0 h-3 w-3 cursor-nwse-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "tr")
                     }
-                    className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize"
+                    className={`absolute right-0 top-0 h-3 w-3 cursor-nesw-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "bl")
                     }
-                    className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
+                    className={`absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
                   />
                   {isSelected && (
                     <button
