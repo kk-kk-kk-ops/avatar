@@ -1187,7 +1187,7 @@ export default function TemplateEditor({
           <button
             type="button"
             onClick={() => setHelpOpen(true)}
-            title="各機能の説明を表示"
+            title="エリアの説明を表示"
             className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-bold leading-none text-slate-500 hover:bg-slate-100"
           >
             ？
@@ -1414,7 +1414,7 @@ export default function TemplateEditor({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="max-h-[80vh] w-full max-w-sm overflow-y-auto rounded-xl bg-white p-5 shadow-xl">
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-bold text-slate-800">機能の説明</p>
+              <p className="text-sm font-bold text-slate-800">エリアの説明</p>
               <button
                 onClick={() => setHelpOpen(false)}
                 aria-label="閉じる"
@@ -1430,16 +1430,16 @@ export default function TemplateEditor({
                 <p>・上の丸いハンドルをドラッグで回転(Shift押下で15度単位)</p>
               </div>
               <div>
-                <p className="font-semibold text-slate-700">【ミーティングエリア】</p>
+                <p className="font-semibold text-slate-700">【ミーティング】</p>
                 <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
               </div>
               <div>
-                <p className="font-semibold text-slate-700">【会議室】</p>
+                <p className="font-semibold text-slate-700">【会議】</p>
                 <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
                 <p>・鍵の開け閉めが可能(鍵を閉めた人のみ鍵を開けることができる)</p>
               </div>
               <div>
-                <p className="font-semibold text-slate-700">【作業エリア】</p>
+                <p className="font-semibold text-slate-700">【作業】</p>
                 <p>・音声・ビデオ通話・画面共有不可</p>
               </div>
               <div>
