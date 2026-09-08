@@ -31,6 +31,7 @@ import {
   findMeetingZoneId,
   rectIntersectsObstacle,
   rectIntersectsRect,
+  obstacleTangentAt,
   resolveSpawnPosition,
   PROXIMITY_RADIUS,
   AVATAR_RADIUS,
@@ -5446,28 +5447,29 @@ export default function AvatarSpace({
           let blockedX = !!blockerX;
           let blockedY = !!blockerY;
 
-          // 回転した(斜めの)壁に、真横・真下などの単一方向入力のまま
-          // 正面から突き当たると、上のX/Y別判定だけではdx・dyの片方が
+          // 回転した(斜めの)壁・丸い壁に、真横・真下などの単一方向入力の
+          // まま正面から突き当たると、上のX/Y別判定だけではdx・dyの片方が
           // 常に0のため「壁沿いに滑る」ための反対軸の移動量が生まれず、
-          // その場で完全に止まってしまっていた(2026-09報告)。回転した
-          // 壁が原因でブロックされている場合は、入力方向を壁の辺の向き
-          // (回転角)へ投影し直し、壁沿いにスライドする移動量を試す。
+          // その場で完全に止まってしまっていた(2026-09報告)。これらの
+          // 壁が原因でブロックされている場合は、入力方向を壁の縁の向き
+          // (obstacleTangentAt。回転した四角は辺の向き、丸い壁は接触点
+          // ごとの向き)へ投影し直し、縁沿いにスライドする移動量を試す。
           // スライド後の位置も何かに当たる場合は、元の(壁で止まる)挙動
           // にそのままフォールバックする。
+          const needsSlide = (o: Obstacle) =>
+            o.shape === "circle" || (o.rotation ?? 0) !== 0;
           if (blockedX || blockedY) {
-            const rotatedBlocker =
-              blockerX && (blockerX.rotation ?? 0) !== 0
+            const slidingBlocker =
+              blockerX && needsSlide(blockerX)
                 ? blockerX
-                : blockerY && (blockerY.rotation ?? 0) !== 0
+                : blockerY && needsSlide(blockerY)
                   ? blockerY
                   : null;
-            if (rotatedBlocker) {
-              const rad = ((rotatedBlocker.rotation ?? 0) * Math.PI) / 180;
-              const tangentX = Math.cos(rad);
-              const tangentY = Math.sin(rad);
-              const proj = dx * tangentX + dy * tangentY;
-              const slideDx = tangentX * proj;
-              const slideDy = tangentY * proj;
+            if (slidingBlocker) {
+              const tangent = obstacleTangentAt(slidingBlocker, self.x, self.y);
+              const proj = dx * tangent.x + dy * tangent.y;
+              const slideDx = tangent.x * proj;
+              const slideDy = tangent.y * proj;
               if (slideDx !== 0 || slideDy !== 0) {
                 const slideNextX = Math.min(
                   Math.max(self.x + slideDx, halfW),
