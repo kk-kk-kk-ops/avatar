@@ -97,12 +97,18 @@ type DragState =
       id: string;
       startX: number;
       startY: number;
+      originX: number;
+      originY: number;
       originWidth: number;
       originHeight: number;
       // リサイズハンドルのドラッグ量(画面/マップ座標系)を、回転した壁
       // 自身のローカル座標系(=幅・高さの増減方向)へ変換するために使う。
       // 壁以外(ミーティングエリア等)は常に0。
       rotationDeg: number;
+      // どちらの角のハンドルをドラッグしているか。"br"(右下、既存)は
+      // 左上を固定して右下へ伸縮する。"tl"(左上、2026-09追加、エリア・
+      // オブジェクトのみ)は右下を固定して左上へ伸縮する。
+      corner: "br" | "tl";
     }
   | {
       // 壁・オブジェクトの回転ドラッグ。中心からポインタへの角度の変化量を
@@ -448,6 +454,7 @@ export default function TemplateEditor({
     itemType: ItemType,
     id: string,
     mode: "move" | "resize",
+    corner: "br" | "tl" = "br",
   ) => {
     e.stopPropagation();
     const list =
@@ -478,12 +485,15 @@ export default function TemplateEditor({
             id,
             startX: e.clientX,
             startY: e.clientY,
+            originX: item.x,
+            originY: item.y,
             originWidth: item.width,
             originHeight: item.height,
             rotationDeg:
               itemType === "obstacle" || itemType === "object"
                 ? (item as Obstacle | PlacedObject).rotation ?? 0
                 : 0,
+            corner,
           };
   };
 
@@ -552,17 +562,58 @@ export default function TemplateEditor({
       const rad = (drag.rotationDeg * Math.PI) / 180;
       const localDx = dx * Math.cos(rad) + dy * Math.sin(rad);
       const localDy = -dx * Math.sin(rad) + dy * Math.cos(rad);
-      const size = clampSize(
-        item.x,
-        item.y,
-        drag.originWidth + localDx,
-        drag.originHeight + localDy,
-        mapWidth,
-        mapHeight,
+
+      if (drag.corner === "br") {
+        // 右下ハンドル: 左上(x,y)を固定し、右下へ伸縮する(既存の挙動)。
+        const size = clampSize(
+          drag.originX,
+          drag.originY,
+          drag.originWidth + localDx,
+          drag.originHeight + localDy,
+          mapWidth,
+          mapHeight,
+          minWidth,
+          minHeight,
+        );
+        return { ...item, ...size };
+      }
+
+      // 左上ハンドル(2026-09追加): 右下(originX+originWidth,
+      // originY+originHeight)を固定し、左上へ伸縮する。サイズが変わる分
+      // だけ位置(x,y)側も動かす必要があるため、軸ごとに「固定されている
+      // 右下端の座標 - 新しいサイズ」で新しい位置を求める。
+      const clampFromFarEdge = (
+        originPos: number,
+        originSize: number,
+        localDelta: number,
+        minSize: number,
+      ) => {
+        const farEdge = originPos + originSize;
+        const size = Math.min(
+          Math.max(originSize - localDelta, minSize),
+          farEdge,
+        );
+        return { pos: farEdge - size, size };
+      };
+      const w = clampFromFarEdge(
+        drag.originX,
+        drag.originWidth,
+        localDx,
         minWidth,
+      );
+      const h = clampFromFarEdge(
+        drag.originY,
+        drag.originHeight,
+        localDy,
         minHeight,
       );
-      return { ...item, ...size };
+      return {
+        ...item,
+        x: w.pos,
+        y: h.pos,
+        width: w.size,
+        height: h.size,
+      };
     });
 
   // アバター初期位置が、障害物・ミーティングエリア(種類問わず)と重なって
@@ -1770,7 +1821,7 @@ export default function TemplateEditor({
           <input
             type="range"
             min={1}
-            max={3}
+            max={5}
             step={0.5}
             value={zoom}
             onChange={(e) => changeZoom(Number(e.target.value))}
@@ -1778,8 +1829,8 @@ export default function TemplateEditor({
           />
           <button
             type="button"
-            onClick={() => changeZoom(Math.min(3, Math.round((zoom + 0.5) * 100) / 100))}
-            disabled={zoom >= 3}
+            onClick={() => changeZoom(Math.min(5, Math.round((zoom + 0.5) * 100) / 100))}
+            disabled={zoom >= 5}
             className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
           >
             ＋
@@ -1889,9 +1940,15 @@ export default function TemplateEditor({
                   </button>
                   <div
                     onPointerDown={(e) =>
-                      handlePointerDown(e, "zone", zone.id, "resize")
+                      handlePointerDown(e, "zone", zone.id, "resize", "br")
                     }
                     className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize bg-slate-200"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "zone", zone.id, "resize", "tl")
+                    }
+                    className="absolute left-0 top-0 h-4 w-4 cursor-nwse-resize bg-slate-200"
                   />
                   {isSelected && (
                     <button
@@ -1913,7 +1970,7 @@ export default function TemplateEditor({
                 <div
                   key={o.id}
                   onPointerDown={(e) => handlePointerDown(e, "obstacle", o.id, "move")}
-                  className={`absolute flex cursor-move items-center justify-center rounded border bg-amber-500/60 text-center text-[10px] text-white ${
+                  className={`absolute flex cursor-move items-center justify-center border bg-amber-500/60 text-center text-[10px] text-white ${
                     isSelected ? "border-2 border-red-500" : "border-amber-400"
                   }`}
                   style={{
@@ -2009,9 +2066,15 @@ export default function TemplateEditor({
                   />
                   <div
                     onPointerDown={(e) =>
-                      handlePointerDown(e, "object", o.id, "resize")
+                      handlePointerDown(e, "object", o.id, "resize", "br")
                     }
                     className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "object", o.id, "resize", "tl")
+                    }
+                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
                   />
                   {/* コピー吹き出し: 選択中のオブジェクトにだけ表示する
                       (Ctrl+Cでも同じ動作)。 */}
