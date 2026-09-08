@@ -5437,12 +5437,58 @@ export default function AvatarSpace({
 
           // 障害物との当たり判定(矩形どうし)。X軸・Y軸を別々に判定することで、
           // 障害物に斜めから近づいても壁沿いに滑るように移動できる。
-          let blockedX = obstaclesRef.current.some((o) =>
+          const blockerX = obstaclesRef.current.find((o) =>
             rectIntersectsObstacle(nextX, self.y, halfW, halfH, o),
           );
-          let blockedY = obstaclesRef.current.some((o) =>
+          const blockerY = obstaclesRef.current.find((o) =>
             rectIntersectsObstacle(self.x, nextY, halfW, halfH, o),
           );
+          let blockedX = !!blockerX;
+          let blockedY = !!blockerY;
+
+          // 回転した(斜めの)壁に、真横・真下などの単一方向入力のまま
+          // 正面から突き当たると、上のX/Y別判定だけではdx・dyの片方が
+          // 常に0のため「壁沿いに滑る」ための反対軸の移動量が生まれず、
+          // その場で完全に止まってしまっていた(2026-09報告)。回転した
+          // 壁が原因でブロックされている場合は、入力方向を壁の辺の向き
+          // (回転角)へ投影し直し、壁沿いにスライドする移動量を試す。
+          // スライド後の位置も何かに当たる場合は、元の(壁で止まる)挙動
+          // にそのままフォールバックする。
+          if (blockedX || blockedY) {
+            const rotatedBlocker =
+              blockerX && (blockerX.rotation ?? 0) !== 0
+                ? blockerX
+                : blockerY && (blockerY.rotation ?? 0) !== 0
+                  ? blockerY
+                  : null;
+            if (rotatedBlocker) {
+              const rad = ((rotatedBlocker.rotation ?? 0) * Math.PI) / 180;
+              const tangentX = Math.cos(rad);
+              const tangentY = Math.sin(rad);
+              const proj = dx * tangentX + dy * tangentY;
+              const slideDx = tangentX * proj;
+              const slideDy = tangentY * proj;
+              if (slideDx !== 0 || slideDy !== 0) {
+                const slideNextX = Math.min(
+                  Math.max(self.x + slideDx, halfW),
+                  mapSizeRef.current.width - halfW,
+                );
+                const slideNextY = Math.min(
+                  Math.max(self.y + slideDy, halfH),
+                  mapSizeRef.current.height - halfH,
+                );
+                const slideBlocked = obstaclesRef.current.some((o) =>
+                  rectIntersectsObstacle(slideNextX, slideNextY, halfW, halfH, o),
+                );
+                if (!slideBlocked) {
+                  nextX = slideNextX;
+                  nextY = slideNextY;
+                  blockedX = false;
+                  blockedY = false;
+                }
+              }
+            }
+          }
 
           // 会議室(conference)ゾーンの入室確認・施錠判定。
           // 「入室済みかどうか」は、当たり判定(ゾーンとの矩形の重なり)が
