@@ -4,6 +4,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useTransition,
@@ -302,6 +303,32 @@ export default function TemplateEditor({
   const scale = fitScale * zoom;
   const renderedWidth = mapWidth * scale;
   const renderedHeight = mapHeight * scale;
+
+  // 拡大縮小は、表示中の範囲の左上を基準にするとその場所が固定されて
+  // しまい「左上に向かって拡大される」ように見える(2026-09報告)。
+  // 常に画面の真ん中を基準に拡大縮小されて見えるよう、変更前に画面
+  // 中央が指している地図上の座標を覚えておき、拡大縮小後にその座標が
+  // 再び画面中央に来る位置までスクロールし直す。
+  const zoomFocusRef = useRef<{ x: number; y: number } | null>(null);
+  const changeZoom = (nextZoom: number) => {
+    const el = scrollRef.current;
+    if (el) {
+      zoomFocusRef.current = {
+        x: (el.scrollLeft + el.clientWidth / 2) / scale,
+        y: (el.scrollTop + el.clientHeight / 2) / scale,
+      };
+    }
+    setZoom(nextZoom);
+  };
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const focus = zoomFocusRef.current;
+    zoomFocusRef.current = null;
+    if (!el || !focus) return;
+    el.scrollLeft = focus.x * scale - el.clientWidth / 2;
+    el.scrollTop = focus.y * scale - el.clientHeight / 2;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom]);
 
   // ---- 元に戻す/やり直す ----
   // 直近30件(MAX_HISTORY)までの「変更前の状態」をブラウザのメモリ上
@@ -1143,7 +1170,7 @@ export default function TemplateEditor({
               </button>
             </div>
           )}
-          <label className="mt-2 block cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
+          <label className="mt-2 block cursor-pointer rounded-lg bg-slate-800 px-3 py-1.5 text-center text-xs font-semibold text-white hover:bg-slate-700">
             {uploading ? "アップロード中..." : "ルーム背景変更"}
             <input
               type="file"
@@ -1274,7 +1301,7 @@ export default function TemplateEditor({
               </div>
             )}
             <div className="flex gap-1.5">
-              <label className="flex-1 cursor-pointer rounded-lg border border-slate-300 px-2 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
+              <label className="flex-1 cursor-pointer rounded-lg border border-emerald-400 px-2 py-1.5 text-center text-xs font-semibold text-emerald-600 hover:bg-emerald-50">
                 {registeringObject ? "登録中..." : "登録"}
                 <input
                   type="file"
@@ -1334,7 +1361,7 @@ export default function TemplateEditor({
               applyImageNaturalSize();
             }}
             disabled={measuringImageSize}
-            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            className="mt-2 w-full rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
             {measuringImageSize ? "取得中..." : "デフォルト(画像の実サイズ)"}
           </button>
@@ -1365,7 +1392,7 @@ export default function TemplateEditor({
           <button
             onClick={() => setDiscardConfirmOpen(true)}
             disabled={saving}
-            className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            className="flex-1 rounded-lg bg-red-400 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-60"
           >
             保存せず終了
           </button>
@@ -1473,7 +1500,7 @@ export default function TemplateEditor({
         <div className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-slate-300 bg-white/90 px-3 py-1.5 shadow">
           <button
             type="button"
-            onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 100) / 100))}
+            onClick={() => changeZoom(Math.max(1, Math.round((zoom - 0.5) * 100) / 100))}
             disabled={zoom <= 1}
             className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
           >
@@ -1485,12 +1512,12 @@ export default function TemplateEditor({
             max={3}
             step={0.5}
             value={zoom}
-            onChange={(e) => setZoom(Number(e.target.value))}
+            onChange={(e) => changeZoom(Number(e.target.value))}
             className="w-24"
           />
           <button
             type="button"
-            onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.5) * 100) / 100))}
+            onClick={() => changeZoom(Math.min(3, Math.round((zoom + 0.5) * 100) / 100))}
             disabled={zoom >= 3}
             className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
           >
@@ -1502,7 +1529,7 @@ export default function TemplateEditor({
           {zoom !== 1 && (
             <button
               type="button"
-              onClick={() => setZoom(1)}
+              onClick={() => changeZoom(1)}
               className="shrink-0 text-xs text-slate-500 underline hover:text-slate-800"
             >
               リセット
