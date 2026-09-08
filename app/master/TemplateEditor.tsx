@@ -185,6 +185,8 @@ export default function TemplateEditor({
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [warpHelpOpen, setWarpHelpOpen] = useState(false);
+  const [objectHelpOpen, setObjectHelpOpen] = useState(false);
   // 保存していないレイアウト変更があるかどうか(MasterDashboardのサイドバー
   // 経由での画面遷移ガードに使う。詳細はtemplateEditorGuard.tsx参照)。
   // 初回マウント時点の値(=DBから読み込んだそのまま)は「未保存の変更」
@@ -1235,7 +1237,17 @@ export default function TemplateEditor({
           >
             ＋全体アナウンス
           </button>
-          <p className="text-xs font-semibold text-slate-500">ワープ</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-semibold text-slate-500">ワープ</p>
+            <button
+              type="button"
+              onClick={() => setWarpHelpOpen(true)}
+              title="ワープの説明を表示"
+              className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-bold leading-none text-slate-500 hover:bg-slate-100"
+            >
+              ？
+            </button>
+          </div>
           {WARP_CHANNELS.map((channel) => {
             const pair = warpPoints.filter((w) => w.channel === channel);
             const hasPair = pair.length > 0;
@@ -1270,7 +1282,17 @@ export default function TemplateEditor({
         </div>
 
         <div>
-          <p className="mb-1 text-xs font-semibold text-slate-500">オブジェクト</p>
+          <div className="mb-1 flex items-center gap-1.5">
+            <p className="text-xs font-semibold text-slate-500">オブジェクト</p>
+            <button
+              type="button"
+              onClick={() => setObjectHelpOpen(true)}
+              title="オブジェクトの説明を表示"
+              className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-bold leading-none text-slate-500 hover:bg-slate-100"
+            >
+              ？
+            </button>
+          </div>
           <div className="rounded-lg border border-slate-200 p-2">
             {objectLibrary.length > 0 && (
               // 3列目(3行目)まではこの枠自体が中身に合わせて伸び、4行目
@@ -1442,11 +1464,48 @@ export default function TemplateEditor({
                 <p className="font-semibold text-slate-700">【作業】</p>
                 <p>・音声・ビデオ通話・画面共有不可</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {warpHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[80vh] w-full max-w-sm overflow-y-auto rounded-xl bg-white p-5 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-slate-800">ワープの説明</p>
+              <button
+                onClick={() => setWarpHelpOpen(false)}
+                aria-label="閉じる"
+                className="rounded px-1.5 text-lg text-slate-400 hover:text-slate-700"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-2 text-xs text-slate-600">
               <div>
-                <p className="font-semibold text-slate-700">【ワープ】</p>
-                <p>・同じアルファベット(A/B/C)の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
-                <p>・1チャンネルにつき丸2つまで(削除すると2つまとめて消える)</p>
+                <p className="font-semibold text-slate-700">【赤・黄・青ワープ】</p>
+                <p>・同じ色の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {objectHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[80vh] w-full max-w-sm overflow-y-auto rounded-xl bg-white p-5 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-slate-800">オブジェクトの説明</p>
+              <button
+                onClick={() => setObjectHelpOpen(false)}
+                aria-label="閉じる"
+                className="rounded px-1.5 text-lg text-slate-400 hover:text-slate-700"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-2 text-xs text-slate-600">
               <div>
                 <p className="font-semibold text-slate-700">【オブジェクト】</p>
                 <p>・登録した画像(PNGのみ)をマップに自由配置できる装飾</p>
