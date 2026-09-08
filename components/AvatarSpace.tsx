@@ -4342,13 +4342,13 @@ export default function AvatarSpace({
         channelRef.current?.track(selfState.current);
       }
 
-      // 画面共有は同じ会議室内では同時に1人まで(必須機能。会議室の外の
-      // 画面共有機能は変更しない)。自分が今いる会議室(ミーティングエリア。
-      // kind: meeting/conference)にいる場合のみ主張(claim)を送り、同じ
-      // 会議室で既に共有中だった相手がいれば強制的にオフにさせる。会議室に
-      // いない場合は主張自体を送らない(=従来通り複数人が同時に共有できる)。
+      // 画面共有は同じ会議室内では同時に1人まで(必須機能。会議室の外・
+      // ミーティングエリアの画面共有機能は変更しない=従来通り複数人が
+      // 同時に共有できる)。自分が今いる会議室(kind: conference)にいる
+      // 場合のみ主張(claim)を送り、同じ会議室で既に共有中だった相手が
+      // いれば強制的にオフにさせる。
       const zoneId = selfState.current?.meetingZoneId ?? null;
-      if (zoneId && isIsolatedMeetingZone(zoneId)) {
+      if (zoneId && isConferenceZone(zoneId)) {
         claimScreenShareIfSharing(zoneId);
       }
 
@@ -5690,11 +5690,12 @@ export default function AvatarSpace({
           // (異常切断時はpresenceのleave検知で自動解錠される)。
           // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
           channelRef.current?.track(self);
-          // 画面共有中にミーティングエリアへ入室した場合、その場で改めて
-          // 排他制御の主張を送り直す(会議室=conferenceはconfirmMeetingEntry
-          // 側で行うため、ここは主にmeeting向け。詳細はclaimScreenShareIfSharing
-          // 参照)。
-          if (zoneId && isIsolatedMeetingZone(zoneId)) {
+          // 画面共有中に会議室へ入室した場合、その場で改めて排他制御の
+          // 主張を送り直す(通常はconfirmMeetingEntry側で行うが、稀に
+          // このパスで先にzoneIdが確定した場合の保険。排他制御は会議室
+          // =conferenceのみの機能でミーティングエリアには適用しない。
+          // 詳細はclaimScreenShareIfSharing参照)。
+          if (zoneId && isConferenceZone(zoneId)) {
             claimScreenShareIfSharing(zoneId);
           }
           // 自分自身のplayers[selfId.current]のmeetingZoneIdも更新する。
@@ -6253,6 +6254,23 @@ export default function AvatarSpace({
     },
     [],
   );
+  // 「会議室」(kind: conference)限定の判定。通話・画面共有が繋がる範囲
+  // (eligiblePeerIds)自体はミーティングエリア(meeting)・会議室
+  // (conference)どちらもisIsolatedMeetingZoneで同じく隔離するが、画面
+  // 共有の排他制御(同時に1人まで)・常時表示プレビュー行の「会議室
+  // スタイル」表示(固定サイズタイル・カメラOFF時のプレースホルダー・
+  // 施錠アイコン)・「会議画面」モーダルは会議室だけの機能で、
+  // ミーティングエリアには持ち込まない(2026-09報告: 「近接判定と全く
+  // 同じ挙動でよく、範囲がミーティングエリアの範囲に広がるだけ」との
+  // 指定)。
+  const isConferenceZone = useCallback(
+    (zoneId: string | null | undefined) => {
+      if (!zoneId) return false;
+      const zone = meetingZonesRef.current.find((z) => z.id === zoneId);
+      return zone?.kind === "conference";
+    },
+    [],
+  );
   const eligiblePeerIds = useMemo(() => {
     const self = players[selfId.current];
     if (!self) return [] as string[];
@@ -6370,22 +6388,23 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleKey, audioEligibleKey, joined, livekitConnected, receptionSuspended]);
 
-  // 画面共有の視聴対象を自動追従させる。会議室(ミーティングエリア。
-  // kind: meeting/conference)内にいる間は、「会議画面」機能に伴う排他
-  // 制御(startScreenShare/screen-share-claim参照)により同じ会議室内の
+  // 画面共有の視聴対象を自動追従させる。会議室(kind: conference)内に
+  // いる間は、「会議画面」機能に伴う排他制御(startScreenShare/
+  // screen-share-claim参照。会議室のみの機能)により同じ会議室内の
   // 画面共有は常に0〜1人になるため、手動選択(クリック)ではなくpresence
   // 上でsharingScreen=trueの相手へ自動的に追従させる。
-  // 会議室の外にいる間は以前と同じ手動選択のまま(サムネイルクリックで
+  // 会議室の外(ミーティングエリア内を含む。複数人が同時に共有できる
+  // 通常の近接判定のまま)は以前と同じ手動選択のまま(サムネイルクリックで
   // 設定)なので、ここでは選んだ相手が共有をやめた・近接範囲外に出た
   // 場合の解除だけを行う(即座に解除すると、presenceの瞬間的な揺らぎで
   // 誤って解除してしまうことがあるため、5秒待っても状況が変わらなければ
   // 解除する。会議室内は排他制御自体がpresenceに即反映されるため、この
   // 猶予は不要)。
   useEffect(() => {
-    const inMeetingRoom = isIsolatedMeetingZone(
+    const inConferenceRoom = isConferenceZone(
       selfState.current?.meetingZoneId,
     );
-    if (inMeetingRoom) {
+    if (inConferenceRoom) {
       const eligibleSet = new Set(eligiblePeerIds);
       const sharer = Object.values(players).find(
         (p) =>
@@ -7300,12 +7319,13 @@ export default function AvatarSpace({
     ? meetingZones.find((z) => z.id === selfPlayer.meetingZoneId)?.kind ===
       "work"
     : false;
-  // 「会議室」(ミーティングエリア。kind: meeting/conference)に今いるか
-  // どうか。「会議画面」機能の常時表示プレビュー・画面共有の排他制御は
-  // すべてこのフラグで判定し、会議室の外(通常のマップ上や作業エリア・
-  // 全体アナウンスエリア)では一切挙動を変えない(2026-09報告により
-  // 「部屋にいる全員/近くにいる人全般」ではなく「同じ会議室」限定に修正)。
-  const selfInMeetingRoom = isIsolatedMeetingZone(selfPlayer?.meetingZoneId);
+  // 「会議室」(kind: conference)に今いるかどうか。「会議画面」機能の
+  // 常時表示プレビュー(会議室スタイル)・画面共有の排他制御はすべて
+  // このフラグで判定する。ミーティングエリア(kind: meeting)は通話・
+  // 画面共有が繋がる相手の範囲こそエリア内限定になるが、見た目・挙動は
+  // 通常の近接判定(緑サークル)と全く同じにする(会議室スタイルの
+  // プレビュー・排他制御は持ち込まない、2026-09報告)。
+  const selfInMeetingRoom = isConferenceZone(selfPlayer?.meetingZoneId);
   // 施錠機能があるのは「会議室」(kind: conference)のみ(kind: meetingには
   // 無い、既存の地図上の鍵アイコンと同じ条件)。会議モードのプレビュー
   // エリアにも同じ鍵アイコンを出すための算出。
