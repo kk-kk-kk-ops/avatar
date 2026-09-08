@@ -1096,11 +1096,14 @@ export default function TemplateEditor({
 
   return (
     <div className="flex items-start gap-4">
-      {/* 編集項目サイドバー: 名前変更〜各種編集操作を上から順に並べ、
-          一番下に「保存し終了」「保存せず終了」ボタンを置く。高さは
-          プレビュー(マップサイズ)に関わらず常に画面の高さいっぱいまで
-          伸ばす(sticky + 100vh基準の高さ指定)。 */}
-      <div className="sticky top-20 flex h-[calc(100vh-6.5rem)] w-64 shrink-0 flex-col gap-4 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 md:top-6 md:h-[calc(100vh-3rem)]">
+      {/* 編集項目サイドバー: 名前変更〜各種編集操作を上から順に並べる
+          スクロール領域と、常に画面外へスクロールしなくても押せる
+          「プレビュー」「保存して終了」「保存せず終了」の固定ボックスを
+          縦に並べる。外枠(この要素)の高さを画面いっぱいに固定し
+          (sticky + 100vh基準)、スクロール領域はflex-1で残りの高さを
+          自動的に埋める(固定ボックス側の高さ変化にも自動追従する)。 */}
+      <div className="sticky top-20 flex h-[calc(100vh-6.5rem)] w-64 shrink-0 flex-col gap-3 md:top-6 md:h-[calc(100vh-3rem)]">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4">
         <div>
           <p className="mb-1 text-xs font-semibold text-slate-500">ルーム名</p>
           {editingName ? (
@@ -1336,7 +1339,14 @@ export default function TemplateEditor({
             {measuringImageSize ? "取得中..." : "デフォルト(画像の実サイズ)"}
           </button>
         </div>
+      </div>
 
+      {/* 「プレビュー」「保存して終了」「保存せず終了」の固定ボックス。
+          上のスクロール領域とは別の箱にすることで、編集項目が増えて
+          スクロールが必要になっても、常にスクロールせず押せる
+          (2026-09報告: 以前は同じ箱の一番下にあり、保存するために
+          毎回下までスクロールする必要があった)。 */}
+      <div className="flex shrink-0 flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3">
         <button
           onClick={() => setPreviewOpen(true)}
           className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
@@ -1344,22 +1354,23 @@ export default function TemplateEditor({
           プレビュー
         </button>
 
-        <div className="mt-auto flex flex-col gap-2">
+        <div className="flex gap-2">
           <button
             onClick={handleSaveAndClose}
             disabled={saving}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+            className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
           >
             {saving ? "保存中..." : "保存して終了"}
           </button>
           <button
             onClick={() => setDiscardConfirmOpen(true)}
             disabled={saving}
-            className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+            className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
             保存せず終了
           </button>
         </div>
+      </div>
       </div>
 
       {discardConfirmOpen && (
@@ -1459,7 +1470,7 @@ export default function TemplateEditor({
         </div>
 
         {/* 拡大。プレビューエリア下部中央に固定表示する。 */}
-        <div className="absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-slate-300 bg-white/90 px-3 py-1.5 shadow">
+        <div className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-slate-300 bg-white/90 px-3 py-1.5 shadow">
           <button
             type="button"
             onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 100) / 100))}
