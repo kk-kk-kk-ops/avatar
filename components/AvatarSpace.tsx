@@ -7077,6 +7077,7 @@ export default function AvatarSpace({
             const matched = (
               res.data as Array<{
                 id: string;
+                template_id: string | null;
                 name: string;
                 preview_image: string;
               }> | null
@@ -7085,11 +7086,26 @@ export default function AvatarSpace({
           })()
         : await supabase
             .from("rooms")
-            .select("name, preview_image")
+            .select("template_id, name, preview_image")
             .eq("id", room.id)
             .maybeSingle();
       if (cancelled || !data) return;
-      setLobbyRoomInfo({ name: data.name, previewImage: data.preview_image });
+      // ルーム名は、ルーム自体のnameカラム(テンプレート機能導入前の名残)
+      // ではなく、現在紐づいているテンプレートの名前を優先する
+      // (app/page.tsxのapplyTemplateNameToRoomsと同じ考え方。ここは
+      // 入室前ロビーの表示を常に最新化するための別経路の取得処理のため、
+      // 同じ解決ロジックを重複して持つ必要がある)。
+      let name = data.name;
+      if (data.template_id) {
+        const { data: template } = await supabase
+          .from("templates")
+          .select("name")
+          .eq("id", data.template_id)
+          .maybeSingle();
+        if (!cancelled && template?.name) name = template.name;
+      }
+      if (cancelled) return;
+      setLobbyRoomInfo({ name, previewImage: data.preview_image });
     })();
     return () => {
       cancelled = true;
