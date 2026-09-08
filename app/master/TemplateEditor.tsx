@@ -49,6 +49,26 @@ import { useTemplateEditorGuard } from "./templateEditorGuard";
 
 type ItemType = "obstacle" | "zone" | "object";
 
+// コピー(Ctrl+C・「コピー」吹き出し)したアイテムの見た目情報。貼り付け時に
+// 同じ種類のアイテムを新しいidで作り直すために使う。DBには一切保存しない
+// その場限りのクリップボード。
+type CopiedItemTemplate =
+  | { itemType: "obstacle"; width: number; height: number; rotation: number; label: string }
+  | {
+      itemType: "zone";
+      width: number;
+      height: number;
+      label: string;
+      kind: MeetingZone["kind"];
+    }
+  | {
+      itemType: "object";
+      width: number;
+      height: number;
+      rotation: number;
+      imageUrl: string;
+    };
+
 // 元に戻す/やり直すのために保持する、レイアウトの一時点の状態(「保存」で
 // 一括保存される項目一式と同じ範囲)。DBには一切保存しない。
 type LayoutSnapshot = {
@@ -168,20 +188,16 @@ export default function TemplateEditor({
   const [selectedLibraryImageId, setSelectedLibraryImageId] = useState<
     string | null
   >(null);
-  // マップ上に配置済みのオブジェクトのうち、選択中の1個(コピー・貼り付け・
-  // 枠を赤くするハイライトの対象)。ライブラリの選択(selectedLibraryImageId、
-  // 「挿入」対象を選ぶためのもの)とは別の概念。
-  const [selectedPlacedObjectId, setSelectedPlacedObjectId] = useState<
-    string | null
-  >(null);
-  // コピーしたオブジェクトの見た目情報(画像・サイズ・角度)。DBには保存
-  // せず、このタブを閉じるまでのその場限りのクリップボードとして扱う。
-  const copiedObjectTemplateRef = useRef<{
-    imageUrl: string;
-    width: number;
-    height: number;
-    rotation: number;
+  // マップ上の壁・エリア・オブジェクトのうち、選択中の1個(コピー・
+  // 貼り付け・枠を赤くするハイライトの対象)。ライブラリの選択
+  // (selectedLibraryImageId、「挿入」対象を選ぶためのもの)とは別の概念。
+  const [selectedItem, setSelectedItem] = useState<{
+    itemType: ItemType;
+    id: string;
   } | null>(null);
+  // コピーしたアイテムの見た目情報。DBには保存せず、このタブを閉じるまでの
+  // その場限りのクリップボードとして扱う。
+  const copiedItemTemplateRef = useRef<CopiedItemTemplate | null>(null);
   // 右クリックした位置に出す「貼り付け」吹き出し。地図座標(mapX/mapY)で
   // 持ち、表示位置は他のアイテムと同じくレンダー時にscaleを掛けて求める
   // (拡大縮小してもズレない)。
@@ -442,11 +458,7 @@ export default function TemplateEditor({
           : meetingZones;
     const item = list.find((i) => i.id === id);
     if (!item) return;
-    if (itemType === "object") {
-      setSelectedPlacedObjectId(id);
-    } else {
-      setSelectedPlacedObjectId(null);
-    }
+    setSelectedItem({ itemType, id });
     setPasteBubbleAt(null);
     pushUndo();
     dragState.current =
@@ -489,11 +501,7 @@ export default function TemplateEditor({
     e.stopPropagation();
     const wallEl = (e.currentTarget as HTMLElement).parentElement;
     if (!wallEl) return;
-    if (itemType === "object") {
-      setSelectedPlacedObjectId(id);
-    } else {
-      setSelectedPlacedObjectId(null);
-    }
+    setSelectedItem({ itemType, id });
     setPasteBubbleAt(null);
     pushUndo();
     const rect = wallEl.getBoundingClientRect();
@@ -910,18 +918,27 @@ export default function TemplateEditor({
     ]);
   };
 
+  // 削除したアイテムが選択中だった場合は選択を解除する(赤枠・コピー
+  // 吹き出しが消えたアイテムに付いたままにならないように)。
+  const deselectIfRemoved = (itemType: ItemType, id: string) =>
+    setSelectedItem((prev) =>
+      prev?.itemType === itemType && prev.id === id ? null : prev,
+    );
+
   const removeObstacle = (id: string) => {
     pushUndo();
     setObstacles((prev) => prev.filter((o) => o.id !== id));
+    deselectIfRemoved("obstacle", id);
   };
   const removeMeetingZone = (id: string) => {
     pushUndo();
     setMeetingZones((prev) => prev.filter((z) => z.id !== id));
+    deselectIfRemoved("zone", id);
   };
   const removePlacedObject = (id: string) => {
     pushUndo();
     setPlacedObjects((prev) => prev.filter((o) => o.id !== id));
-    setSelectedPlacedObjectId((prev) => (prev === id ? null : prev));
+    deselectIfRemoved("object", id);
   };
 
   // 「オブジェクト登録」: 選択したPNG画像をアップロードし、ライブラリに
@@ -998,7 +1015,7 @@ export default function TemplateEditor({
         ...prev,
         { id, ...pos, width, height, imageUrl: image.imageUrl },
       ]);
-      setSelectedPlacedObjectId(id);
+      setSelectedItem({ itemType: "object", id });
       setPasteBubbleAt(null);
     };
     const DEFAULT_LONG_SIDE = 150;
@@ -1017,25 +1034,49 @@ export default function TemplateEditor({
     el.src = image.imageUrl;
   };
 
-  // ---- 配置済みオブジェクトのコピー・貼り付け ----
-  // 選択中のオブジェクトの画像・サイズ・角度をその場限りのクリップボード
-  // (copiedObjectTemplateRef、DBには保存しない)へコピーする。「コピー」
+  // ---- 壁・エリア・オブジェクトのコピー・貼り付け ----
+  // 選択中のアイテムの種類・サイズ・角度等をその場限りのクリップボード
+  // (copiedItemTemplateRef、DBには保存しない)へコピーする。「コピー」
   // 吹き出しのクリック・Ctrl+Cのどちらからも呼ぶ。
-  const copySelectedObject = () => {
-    const target = placedObjects.find((o) => o.id === selectedPlacedObjectId);
-    if (!target) return;
-    copiedObjectTemplateRef.current = {
-      imageUrl: target.imageUrl,
-      width: target.width,
-      height: target.height,
-      rotation: target.rotation ?? 0,
-    };
+  const copySelectedItem = () => {
+    if (!selectedItem) return;
+    if (selectedItem.itemType === "obstacle") {
+      const target = obstacles.find((o) => o.id === selectedItem.id);
+      if (!target) return;
+      copiedItemTemplateRef.current = {
+        itemType: "obstacle",
+        width: target.width,
+        height: target.height,
+        rotation: target.rotation ?? 0,
+        label: target.label,
+      };
+    } else if (selectedItem.itemType === "zone") {
+      const target = meetingZones.find((z) => z.id === selectedItem.id);
+      if (!target) return;
+      copiedItemTemplateRef.current = {
+        itemType: "zone",
+        width: target.width,
+        height: target.height,
+        label: target.label,
+        kind: target.kind,
+      };
+    } else {
+      const target = placedObjects.find((o) => o.id === selectedItem.id);
+      if (!target) return;
+      copiedItemTemplateRef.current = {
+        itemType: "object",
+        width: target.width,
+        height: target.height,
+        rotation: target.rotation ?? 0,
+        imageUrl: target.imageUrl,
+      };
+    }
   };
 
-  // コピー済みのオブジェクトを指定した地図座標(中心)へ貼り付ける。
+  // コピー済みのアイテムを指定した地図座標(中心)へ貼り付ける。
   // 「貼り付け」吹き出しのクリック・Ctrl+Vのどちらからも呼ぶ。
-  const pasteCopiedObjectAt = (mapX: number, mapY: number) => {
-    const copied = copiedObjectTemplateRef.current;
+  const pasteCopiedItemAt = (mapX: number, mapY: number) => {
+    const copied = copiedItemTemplateRef.current;
     if (!copied) return;
     pushUndo();
     const pos = clampPosition(
@@ -1046,27 +1087,57 @@ export default function TemplateEditor({
       mapWidth,
       mapHeight,
     );
-    const id = randomItemId("placed-object");
-    setPlacedObjects((prev) => [
-      ...prev,
-      {
-        id,
-        ...pos,
-        width: copied.width,
-        height: copied.height,
-        rotation: copied.rotation,
-        imageUrl: copied.imageUrl,
-      },
-    ]);
-    setSelectedPlacedObjectId(id);
+    if (copied.itemType === "obstacle") {
+      const id = randomItemId("obstacle");
+      setObstacles((prev) => [
+        ...prev,
+        {
+          id,
+          ...pos,
+          width: copied.width,
+          height: copied.height,
+          label: copied.label,
+          rotation: copied.rotation,
+        },
+      ]);
+      setSelectedItem({ itemType: "obstacle", id });
+    } else if (copied.itemType === "zone") {
+      const id = randomItemId("zone");
+      setMeetingZones((prev) => [
+        ...prev,
+        {
+          id,
+          ...pos,
+          width: copied.width,
+          height: copied.height,
+          label: copied.label,
+          kind: copied.kind,
+        },
+      ]);
+      setSelectedItem({ itemType: "zone", id });
+    } else {
+      const id = randomItemId("placed-object");
+      setPlacedObjects((prev) => [
+        ...prev,
+        {
+          id,
+          ...pos,
+          width: copied.width,
+          height: copied.height,
+          rotation: copied.rotation,
+          imageUrl: copied.imageUrl,
+        },
+      ]);
+      setSelectedItem({ itemType: "object", id });
+    }
     setPasteBubbleAt(null);
   };
 
   // Ctrl+Vでの貼り付け位置は、右クリック位置が無いため「挿入」と同じく
   // 現在スクロールして見えている範囲の中心にする。
-  const pasteCopiedObjectAtViewCenter = () => {
+  const pasteCopiedItemAtViewCenter = () => {
     const center = getVisibleCenterMapPoint();
-    pasteCopiedObjectAt(center.x, center.y);
+    pasteCopiedItemAt(center.x, center.y);
   };
 
   // router.refresh()完了後にonClose()する(refreshingがfalseに戻った
@@ -1217,10 +1288,10 @@ export default function TemplateEditor({
   handleUndoRef.current = handleUndo;
   const handleRedoRef = useRef(handleRedo);
   handleRedoRef.current = handleRedo;
-  const copySelectedObjectRef = useRef(copySelectedObject);
-  copySelectedObjectRef.current = copySelectedObject;
-  const pasteCopiedObjectAtViewCenterRef = useRef(pasteCopiedObjectAtViewCenter);
-  pasteCopiedObjectAtViewCenterRef.current = pasteCopiedObjectAtViewCenter;
+  const copySelectedItemRef = useRef(copySelectedItem);
+  copySelectedItemRef.current = copySelectedItem;
+  const pasteCopiedItemAtViewCenterRef = useRef(pasteCopiedItemAtViewCenter);
+  pasteCopiedItemAtViewCenterRef.current = pasteCopiedItemAtViewCenter;
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1236,15 +1307,23 @@ export default function TemplateEditor({
         handleRedoRef.current();
       } else if (key === "c") {
         e.preventDefault();
-        copySelectedObjectRef.current();
+        copySelectedItemRef.current();
       } else if (key === "v") {
         e.preventDefault();
-        pasteCopiedObjectAtViewCenterRef.current();
+        pasteCopiedItemAtViewCenterRef.current();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  const isItemSelected = (itemType: ItemType, id: string) =>
+    selectedItem?.itemType === itemType && selectedItem.id === id;
+
+  // 選択中のアイテムに表示する「コピー」吹き出しのクラス名(壁・エリア・
+  // オブジェクトで共通の見た目・挙動)。
+  const copyBubbleClassName =
+    "absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-white shadow hover:bg-slate-700";
 
   return (
     <div className="flex items-start gap-4">
@@ -1739,16 +1818,16 @@ export default function TemplateEditor({
             onPointerDown={(e) => {
               // 何もない背景を左クリックした場合のみ発火する(壁・エリア・
               // オブジェクト自身のonPointerDownはstopPropagation済みのため
-              // ここまで来ない)。選択中のオブジェクト・貼り付け吹き出しを
+              // ここまで来ない)。選択中のアイテム・貼り付け吹き出しを
               // 両方解除する。
               if (e.button !== 0) return;
-              setSelectedPlacedObjectId(null);
+              setSelectedItem(null);
               setPasteBubbleAt(null);
             }}
             onContextMenu={(e) => {
-              // コピー済みのオブジェクトが無ければ右クリックメニューを出す
+              // コピー済みのアイテムが無ければ右クリックメニューを出す
               // 意味が無いため、ブラウザ標準の右クリックメニューのままにする。
-              if (!copiedObjectTemplateRef.current) return;
+              if (!copiedItemTemplateRef.current) return;
               e.preventDefault();
               const rect = e.currentTarget.getBoundingClientRect();
               setPasteBubbleAt({
@@ -1757,101 +1836,138 @@ export default function TemplateEditor({
               });
             }}
           >
-            {meetingZones.map((zone) => (
-              <div
-                key={zone.id}
-                onPointerDown={(e) => handlePointerDown(e, "zone", zone.id, "move")}
-                className={`absolute cursor-move rounded-xl border p-2 ${
-                  zone.kind === "conference"
-                    ? "border-green-300 bg-lime-200/25"
-                    : zone.kind === "announcement"
-                      ? "border-amber-300 bg-amber-200/60"
-                      : zone.kind === "work"
-                        ? "border-sky-300 bg-sky-200/60"
-                        : "border-slate-300 bg-slate-500/50"
-                }`}
-                style={{
-                  left: zone.x * scale,
-                  top: zone.y * scale,
-                  width: zone.width * scale,
-                  height: zone.height * scale,
-                }}
-              >
-                <span
-                  className={`text-xs ${
-                    zone.kind === "conference"
-                      ? "text-green-900"
-                      : zone.kind === "announcement"
-                        ? "text-amber-900"
-                        : zone.kind === "work"
-                          ? "text-sky-900"
-                          : "text-white"
-                  }`}
-                >
-                  {zone.label}
-                </span>
-                <button
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => removeMeetingZone(zone.id)}
-                  className="absolute right-1 top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
-                >
-                  ×
-                </button>
+            {meetingZones.map((zone) => {
+              const isSelected = isItemSelected("zone", zone.id);
+              const zoneBgClass =
+                zone.kind === "conference"
+                  ? "bg-lime-200/25"
+                  : zone.kind === "announcement"
+                    ? "bg-amber-200/60"
+                    : zone.kind === "work"
+                      ? "bg-sky-200/60"
+                      : "bg-slate-500/50";
+              const zoneBorderClass = isSelected
+                ? "border-2 border-red-500"
+                : zone.kind === "conference"
+                  ? "border-green-300"
+                  : zone.kind === "announcement"
+                    ? "border-amber-300"
+                    : zone.kind === "work"
+                      ? "border-sky-300"
+                      : "border-slate-300";
+              return (
                 <div
-                  onPointerDown={(e) =>
-                    handlePointerDown(e, "zone", zone.id, "resize")
-                  }
-                  className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize bg-slate-200"
-                />
-              </div>
-            ))}
+                  key={zone.id}
+                  onPointerDown={(e) => handlePointerDown(e, "zone", zone.id, "move")}
+                  className={`absolute cursor-move rounded-xl border p-2 ${zoneBorderClass} ${zoneBgClass}`}
+                  style={{
+                    left: zone.x * scale,
+                    top: zone.y * scale,
+                    width: zone.width * scale,
+                    height: zone.height * scale,
+                  }}
+                >
+                  <span
+                    className={`text-xs ${
+                      zone.kind === "conference"
+                        ? "text-green-900"
+                        : zone.kind === "announcement"
+                          ? "text-amber-900"
+                          : zone.kind === "work"
+                            ? "text-sky-900"
+                            : "text-white"
+                    }`}
+                  >
+                    {zone.label}
+                  </span>
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => removeMeetingZone(zone.id)}
+                    className="absolute right-1 top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                  >
+                    ×
+                  </button>
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "zone", zone.id, "resize")
+                    }
+                    className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize bg-slate-200"
+                  />
+                  {isSelected && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={copySelectedItem}
+                      className={copyBubbleClassName}
+                    >
+                      コピー
+                    </button>
+                  )}
+                </div>
+              );
+            })}
 
-            {obstacles.map((o) => (
-              <div
-                key={o.id}
-                onPointerDown={(e) => handlePointerDown(e, "obstacle", o.id, "move")}
-                className="absolute flex cursor-move items-center justify-center rounded border border-amber-400 bg-amber-500/60 text-center text-[10px] text-white"
-                style={{
-                  left: o.x * scale,
-                  top: o.y * scale,
-                  width: o.width * scale,
-                  height: o.height * scale,
-                  transform: `rotate(${o.rotation ?? 0}deg)`,
-                  transformOrigin: "50% 50%",
-                }}
-              >
-                🧱 壁
-                <button
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => removeObstacle(o.id)}
-                  className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+            {obstacles.map((o) => {
+              const isSelected = isItemSelected("obstacle", o.id);
+              return (
+                <div
+                  key={o.id}
+                  onPointerDown={(e) => handlePointerDown(e, "obstacle", o.id, "move")}
+                  className={`absolute flex cursor-move items-center justify-center rounded border bg-amber-500/60 text-center text-[10px] text-white ${
+                    isSelected ? "border-2 border-red-500" : "border-amber-400"
+                  }`}
+                  style={{
+                    left: o.x * scale,
+                    top: o.y * scale,
+                    width: o.width * scale,
+                    height: o.height * scale,
+                    transform: `rotate(${o.rotation ?? 0}deg)`,
+                    transformOrigin: "50% 50%",
+                  }}
                 >
-                  ×
-                </button>
-                {/* 回転ハンドル: ドラッグで自由回転(Shift押下で15度単位スナップ)。
-                    壁本体と一緒に回転するので、常に壁から見て「真上」に付いてくる。 */}
-                <div
-                  onPointerDown={(e) =>
-                    handleRotatePointerDown(e, "obstacle", o.id, o.rotation ?? 0)
-                  }
-                  title="ドラッグで回転(Shiftで15度単位)"
-                  className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
-                />
-                <div
-                  onPointerDown={(e) =>
-                    handlePointerDown(e, "obstacle", o.id, "resize")
-                  }
-                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
-                />
-              </div>
-            ))}
+                  🧱 壁
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => removeObstacle(o.id)}
+                    className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                  >
+                    ×
+                  </button>
+                  {/* 回転ハンドル: ドラッグで自由回転(Shift押下で15度単位スナップ)。
+                      壁本体と一緒に回転するので、常に壁から見て「真上」に付いてくる。 */}
+                  <div
+                    onPointerDown={(e) =>
+                      handleRotatePointerDown(e, "obstacle", o.id, o.rotation ?? 0)
+                    }
+                    title="ドラッグで回転(Shiftで15度単位)"
+                    className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "obstacle", o.id, "resize")
+                    }
+                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                  />
+                  {isSelected && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={copySelectedItem}
+                      className={copyBubbleClassName}
+                    >
+                      コピー
+                    </button>
+                  )}
+                </div>
+              );
+            })}
 
             {/* 装飾オブジェクト(2026-09追加)。壁と違い実際に画像として表示
                 され、当たり判定は持たない。ドラッグ・リサイズ・回転の操作感は
                 壁と共通(handlePointerDown/handleRotatePointerDownをitemType
                 "object"で呼ぶ)。 */}
             {placedObjects.map((o) => {
-              const isSelected = o.id === selectedPlacedObjectId;
+              const isSelected = isItemSelected("object", o.id);
               return (
                 <div
                   key={o.id}
@@ -1903,8 +2019,8 @@ export default function TemplateEditor({
                     <button
                       type="button"
                       onPointerDown={(e) => e.stopPropagation()}
-                      onClick={copySelectedObject}
-                      className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-white shadow hover:bg-slate-700"
+                      onClick={copySelectedItem}
+                      className={copyBubbleClassName}
                     >
                       コピー
                     </button>
@@ -1989,7 +2105,7 @@ export default function TemplateEditor({
                 type="button"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() =>
-                  pasteCopiedObjectAt(pasteBubbleAt.mapX, pasteBubbleAt.mapY)
+                  pasteCopiedItemAt(pasteBubbleAt.mapX, pasteBubbleAt.mapY)
                 }
                 className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full bg-slate-800 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-slate-700"
                 style={{
