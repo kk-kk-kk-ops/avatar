@@ -1,6 +1,13 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, useTransition } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import type {
   MapTemplate,
@@ -37,6 +44,7 @@ import {
 } from "./uploadTemplateImage";
 import ConfirmModal from "@/components/ConfirmModal";
 import TemplateRoomPreview from "./TemplateRoomPreview";
+import { useTemplateEditorGuard } from "./templateEditorGuard";
 
 type ItemType = "obstacle" | "zone" | "object";
 
@@ -154,6 +162,14 @@ export default function TemplateEditor({
   const [renaming, setRenaming] = useState(false);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // 保存していないレイアウト変更があるかどうか(MasterDashboardのサイドバー
+  // 経由での画面遷移ガードに使う。詳細はtemplateEditorGuard.tsx参照)。
+  // 初回マウント時点の値(=DBから読み込んだそのまま)は「未保存の変更」
+  // ではないため、最初の1回だけは無視する。
+  const [dirty, setDirty] = useState(false);
+  const dirtyEffectMountedRef = useRef(false);
+  const templateEditorGuard = useTemplateEditorGuard();
   // 入力欄には生の文字列を持たせ、自由に打ち直せるようにする(数値state
   // に直接min/maxで丸めていると、例えば1900を消して2500と打ち直す途中の
   // 「2」の時点でMIN_MAP_SIZEまで丸められてしまい、自由に入力できな
@@ -164,6 +180,18 @@ export default function TemplateEditor({
   const mapWidth = clampMapSize(mapWidthInput, template.width);
   const mapHeight = clampMapSize(mapHeightInput, template.height);
   const [measuringImageSize, setMeasuringImageSize] = useState(false);
+
+  // 「保存」ボタンで一括保存される項目(壁・エリア・マップサイズ・
+  // アバター初期位置・ワープ・配置オブジェクト)のいずれかが変化したら
+  // dirtyを立てる。背景画像・オブジェクトライブラリ・名前は変更した
+  // 時点で即座にDBへ保存されるため、ここには含めない。
+  useEffect(() => {
+    if (!dirtyEffectMountedRef.current) {
+      dirtyEffectMountedRef.current = true;
+      return;
+    }
+    setDirty(true);
+  }, [obstacles, meetingZones, mapWidth, mapHeight, spawnPoint, warpPoints, placedObjects]);
 
   // アップロード画像の実ピクセルサイズを取得し、マップサイズ欄へ反映する。
   const applyImageNaturalSize = () => {
@@ -510,10 +538,10 @@ export default function TemplateEditor({
     };
   };
 
-  // 「アバター初期位置」ボタン: 背景画像(マップ)の中心付近で、障害物・
-  // ミーティングエリアと重ならない位置を探して設置する。1点しか持たない
-  // stateなので、これだけで「もう一度押すと元の位置を消してデフォルト
-  // 位置へ再設置」を満たす(手動でドラッグして動かしていても上書きされる)。
+  // アバター初期位置のデフォルト設置: 背景画像(マップ)の中心付近で、障害物・
+  // ミーティングエリアと重ならない位置を探す。以前は専用ボタンで手動設置
+  // していたが、DBに座標が無い(=まだ一度もレイアウト保存していない)
+  // 初回編集時に自動で呼び出すようにした(下のuseEffect参照)。
   const SPAWN_SEARCH_STEP = 20;
   const findDefaultSpawnPoint = () => {
     const half = avatarSizePx / 2;
@@ -565,6 +593,16 @@ export default function TemplateEditor({
     setError(null);
     setSpawnPoint(point);
   };
+
+  // テンプレート作成直後、まだ一度もレイアウト保存しておらずアバター初期
+  // 位置の座標がDBに無い(spawnPointがnull)場合だけ、初回編集画面表示時に
+  // 自動でプレビュー中央付近へ設置する。マウント時の1回だけ実行すればよく、
+  // 以後は手動でドラッグして動かした位置がそのまま保存対象になる。
+  useEffect(() => {
+    if (spawnPoint !== null) return;
+    setSpawnToDefaultPosition();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 新規アイテムを追加する位置。固定座標(旧: 常に100,100=マップ左上)だと
   // ズームして画面外を見ている最中に追加した際、新しいアイテムが画面外の
@@ -829,6 +867,7 @@ export default function TemplateEditor({
       setSaving(false);
       return;
     }
+    setDirty(false);
     // revalidatePath("/master")はサーバー側のキャッシュを無効化する
     // だけで、既に開いている(ナビゲーションを伴わない)このページの
     // テンプレート一覧props(TemplateManagerのtemplates)には自動反映
@@ -843,6 +882,55 @@ export default function TemplateEditor({
       router.refresh();
     });
   };
+
+  // MasterDashboardのサイドバー経由(タブ切り替え・「管理画面へ」・
+  // 「ルームへ」)での画面遷移ガードから呼ばれる保存処理。ナビゲーション
+  // 先が決まっているのはMasterDashboard側のため、ここでは保存だけ行い、
+  // onClose()は呼ばない(タブが切り替わればこの画面自体がアンマウント
+  // されるため、明示的に閉じる必要が無い)。
+  const saveLayoutForGuard = useCallback(async (): Promise<boolean> => {
+    setError(null);
+    const result = await updateTemplateLayout(
+      template.id,
+      obstacles,
+      meetingZones,
+      mapWidth,
+      mapHeight,
+      spawnPoint,
+      warpPoints,
+      placedObjects,
+    );
+    if (!result.ok) {
+      setError(result.error);
+      return false;
+    }
+    setDirty(false);
+    router.refresh();
+    return true;
+  }, [
+    template.id,
+    obstacles,
+    meetingZones,
+    mapWidth,
+    mapHeight,
+    spawnPoint,
+    warpPoints,
+    placedObjects,
+    router,
+  ]);
+
+  // 保存していない変更があるかどうかと、保存処理そのものをMasterDashboard
+  // 側へ登録しておく(詳細はtemplateEditorGuard.tsx参照)。dirtyの値が
+  // 変わるたびに登録し直すことで、常に最新の状態を参照できるようにする。
+  useEffect(() => {
+    templateEditorGuard?.setGuard({
+      isDirty: () => dirty,
+      save: saveLayoutForGuard,
+    });
+    return () => {
+      templateEditorGuard?.setGuard(null);
+    };
+  }, [templateEditorGuard, dirty, saveLayoutForGuard]);
 
   const handleRename = async () => {
     setError(null);
@@ -895,6 +983,7 @@ export default function TemplateEditor({
           伸ばす(sticky + 100vh基準の高さ指定)。 */}
       <div className="sticky top-20 flex h-[calc(100vh-6.5rem)] w-64 shrink-0 flex-col gap-4 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 md:top-6 md:h-[calc(100vh-3rem)]">
         <div>
+          <p className="mb-1 text-xs font-semibold text-slate-500">ルーム名</p>
           {editingName ? (
             <div className="flex flex-wrap items-center gap-1">
               <input
@@ -934,7 +1023,17 @@ export default function TemplateEditor({
           )}
         </div>
 
-        <p className="text-xs font-semibold text-slate-500">レイアウト</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-xs font-semibold text-slate-500">レイアウト</p>
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            title="各機能の説明を表示"
+            className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-bold leading-none text-slate-500 hover:bg-slate-100"
+          >
+            ？
+          </button>
+        </div>
 
         {error && (
           <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
@@ -943,30 +1042,34 @@ export default function TemplateEditor({
         )}
 
         <div className="flex flex-col gap-2">
-          <button
-            onClick={addObstacle}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-          >
-            ＋壁
-          </button>
-          <button
-            onClick={addMeetingZone}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-          >
-            ＋ミーティングエリア
-          </button>
-          <button
-            onClick={addConferenceRoom}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-          >
-            ＋会議室
-          </button>
-          <button
-            onClick={addWorkArea}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-          >
-            ＋作業エリア
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={addObstacle}
+              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              ＋壁
+            </button>
+            <button
+              onClick={addMeetingZone}
+              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              ＋ミーティングエリア
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={addConferenceRoom}
+              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              ＋会議室
+            </button>
+            <button
+              onClick={addWorkArea}
+              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              ＋作業エリア
+            </button>
+          </div>
           <button
             onClick={addAnnouncementZone}
             className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
@@ -1002,14 +1105,8 @@ export default function TemplateEditor({
               </div>
             );
           })}
-          <button
-            onClick={setSpawnToDefaultPosition}
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-          >
-            アバター初期位置
-          </button>
           <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
-            {uploading ? "アップロード中..." : "背景画像を変更"}
+            {uploading ? "アップロード中..." : "ルーム背景変更"}
             <input
               type="file"
               accept="image/*"
@@ -1018,19 +1115,13 @@ export default function TemplateEditor({
               disabled={uploading}
             />
           </label>
-          <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
-            {registeringObject ? "登録中..." : "オブジェクト登録"}
-            <input
-              type="file"
-              accept="image/png"
-              className="hidden"
-              onChange={handleRegisterObjectImage}
-              disabled={registeringObject}
-            />
-          </label>
-          {objectLibrary.length > 0 && (
-            <div className="rounded-lg border border-slate-200 p-2">
-              <div className="grid grid-cols-4 gap-1.5">
+        </div>
+
+        <div>
+          <p className="mb-1 text-xs font-semibold text-slate-500">オブジェクト</p>
+          <div className="rounded-lg border border-slate-200 p-2">
+            {objectLibrary.length > 0 && (
+              <div className="mb-2 grid grid-cols-4 gap-1.5">
                 {objectLibrary.map((image) => (
                   <button
                     key={image.id}
@@ -1052,26 +1143,37 @@ export default function TemplateEditor({
                   </button>
                 ))}
               </div>
-              <div className="mt-2 flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={insertPlacedObject}
-                  disabled={!selectedLibraryImageId}
-                  className="flex-1 rounded-lg bg-slate-800 px-2 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
-                >
-                  挿入
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDeleteLibraryImage}
-                  disabled={!selectedLibraryImageId}
-                  className="flex-1 rounded-lg border border-red-300 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40"
-                >
-                  削除
-                </button>
-              </div>
+            )}
+            <div className="flex gap-1.5">
+              <label className="flex-1 cursor-pointer rounded-lg border border-slate-300 px-2 py-1.5 text-center text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                {registeringObject ? "登録中..." : "登録"}
+                <input
+                  type="file"
+                  accept="image/png"
+                  className="hidden"
+                  onChange={handleRegisterObjectImage}
+                  disabled={registeringObject}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={insertPlacedObject}
+                disabled={!selectedLibraryImageId}
+                className="flex-1 rounded-lg bg-slate-800 px-2 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+              >
+                挿入
+              </button>
             </div>
-          )}
+            {selectedLibraryImageId && (
+              <button
+                type="button"
+                onClick={handleDeleteLibraryImage}
+                className="mt-1.5 w-full rounded-lg border border-red-300 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+              >
+                削除
+              </button>
+            )}
+          </div>
         </div>
 
         <div>
@@ -1151,52 +1253,20 @@ export default function TemplateEditor({
           プレビュー
         </button>
 
-        <div className="space-y-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-          <div>
-            <p className="font-semibold text-slate-700">【壁】</p>
-            <p>・通ることができないエリア</p>
-            <p>・上の丸いハンドルをドラッグで回転(Shift押下で15度単位)</p>
-          </div>
-          <div>
-            <p className="font-semibold text-slate-700">【ミーティングエリア】</p>
-            <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
-          </div>
-          <div>
-            <p className="font-semibold text-slate-700">【会議室】</p>
-            <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
-            <p>・鍵の開け閉めが可能(鍵を閉めた人のみ鍵を開けることができる)</p>
-          </div>
-          <div>
-            <p className="font-semibold text-slate-700">【作業エリア】</p>
-            <p>・音声・ビデオ通話・画面共有不可</p>
-          </div>
-          <div>
-            <p className="font-semibold text-slate-700">【ワープ】</p>
-            <p>・同じアルファベット(A/B/C)の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
-            <p>・1チャンネルにつき丸2つまで(削除すると2つまとめて消える)</p>
-          </div>
-          <div>
-            <p className="font-semibold text-slate-700">【オブジェクト】</p>
-            <p>・登録した画像(PNGのみ)をマップに自由配置できる装飾</p>
-            <p>・通ることができる(壁と違い当たり判定なし)</p>
-            <p>・常にアバターより手前に表示される</p>
-          </div>
-        </div>
-
         <div className="mt-auto flex flex-col gap-2">
           <button
             onClick={handleSaveAndClose}
             disabled={saving}
             className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
           >
-            {saving ? "保存中..." : "レイアウトを保存し終了"}
+            {saving ? "保存中..." : "保存して終了"}
           </button>
           <button
             onClick={() => setDiscardConfirmOpen(true)}
             disabled={saving}
             className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
-            レイアウトを保存せず終了
+            保存せず終了
           </button>
         </div>
       </div>
@@ -1209,6 +1279,54 @@ export default function TemplateEditor({
           onConfirm={onClose}
           onCancel={() => setDiscardConfirmOpen(false)}
         />
+      )}
+
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[80vh] w-full max-w-sm overflow-y-auto rounded-xl bg-white p-5 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-slate-800">機能の説明</p>
+              <button
+                onClick={() => setHelpOpen(false)}
+                aria-label="閉じる"
+                className="rounded px-1.5 text-lg text-slate-400 hover:text-slate-700"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-2 text-xs text-slate-600">
+              <div>
+                <p className="font-semibold text-slate-700">【壁】</p>
+                <p>・通ることができないエリア</p>
+                <p>・上の丸いハンドルをドラッグで回転(Shift押下で15度単位)</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-700">【ミーティングエリア】</p>
+                <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-700">【会議室】</p>
+                <p>・複数人で音声・ビデオ通話・画面共有が可能</p>
+                <p>・鍵の開け閉めが可能(鍵を閉めた人のみ鍵を開けることができる)</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-700">【作業エリア】</p>
+                <p>・音声・ビデオ通話・画面共有不可</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-700">【ワープ】</p>
+                <p>・同じアルファベット(A/B/C)の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
+                <p>・1チャンネルにつき丸2つまで(削除すると2つまとめて消える)</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-700">【オブジェクト】</p>
+                <p>・登録した画像(PNGのみ)をマップに自由配置できる装飾</p>
+                <p>・通ることができる(壁と違い当たり判定なし)</p>
+                <p>・常にアバターより手前に表示される</p>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {previewOpen && (
