@@ -1507,7 +1507,7 @@ export default function TemplateEditor({
               onClick={addAnnouncementZone}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋全体アナウンス
+              ＋アナウンス
             </button>
             <button
               onClick={addMeetingZone}
@@ -1744,7 +1744,7 @@ export default function TemplateEditor({
                 <p>・音声・ビデオ通話・画面共有不可</p>
               </div>
               <div>
-                <p className="font-semibold text-slate-700">【全体アナウンス】</p>
+                <p className="font-semibold text-slate-700">【アナウンス】</p>
                 <p>・ルームに参加している人全員に音声を届けることが可能(一方的)</p>
               </div>
             </div>
@@ -2029,29 +2029,32 @@ export default function TemplateEditor({
                     title="ドラッグで回転(Shiftで15度単位)"
                     className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
                   />
+                  {/* リサイズハンドル(4隅)。見た目の白い四角は表示せず、
+                      角のドラッグ操作自体は変わらず4隅どこからでもできる
+                      ようにする(2026-09報告)。 */}
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "br")
                     }
-                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize"
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "tl")
                     }
-                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize"
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "tr")
                     }
-                    className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize bg-slate-200"
+                    className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize"
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "bl")
                     }
-                    className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize bg-slate-200"
+                    className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
                   />
                   {isSelected && (
                     <button
