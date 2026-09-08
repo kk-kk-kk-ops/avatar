@@ -325,15 +325,7 @@ export type Rect = { x: number; y: number; width: number; height: number };
 // rotation: 中心を軸にした回転角度(度数法、時計回り)。未設定/0は回転なし
 // (既存データにはこのキーが無いが、読み出し側で ?? 0 として扱うため
 // マイグレーション不要)。
-// shape: "rect"(デフォルト、未設定時もこれと同じ扱い)は四角い壁、
-// "circle"は丸い壁(見た目のみ円形。当たり判定は既存通り矩形のまま、
-// bounding boxで判定する)。
-export type Obstacle = Rect & {
-  id: string;
-  label: string;
-  rotation?: number;
-  shape?: "rect" | "circle";
-};
+export type Obstacle = Rect & { id: string; label: string; rotation?: number };
 
 // ミーティングエリア(複数設置可能。同じエリアIDにいる人同士だけ自動で音声接続される)。
 // kind: "meeting"(デフォルト、省略時もこれと同じ扱い)はバーチャル空間内でも
@@ -472,28 +464,6 @@ export function rectIntersectsObstacle(
 ): boolean {
   const rotation = obstacle.rotation ?? 0;
 
-  if (obstacle.shape === "circle") {
-    // 丸い壁(見た目は幅・高さで決まる楕円)の当たり判定。楕円と矩形の
-    // 正確な判定には閉じた式が無いため、「壁の半径(rx,ry)にアバター側の
-    // 半幅・半高をそのまま足して膨らませた楕円」の内側にアバターの中心が
-    // 入っていれば衝突とみなす近似式を使う(正方形どうし=真円どうしの
-    // 場合は厳密に正しく、縦横比のある楕円や矩形アバターに対しても
-    // 実用上十分な精度になる)。
-    const rad = (rotation * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-    const centerX = obstacle.x + obstacle.width / 2;
-    const centerY = obstacle.y + obstacle.height / 2;
-    const relX = cx - centerX;
-    const relY = cy - centerY;
-    const localX = relX * cos + relY * sin;
-    const localY = -relX * sin + relY * cos;
-    const rx = obstacle.width / 2 + halfWidth;
-    const ry = obstacle.height / 2 + halfHeight;
-    if (rx <= 0 || ry <= 0) return false;
-    return (localX * localX) / (rx * rx) + (localY * localY) / (ry * ry) <= 1;
-  }
-
   if (rotation === 0) {
     return rectIntersectsRect(cx, cy, halfWidth, halfHeight, obstacle);
   }
@@ -527,46 +497,6 @@ export function rectIntersectsObstacle(
       obstacleHalfHeight * Math.abs(-sin * axis.x + cos * axis.y);
     return centerDistance <= avatarExtent + obstacleExtent;
   });
-}
-
-// 壁に正面から突き当たった際、壁の縁に沿って滑るように移動するための
-// おおよその接線方向(進行方向の変換先)を返す(AvatarSpace.tsxの移動
-// ループから使う)。回転した四角い壁は辺の向きが常に一定なのでそのまま
-// 接線になるが、丸い壁(楕円)は接触した場所によって縁の向きが変わる
-// ため、壁の中心から見た(x, y)の方向を、楕円を単位円とみなすスケール
-// (1/rx, 1/ry)で補正して法線の近似値を求め、それを90度回転して接線と
-// する(真円の場合は厳密に正しい)。
-export function obstacleTangentAt(
-  obstacle: Obstacle,
-  x: number,
-  y: number,
-): { x: number; y: number } {
-  const rotation = obstacle.rotation ?? 0;
-  const rad = (rotation * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-
-  if (obstacle.shape === "circle") {
-    const centerX = obstacle.x + obstacle.width / 2;
-    const centerY = obstacle.y + obstacle.height / 2;
-    const relX = x - centerX;
-    const relY = y - centerY;
-    const localX = relX * cos + relY * sin;
-    const localY = -relX * sin + relY * cos;
-    const rx = Math.max(obstacle.width / 2, 1);
-    const ry = Math.max(obstacle.height / 2, 1);
-    const normalLocalX = localX / (rx * rx);
-    const normalLocalY = localY / (ry * ry);
-    const len = Math.hypot(normalLocalX, normalLocalY) || 1;
-    const nx = normalLocalX / len;
-    const ny = normalLocalY / len;
-    // ローカル法線をワールド座標へ戻し(順回転)、90度回転して接線にする。
-    const worldNormalX = nx * cos - ny * sin;
-    const worldNormalY = nx * sin + ny * cos;
-    return { x: -worldNormalY, y: worldNormalX };
-  }
-
-  return { x: cos, y: sin };
 }
 
 // 指定した位置(x, y)が障害物と重なっていた場合、その障害物の上端のすぐ上へ押し出した位置を返す。
