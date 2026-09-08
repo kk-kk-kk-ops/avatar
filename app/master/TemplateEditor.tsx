@@ -169,6 +169,10 @@ function formatSavedAt(date: Date): string {
   return `${y}/${m}/${d} ${hh}:${mm}`;
 }
 
+// ルーム背景画像は1MB以下・WEBP形式のみ受け付ける(表示速度・ストレージ
+// 容量の都合)。
+const MAX_BACKGROUND_IMAGE_BYTES = 1 * 1024 * 1024;
+
 // テンプレートの背景画像上に障害物・ミーティングエリアを配置編集する。
 // マップ編集はここに一本化されており、個々のルームでは編集できない。
 export default function TemplateEditor({
@@ -1371,6 +1375,17 @@ export default function TemplateEditor({
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
+    const isWebp = file.type === "image/webp" || /\.webp$/i.test(file.name);
+    if (!isWebp) {
+      setError("ルーム背景画像はWEBP形式のみアップロードできます");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_BACKGROUND_IMAGE_BYTES) {
+      setError("ルーム背景画像は1MB以下にしてください");
+      e.target.value = "";
+      return;
+    }
     setUploading(true);
     try {
       const url = await uploadTemplateImageClient(file);
@@ -1489,12 +1504,15 @@ export default function TemplateEditor({
             {uploading ? "アップロード中..." : "ルーム背景変更"}
             <input
               type="file"
-              accept="image/*"
+              accept="image/webp"
               className="hidden"
               onChange={handleImageChange}
               disabled={uploading}
             />
           </label>
+          <p className="mt-1 text-[10px] text-slate-400">
+            ※サイズ：1MB以下　形式：WEBPのみ
+          </p>
         </div>
 
         <div className="flex items-center gap-1.5">
