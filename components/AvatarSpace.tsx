@@ -31,7 +31,6 @@ import {
   findMeetingZoneId,
   rectIntersectsObstacle,
   rectIntersectsRect,
-  obstacleTangentAt,
   resolveSpawnPosition,
   PROXIMITY_RADIUS,
   AVATAR_RADIUS,
@@ -4153,7 +4152,6 @@ export default function AvatarSpace({
             height: o.height ?? NEW_ITEM_SIZE,
             label: o.label ?? "🧱 壁",
             rotation: o.rotation ?? 0,
-            shape: o.shape ?? "rect",
           }),
         );
         setObstacles(loadedObstacles);
@@ -5453,31 +5451,23 @@ export default function AvatarSpace({
           // 常に0のため「壁沿いに滑る」ための反対軸の移動量が生まれず、
           // その場で完全に止まってしまっていた(2026-09報告)。回転した
           // 壁が原因でブロックされている場合は、入力方向を壁の辺の向き
-          // (obstacleTangentAt)へ投影し直し、辺沿いにスライドする移動量
-          // を試す。スライド後の位置も何かに当たる場合は、元の(壁で
-          // 止まる)挙動にそのままフォールバックする。
-          //
-          // 丸い壁は当初(2026-09)同じ仕組みで縁沿いにスライドさせて
-          // いたが、接触点ごとに接線の向きが変わり続けるため、楕円の
-          // 平らに近い部分(縦横比の大きい壁の上下端付近など)では
-          // 「押している方向にはほとんど進まず、真横にずっと滑り続ける」
-          // という違和感のある挙動になることが実機確認で判明した
-          // (回転した四角は辺の向きが常に一定なのでこの問題が起きない)。
-          // そのため丸い壁は対象から外し、素直に縁でぴたっと止まる
-          // (=当たり判定自体は正しく楕円形のまま)挙動に戻した。
-          const needsSlide = (o: Obstacle) => (o.rotation ?? 0) !== 0 && o.shape !== "circle";
+          // (回転角)へ投影し直し、壁沿いにスライドする移動量を試す。
+          // スライド後の位置も何かに当たる場合は、元の(壁で止まる)挙動
+          // にそのままフォールバックする。
           if (blockedX || blockedY) {
-            const slidingBlocker =
-              blockerX && needsSlide(blockerX)
+            const rotatedBlocker =
+              blockerX && (blockerX.rotation ?? 0) !== 0
                 ? blockerX
-                : blockerY && needsSlide(blockerY)
+                : blockerY && (blockerY.rotation ?? 0) !== 0
                   ? blockerY
                   : null;
-            if (slidingBlocker) {
-              const tangent = obstacleTangentAt(slidingBlocker, self.x, self.y);
-              const proj = dx * tangent.x + dy * tangent.y;
-              const slideDx = tangent.x * proj;
-              const slideDy = tangent.y * proj;
+            if (rotatedBlocker) {
+              const rad = ((rotatedBlocker.rotation ?? 0) * Math.PI) / 180;
+              const tangentX = Math.cos(rad);
+              const tangentY = Math.sin(rad);
+              const proj = dx * tangentX + dy * tangentY;
+              const slideDx = tangentX * proj;
+              const slideDy = tangentY * proj;
               if (slideDx !== 0 || slideDy !== 0) {
                 const slideNextX = Math.min(
                   Math.max(self.x + slideDx, halfW),

@@ -58,7 +58,6 @@ type CopiedItemTemplate =
       height: number;
       rotation: number;
       label: string;
-      shape: Obstacle["shape"];
     }
   | {
       itemType: "zone";
@@ -855,7 +854,7 @@ export default function TemplateEditor({
     };
   };
 
-  const addObstacle = (shape: "rect" | "circle") => {
+  const addObstacle = () => {
     pushUndo();
     const center = getVisibleCenterMapPoint();
     const pos = clampPosition(
@@ -874,7 +873,6 @@ export default function TemplateEditor({
         width: NEW_ITEM_SIZE,
         height: NEW_ITEM_SIZE,
         label: "🧱 壁",
-        shape,
       },
     ]);
   };
@@ -1116,7 +1114,6 @@ export default function TemplateEditor({
         height: target.height,
         rotation: target.rotation ?? 0,
         label: target.label,
-        shape: target.shape,
       };
     } else if (selectedItem.itemType === "zone") {
       const target = meetingZones.find((z) => z.id === selectedItem.id);
@@ -1166,7 +1163,6 @@ export default function TemplateEditor({
           height: copied.height,
           label: copied.label,
           rotation: copied.rotation,
-          shape: copied.shape,
         },
       ]);
       setSelectedItem({ itemType: "obstacle", id });
@@ -1476,16 +1472,16 @@ export default function TemplateEditor({
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
             <button
-              onClick={() => addObstacle("rect")}
+              onClick={addObstacle}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋壁 ▢
+              ＋壁
             </button>
             <button
-              onClick={() => addObstacle("circle")}
+              onClick={addMeetingZone}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋壁○
+              ＋ミーティング
             </button>
           </div>
           <div className="flex gap-2">
@@ -1502,20 +1498,12 @@ export default function TemplateEditor({
               ＋作業
             </button>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={addAnnouncementZone}
-              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-            >
-              ＋アナウンス
-            </button>
-            <button
-              onClick={addMeetingZone}
-              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-            >
-              ＋ミーティング
-            </button>
-          </div>
+          <button
+            onClick={addAnnouncementZone}
+            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+          >
+            ＋アナウンス
+          </button>
           <div className="flex items-center gap-1.5">
             <p className="text-xs font-semibold text-slate-500">ワープ</p>
             <button
@@ -2001,7 +1989,7 @@ export default function TemplateEditor({
                   onPointerDown={(e) => handlePointerDown(e, "obstacle", o.id, "move")}
                   className={`absolute flex cursor-move items-center justify-center border bg-amber-500/60 text-center text-[10px] text-white ${
                     isSelected ? "border-2 border-red-500" : "border-amber-400"
-                  } ${o.shape === "circle" ? "rounded-full" : ""}`}
+                  }`}
                   style={{
                     left: o.x * scale,
                     top: o.y * scale,
@@ -2028,35 +2016,32 @@ export default function TemplateEditor({
                     title="ドラッグで回転(Shiftで15度単位)"
                     className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-amber-600 bg-white"
                   />
-                  {/* リサイズハンドル(4隅)。四角い壁は縁自体で角の位置が
-                      分かるため見た目の白い四角は表示しないが、丸い壁は
-                      縁が丸く角が視覚的に分からないため、白い四角を表示
-                      して掴む位置が分かるようにする(2026-09報告)。
-                      どちらもドラッグ操作自体は変わらず4隅どこからでも
-                      できる。 */}
+                  {/* リサイズハンドル(4隅)。見た目の白い四角は表示せず、
+                      角のドラッグ操作自体は変わらず4隅どこからでもできる
+                      ようにする。 */}
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "br")
                     }
-                    className={`absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
+                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize"
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "tl")
                     }
-                    className={`absolute left-0 top-0 h-3 w-3 cursor-nwse-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
+                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize"
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "tr")
                     }
-                    className={`absolute right-0 top-0 h-3 w-3 cursor-nesw-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
+                    className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize"
                   />
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "bl")
                     }
-                    className={`absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize ${o.shape === "circle" ? "bg-slate-200" : ""}`}
+                    className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
                   />
                   {isSelected && (
                     <button
