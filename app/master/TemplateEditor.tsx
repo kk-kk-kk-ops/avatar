@@ -28,7 +28,6 @@ import {
   WARP_CHANNELS,
   WARP_POINT_RADIUS,
   clampPosition,
-  clampSize,
   randomItemId,
   rectIntersectsObstacle,
   rectIntersectsRect,
@@ -53,7 +52,14 @@ type ItemType = "obstacle" | "zone" | "object";
 // 同じ種類のアイテムを新しいidで作り直すために使う。DBには一切保存しない
 // その場限りのクリップボード。
 type CopiedItemTemplate =
-  | { itemType: "obstacle"; width: number; height: number; rotation: number; label: string }
+  | {
+      itemType: "obstacle";
+      width: number;
+      height: number;
+      rotation: number;
+      label: string;
+      shape: Obstacle["shape"];
+    }
   | {
       itemType: "zone";
       width: number;
@@ -105,10 +111,10 @@ type DragState =
       // 自身のローカル座標系(=幅・高さの増減方向)へ変換するために使う。
       // 壁以外(ミーティングエリア等)は常に0。
       rotationDeg: number;
-      // どちらの角のハンドルをドラッグしているか。"br"(右下、既存)は
-      // 左上を固定して右下へ伸縮する。"tl"(左上、2026-09追加、エリア・
-      // オブジェクトのみ)は右下を固定して左上へ伸縮する。
-      corner: "br" | "tl";
+      // どちらの角のハンドルをドラッグしているか。反対側の角を固定して
+      // その角へ向かって伸縮する("br"=右下、既存。"tl"=左上。"tr"=右上・
+      // "bl"=左下は壁のみ2026-09追加)。
+      corner: "br" | "tl" | "tr" | "bl";
     }
   | {
       // 壁・オブジェクトの回転ドラッグ。中心からポインタへの角度の変化量を
@@ -454,7 +460,7 @@ export default function TemplateEditor({
     itemType: ItemType,
     id: string,
     mode: "move" | "resize",
-    corner: "br" | "tl" = "br",
+    corner: "br" | "tl" | "tr" | "bl" = "br",
   ) => {
     e.stopPropagation();
     const list =
@@ -563,25 +569,25 @@ export default function TemplateEditor({
       const localDx = dx * Math.cos(rad) + dy * Math.sin(rad);
       const localDy = -dx * Math.sin(rad) + dy * Math.cos(rad);
 
-      if (drag.corner === "br") {
-        // 右下ハンドル: 左上(x,y)を固定し、右下へ伸縮する(既存の挙動)。
-        const size = clampSize(
-          drag.originX,
-          drag.originY,
-          drag.originWidth + localDx,
-          drag.originHeight + localDy,
-          mapWidth,
-          mapHeight,
-          minWidth,
-          minHeight,
+      // 掴んだハンドルの「反対側の角」を固定して、掴んだ角の方向へ伸縮
+      // する。X軸・Y軸それぞれ独立に「手前側(掴んだ角がその軸の負の
+      // 方向、pos自体は固定で正方向へ伸縮=近似)」か「奥側(掴んだ角が
+      // その軸の正の方向、反対の端を固定してposも動かす)」かが決まる
+      // (br=X近側・Y近側、tl=X奥側・Y奥側、tr=X近側・Y奥側、
+      // bl=X奥側・Y近側)。
+      const growFromNearEdge = (
+        originPos: number,
+        originSize: number,
+        localDelta: number,
+        mapSize: number,
+        minSize: number,
+      ) => {
+        const size = Math.min(
+          Math.max(originSize + localDelta, minSize),
+          Math.max(mapSize - originPos, minSize),
         );
-        return { ...item, ...size };
-      }
-
-      // 左上ハンドル(2026-09追加): 右下(originX+originWidth,
-      // originY+originHeight)を固定し、左上へ伸縮する。サイズが変わる分
-      // だけ位置(x,y)側も動かす必要があるため、軸ごとに「固定されている
-      // 右下端の座標 - 新しいサイズ」で新しい位置を求める。
+        return { pos: originPos, size };
+      };
       const clampFromFarEdge = (
         originPos: number,
         originSize: number,
@@ -595,18 +601,27 @@ export default function TemplateEditor({
         );
         return { pos: farEdge - size, size };
       };
-      const w = clampFromFarEdge(
-        drag.originX,
-        drag.originWidth,
-        localDx,
-        minWidth,
-      );
-      const h = clampFromFarEdge(
-        drag.originY,
-        drag.originHeight,
-        localDy,
-        minHeight,
-      );
+
+      const xIsFar = drag.corner === "tl" || drag.corner === "bl";
+      const yIsFar = drag.corner === "tl" || drag.corner === "tr";
+      const w = xIsFar
+        ? clampFromFarEdge(drag.originX, drag.originWidth, localDx, minWidth)
+        : growFromNearEdge(
+            drag.originX,
+            drag.originWidth,
+            localDx,
+            mapWidth,
+            minWidth,
+          );
+      const h = yIsFar
+        ? clampFromFarEdge(drag.originY, drag.originHeight, localDy, minHeight)
+        : growFromNearEdge(
+            drag.originY,
+            drag.originHeight,
+            localDy,
+            mapHeight,
+            minHeight,
+          );
       return {
         ...item,
         x: w.pos,
@@ -840,7 +855,7 @@ export default function TemplateEditor({
     };
   };
 
-  const addObstacle = () => {
+  const addObstacle = (shape: "rect" | "circle") => {
     pushUndo();
     const center = getVisibleCenterMapPoint();
     const pos = clampPosition(
@@ -859,6 +874,7 @@ export default function TemplateEditor({
         width: NEW_ITEM_SIZE,
         height: NEW_ITEM_SIZE,
         label: "🧱 壁",
+        shape,
       },
     ]);
   };
@@ -1100,6 +1116,7 @@ export default function TemplateEditor({
         height: target.height,
         rotation: target.rotation ?? 0,
         label: target.label,
+        shape: target.shape,
       };
     } else if (selectedItem.itemType === "zone") {
       const target = meetingZones.find((z) => z.id === selectedItem.id);
@@ -1149,6 +1166,7 @@ export default function TemplateEditor({
           height: copied.height,
           label: copied.label,
           rotation: copied.rotation,
+          shape: copied.shape,
         },
       ]);
       setSelectedItem({ itemType: "obstacle", id });
@@ -1458,16 +1476,16 @@ export default function TemplateEditor({
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
             <button
-              onClick={addObstacle}
+              onClick={() => addObstacle("rect")}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋壁
+              ＋壁 ▢
             </button>
             <button
-              onClick={addMeetingZone}
+              onClick={() => addObstacle("circle")}
               className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
             >
-              ＋ミーティング
+              ＋壁○
             </button>
           </div>
           <div className="flex gap-2">
@@ -1484,12 +1502,20 @@ export default function TemplateEditor({
               ＋作業
             </button>
           </div>
-          <button
-            onClick={addAnnouncementZone}
-            className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
-          >
-            ＋全体アナウンス
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={addAnnouncementZone}
+              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              ＋全体アナウンス
+            </button>
+            <button
+              onClick={addMeetingZone}
+              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+            >
+              ＋ミーティング
+            </button>
+          </div>
           <div className="flex items-center gap-1.5">
             <p className="text-xs font-semibold text-slate-500">ワープ</p>
             <button
@@ -1976,7 +2002,7 @@ export default function TemplateEditor({
                   onPointerDown={(e) => handlePointerDown(e, "obstacle", o.id, "move")}
                   className={`absolute flex cursor-move items-center justify-center border bg-amber-500/60 text-center text-[10px] text-white ${
                     isSelected ? "border-2 border-red-500" : "border-amber-400"
-                  }`}
+                  } ${o.shape === "circle" ? "rounded-full" : ""}`}
                   style={{
                     left: o.x * scale,
                     top: o.y * scale,
@@ -2014,6 +2040,18 @@ export default function TemplateEditor({
                       handlePointerDown(e, "obstacle", o.id, "resize", "tl")
                     }
                     className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "obstacle", o.id, "resize", "tr")
+                    }
+                    className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize bg-slate-200"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "obstacle", o.id, "resize", "bl")
+                    }
+                    className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize bg-slate-200"
                   />
                   {isSelected && (
                     <button

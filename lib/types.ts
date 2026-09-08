@@ -325,7 +325,15 @@ export type Rect = { x: number; y: number; width: number; height: number };
 // rotation: 中心を軸にした回転角度(度数法、時計回り)。未設定/0は回転なし
 // (既存データにはこのキーが無いが、読み出し側で ?? 0 として扱うため
 // マイグレーション不要)。
-export type Obstacle = Rect & { id: string; label: string; rotation?: number };
+// shape: "rect"(デフォルト、未設定時もこれと同じ扱い)は四角い壁、
+// "circle"は丸い壁(見た目のみ円形。当たり判定は既存通り矩形のまま、
+// bounding boxで判定する)。
+export type Obstacle = Rect & {
+  id: string;
+  label: string;
+  rotation?: number;
+  shape?: "rect" | "circle";
+};
 
 // ミーティングエリア(複数設置可能。同じエリアIDにいる人同士だけ自動で音声接続される)。
 // kind: "meeting"(デフォルト、省略時もこれと同じ扱い)はバーチャル空間内でも
