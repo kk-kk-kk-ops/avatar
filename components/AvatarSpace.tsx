@@ -432,6 +432,8 @@ export default function AvatarSpace({
   // Realtimeチャンネル名・map_layoutの検索キーに使う。
   const [roomId] = useState(rooms[0]?.id ?? "");
   const [roomJoinError, setRoomJoinError] = useState<string | null>(null);
+  // 入室ボタン押下時のログインセッション確認中フラグ(二重クリック防止)。
+  const [isJoining, setIsJoining] = useState(false);
   // 入室前のプレビューに表示するオンライン人数の集計。
   // 自分自身はtrack()しない観測者としてpresenceチャンネルを覗くだけ。
   const [roomOnlineCounts, setRoomOnlineCounts] = useState<
@@ -3959,8 +3961,28 @@ export default function AvatarSpace({
     [supabase],
   );
 
-  const handleJoin = useCallback(() => {
+  const handleJoin = useCallback(async () => {
     setRoomJoinError(null);
+    // ロビー画面を開いたまま長時間放置すると、ログインセッションが裏側で
+    // 切れていることがある(2026-09報告: 表示上は入室できたように見えて
+    // マップ読み込み・音声接続がエラーも出さず失敗し続ける不具合の原因)。
+    // 入室処理を始める前に必ずセッションを確認し、切れていれば入室させず
+    // ログイン画面へ遷移させる。
+    setIsJoining(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      const base = guestInviteToken
+        ? `/?invite=${guestInviteToken}`
+        : viewOnlyInviteToken
+          ? `/?invite=${viewOnlyInviteToken}`
+          : "/";
+      const separator = base.includes("?") ? "&" : "?";
+      window.location.href = `${base}${separator}error=session_expired`;
+      return;
+    }
+    setIsJoining(false);
     const name = nameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
     // マップ中央が障害物と重なっていたら、その障害物の上端のすぐ上へ押し出す
     const spawn = resolveSpawnPosition(
@@ -3987,7 +4009,15 @@ export default function AvatarSpace({
     setAssetsReady(false);
     setJoined(true);
     saveDisplayName(name);
-  }, [nameInput, selectedAvatar, obstacles, saveDisplayName]);
+  }, [
+    nameInput,
+    selectedAvatar,
+    obstacles,
+    saveDisplayName,
+    supabase,
+    guestInviteToken,
+    viewOnlyInviteToken,
+  ]);
 
   // ---- 入室直後:自分のアバターの向き別スプライトをプリロードし、完了する
   // まで移動・向き変更操作をロックする(向き変更時に初めて画像取得が走り、
@@ -7046,10 +7076,10 @@ export default function AvatarSpace({
           />
           <button
             onClick={handleJoin}
-            disabled={!room}
+            disabled={!room || isJoining}
             className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
-            入室
+            {isJoining ? "確認中..." : "入室"}
           </button>
 
           {/* ログインフロー統一(2026-08-24): 管理者は/adminへ自動転送
