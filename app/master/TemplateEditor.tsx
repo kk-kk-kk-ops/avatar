@@ -1392,7 +1392,7 @@ export default function TemplateEditor({
           <button
             onClick={() => setDiscardConfirmOpen(true)}
             disabled={saving}
-            className="flex-1 rounded-lg bg-red-400 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-60"
+            className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-400 disabled:opacity-60"
           >
             保存せず終了
           </button>
