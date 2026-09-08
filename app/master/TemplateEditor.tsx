@@ -42,7 +42,6 @@ import {
   uploadTemplateImageClient,
   uploadTemplateObjectImageClient,
 } from "./uploadTemplateImage";
-import ConfirmModal from "@/components/ConfirmModal";
 import TemplateRoomPreview from "./TemplateRoomPreview";
 import { useTemplateEditorGuard } from "./templateEditorGuard";
 
@@ -160,6 +159,16 @@ function clampMapSize(rawInput: string, fallback: number): number {
   return Math.min(MAX_MAP_SIZE, Math.max(MIN_MAP_SIZE, parsed));
 }
 
+// 「最終保存」表示用のフォーマット(例: 2026/9/12 21:30)。
+function formatSavedAt(date: Date): string {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+
 // テンプレートの背景画像上に障害物・ミーティングエリアを配置編集する。
 // マップ編集はここに一本化されており、個々のルームでは編集できない。
 export default function TemplateEditor({
@@ -230,7 +239,12 @@ export default function TemplateEditor({
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(template.name);
   const [renaming, setRenaming] = useState(false);
-  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  // 「終了」ボタン押下時、保存していない変更がある場合にだけ出す確認
+  // モーダル(「保存して終了」「保存せず終了」「閉じる」の3択)。
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  // このセッション中に「保存」した直近の日時(見出し表示用)。まだ一度も
+  // 保存していない間はnullのまま何も表示しない。
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [warpHelpOpen, setWarpHelpOpen] = useState(false);
@@ -1235,6 +1249,7 @@ export default function TemplateEditor({
       return;
     }
     setDirty(false);
+    setLastSavedAt(new Date());
     // revalidatePath("/master")はサーバー側のキャッシュを無効化する
     // だけで、既に開いている(ナビゲーションを伴わない)このページの
     // テンプレート一覧props(TemplateManagerのtemplates)には自動反映
@@ -1250,12 +1265,13 @@ export default function TemplateEditor({
     });
   };
 
+  // 保存(終了せずそのまま編集を続ける、上書き保存に近いもの)。
   // MasterDashboardのサイドバー経由(タブ切り替え・「管理画面へ」・
-  // 「ルームへ」)での画面遷移ガードから呼ばれる保存処理。ナビゲーション
+  // 「ルームへ」)での画面遷移ガードからもこの関数を使う。ナビゲーション
   // 先が決まっているのはMasterDashboard側のため、ここでは保存だけ行い、
-  // onClose()は呼ばない(タブが切り替わればこの画面自体がアンマウント
-  // されるため、明示的に閉じる必要が無い)。
-  const saveLayoutForGuard = useCallback(async (): Promise<boolean> => {
+  // onClose()は呼ばない(タブ切り替え時はそちらでこの画面自体がアン
+  // マウントされるため、明示的に閉じる必要が無い)。
+  const saveLayout = useCallback(async (): Promise<boolean> => {
     setError(null);
     const result = await updateTemplateLayout(
       template.id,
@@ -1272,6 +1288,7 @@ export default function TemplateEditor({
       return false;
     }
     setDirty(false);
+    setLastSavedAt(new Date());
     router.refresh();
     return true;
   }, [
@@ -1286,18 +1303,47 @@ export default function TemplateEditor({
     router,
   ]);
 
+  // 「保存」ボタン: 終了せずそのまま編集を続けられる上書き保存。
+  const handleSaveClick = async () => {
+    setSaving(true);
+    await saveLayout();
+    setSaving(false);
+  };
+
+  // 「終了」ボタン: 保存していない変更が無ければそのまま終了し、あれば
+  // 「保存して終了/保存せず終了/閉じる」の確認モーダルを出す。
+  const handleExitClick = () => {
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    setExitConfirmOpen(true);
+  };
+
+  // 確認モーダルの「保存して終了」。
+  const handleSaveAndExitFromModal = async () => {
+    setExitConfirmOpen(false);
+    await handleSaveAndClose();
+  };
+
+  // 確認モーダルの「保存せず終了」。変更を破棄してそのまま閉じる。
+  const handleDiscardAndExit = () => {
+    setExitConfirmOpen(false);
+    onClose();
+  };
+
   // 保存していない変更があるかどうかと、保存処理そのものをMasterDashboard
   // 側へ登録しておく(詳細はtemplateEditorGuard.tsx参照)。dirtyの値が
   // 変わるたびに登録し直すことで、常に最新の状態を参照できるようにする。
   useEffect(() => {
     templateEditorGuard?.setGuard({
       isDirty: () => dirty,
-      save: saveLayoutForGuard,
+      save: saveLayout,
     });
     return () => {
       templateEditorGuard?.setGuard(null);
     };
-  }, [templateEditorGuard, dirty, saveLayoutForGuard]);
+  }, [templateEditorGuard, dirty, saveLayout]);
 
   const handleRename = async () => {
     setError(null);
@@ -1394,7 +1440,7 @@ export default function TemplateEditor({
     <div className="flex items-start gap-4">
       {/* 編集項目サイドバー: 名前変更〜各種編集操作を上から順に並べる
           スクロール領域と、常に画面外へスクロールしなくても押せる
-          「プレビュー」「保存して終了」「保存せず終了」の固定ボックスを
+          「プレビュー」「保存」「終了」の固定ボックスを
           縦に並べる。外枠(この要素)の高さを画面いっぱいに固定し
           (sticky + 100vh基準)、スクロール領域はflex-1で残りの高さを
           自動的に埋める(固定ボックス側の高さ変化にも自動追従する)。 */}
@@ -1657,11 +1703,10 @@ export default function TemplateEditor({
         </div>
       </div>
 
-      {/* 「プレビュー」「保存して終了」「保存せず終了」の固定ボックス。
-          上のスクロール領域とは別の箱にすることで、編集項目が増えて
-          スクロールが必要になっても、常にスクロールせず押せる
-          (2026-09報告: 以前は同じ箱の一番下にあり、保存するために
-          毎回下までスクロールする必要があった)。 */}
+      {/* 「プレビュー」「保存」「終了」の固定ボックス。上のスクロール領域とは
+          別の箱にすることで、編集項目が増えてスクロールが必要になっても、
+          常にスクロールせず押せる(2026-09報告: 以前は同じ箱の一番下に
+          あり、保存するために毎回下までスクロールする必要があった)。 */}
       <div className="flex shrink-0 flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3">
         <button
           onClick={() => setPreviewOpen(true)}
@@ -1670,33 +1715,60 @@ export default function TemplateEditor({
           プレビュー
         </button>
 
+        {lastSavedAt && (
+          <p className="text-center text-[11px] text-slate-400">
+            最終保存: {formatSavedAt(lastSavedAt)}
+          </p>
+        )}
+
         <div className="flex gap-2">
           <button
-            onClick={handleSaveAndClose}
+            onClick={handleSaveClick}
             disabled={saving}
             className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
           >
-            {saving ? "保存中..." : "保存して終了"}
+            {saving ? "保存中..." : "保存"}
           </button>
           <button
-            onClick={() => setDiscardConfirmOpen(true)}
+            onClick={handleExitClick}
             disabled={saving}
-            className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-400 disabled:opacity-60"
+            className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
-            保存せず終了
+            終了
           </button>
         </div>
       </div>
       </div>
 
-      {discardConfirmOpen && (
-        <ConfirmModal
-          title="保存せず終了"
-          message="保存せず終了しますがよろしいですか?"
-          confirmLabel="終了する"
-          onConfirm={onClose}
-          onCancel={() => setDiscardConfirmOpen(false)}
-        />
+      {exitConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <p className="text-sm font-bold text-slate-800">
+              保存していない変更がありますが終了しますか?
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setExitConfirmOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                閉じる
+              </button>
+              <button
+                onClick={handleDiscardAndExit}
+                className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-400"
+              >
+                保存せず終了
+              </button>
+              <button
+                onClick={handleSaveAndExitFromModal}
+                disabled={saving}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+              >
+                {saving ? "保存中..." : "保存して終了"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {helpOpen && (
