@@ -1717,6 +1717,10 @@ export default function TemplateEditor({
                 <p className="font-semibold text-slate-700">【作業】</p>
                 <p>・音声・ビデオ通話・画面共有不可</p>
               </div>
+              <div>
+                <p className="font-semibold text-slate-700">【全体アナウンス】</p>
+                <p>・ルームに参加している人全員に音声を届けることが可能(一方的)</p>
+              </div>
             </div>
           </div>
         </div>
@@ -2001,9 +2005,15 @@ export default function TemplateEditor({
                   />
                   <div
                     onPointerDown={(e) =>
-                      handlePointerDown(e, "obstacle", o.id, "resize")
+                      handlePointerDown(e, "obstacle", o.id, "resize", "br")
                     }
                     className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "obstacle", o.id, "resize", "tl")
+                    }
+                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
                   />
                   {isSelected && (
                     <button
