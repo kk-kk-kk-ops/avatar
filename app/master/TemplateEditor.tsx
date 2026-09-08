@@ -168,6 +168,27 @@ export default function TemplateEditor({
   const [selectedLibraryImageId, setSelectedLibraryImageId] = useState<
     string | null
   >(null);
+  // マップ上に配置済みのオブジェクトのうち、選択中の1個(コピー・貼り付け・
+  // 枠を赤くするハイライトの対象)。ライブラリの選択(selectedLibraryImageId、
+  // 「挿入」対象を選ぶためのもの)とは別の概念。
+  const [selectedPlacedObjectId, setSelectedPlacedObjectId] = useState<
+    string | null
+  >(null);
+  // コピーしたオブジェクトの見た目情報(画像・サイズ・角度)。DBには保存
+  // せず、このタブを閉じるまでのその場限りのクリップボードとして扱う。
+  const copiedObjectTemplateRef = useRef<{
+    imageUrl: string;
+    width: number;
+    height: number;
+    rotation: number;
+  } | null>(null);
+  // 右クリックした位置に出す「貼り付け」吹き出し。地図座標(mapX/mapY)で
+  // 持ち、表示位置は他のアイテムと同じくレンダー時にscaleを掛けて求める
+  // (拡大縮小してもズレない)。
+  const [pasteBubbleAt, setPasteBubbleAt] = useState<{
+    mapX: number;
+    mapY: number;
+  } | null>(null);
   const [registeringObject, setRegisteringObject] = useState(false);
   const [deletingLibraryImage, setDeletingLibraryImage] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -421,6 +442,12 @@ export default function TemplateEditor({
           : meetingZones;
     const item = list.find((i) => i.id === id);
     if (!item) return;
+    if (itemType === "object") {
+      setSelectedPlacedObjectId(id);
+    } else {
+      setSelectedPlacedObjectId(null);
+    }
+    setPasteBubbleAt(null);
     pushUndo();
     dragState.current =
       mode === "move"
@@ -462,6 +489,12 @@ export default function TemplateEditor({
     e.stopPropagation();
     const wallEl = (e.currentTarget as HTMLElement).parentElement;
     if (!wallEl) return;
+    if (itemType === "object") {
+      setSelectedPlacedObjectId(id);
+    } else {
+      setSelectedPlacedObjectId(null);
+    }
+    setPasteBubbleAt(null);
     pushUndo();
     const rect = wallEl.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
@@ -888,6 +921,7 @@ export default function TemplateEditor({
   const removePlacedObject = (id: string) => {
     pushUndo();
     setPlacedObjects((prev) => prev.filter((o) => o.id !== id));
+    setSelectedPlacedObjectId((prev) => (prev === id ? null : prev));
   };
 
   // 「オブジェクト登録」: 選択したPNG画像をアップロードし、ライブラリに
@@ -959,16 +993,13 @@ export default function TemplateEditor({
         mapWidth,
         mapHeight,
       );
+      const id = randomItemId("placed-object");
       setPlacedObjects((prev) => [
         ...prev,
-        {
-          id: randomItemId("placed-object"),
-          ...pos,
-          width,
-          height,
-          imageUrl: image.imageUrl,
-        },
+        { id, ...pos, width, height, imageUrl: image.imageUrl },
       ]);
+      setSelectedPlacedObjectId(id);
+      setPasteBubbleAt(null);
     };
     const DEFAULT_LONG_SIDE = 150;
     const el = new Image();
@@ -984,6 +1015,58 @@ export default function TemplateEditor({
     // 画像の実サイズが取得できない場合も、壁と同じデフォルト正方形で配置する。
     el.onerror = () => placeWithSize(NEW_ITEM_SIZE, NEW_ITEM_SIZE);
     el.src = image.imageUrl;
+  };
+
+  // ---- 配置済みオブジェクトのコピー・貼り付け ----
+  // 選択中のオブジェクトの画像・サイズ・角度をその場限りのクリップボード
+  // (copiedObjectTemplateRef、DBには保存しない)へコピーする。「コピー」
+  // 吹き出しのクリック・Ctrl+Cのどちらからも呼ぶ。
+  const copySelectedObject = () => {
+    const target = placedObjects.find((o) => o.id === selectedPlacedObjectId);
+    if (!target) return;
+    copiedObjectTemplateRef.current = {
+      imageUrl: target.imageUrl,
+      width: target.width,
+      height: target.height,
+      rotation: target.rotation ?? 0,
+    };
+  };
+
+  // コピー済みのオブジェクトを指定した地図座標(中心)へ貼り付ける。
+  // 「貼り付け」吹き出しのクリック・Ctrl+Vのどちらからも呼ぶ。
+  const pasteCopiedObjectAt = (mapX: number, mapY: number) => {
+    const copied = copiedObjectTemplateRef.current;
+    if (!copied) return;
+    pushUndo();
+    const pos = clampPosition(
+      mapX - copied.width / 2,
+      mapY - copied.height / 2,
+      copied.width,
+      copied.height,
+      mapWidth,
+      mapHeight,
+    );
+    const id = randomItemId("placed-object");
+    setPlacedObjects((prev) => [
+      ...prev,
+      {
+        id,
+        ...pos,
+        width: copied.width,
+        height: copied.height,
+        rotation: copied.rotation,
+        imageUrl: copied.imageUrl,
+      },
+    ]);
+    setSelectedPlacedObjectId(id);
+    setPasteBubbleAt(null);
+  };
+
+  // Ctrl+Vでの貼り付け位置は、右クリック位置が無いため「挿入」と同じく
+  // 現在スクロールして見えている範囲の中心にする。
+  const pasteCopiedObjectAtViewCenter = () => {
+    const center = getVisibleCenterMapPoint();
+    pasteCopiedObjectAt(center.x, center.y);
   };
 
   // router.refresh()完了後にonClose()する(refreshingがfalseに戻った
@@ -1122,6 +1205,46 @@ export default function TemplateEditor({
       setUploading(false);
     }
   };
+
+  // ---- キーボードショートカット(Ctrl+Z/Ctrl+Y/Ctrl+C/Ctrl+V) ----
+  // Mac配列も考慮しCmdキー(metaKey)も同様に扱う。名前変更・マップサイズ・
+  // ワープの名前欄などテキスト入力中は、ブラウザ標準のテキスト編集用
+  // Undo/Redo・コピー&ペーストを優先させたいため、フォーカスが input/
+  // textareaにある間は何もしない。呼び出す関数(handleUndo等)は毎レンダー
+  // 作り直されるため、useSessionGuard.tsと同じくrefへ常に最新のものを
+  // 入れておき、リスナー自体はマウント時に1回だけ登録する。
+  const handleUndoRef = useRef(handleUndo);
+  handleUndoRef.current = handleUndo;
+  const handleRedoRef = useRef(handleRedo);
+  handleRedoRef.current = handleRedo;
+  const copySelectedObjectRef = useRef(copySelectedObject);
+  copySelectedObjectRef.current = copySelectedObject;
+  const pasteCopiedObjectAtViewCenterRef = useRef(pasteCopiedObjectAtViewCenter);
+  pasteCopiedObjectAtViewCenterRef.current = pasteCopiedObjectAtViewCenter;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndoRef.current();
+      } else if (key === "y") {
+        e.preventDefault();
+        handleRedoRef.current();
+      } else if (key === "c") {
+        e.preventDefault();
+        copySelectedObjectRef.current();
+      } else if (key === "v") {
+        e.preventDefault();
+        pasteCopiedObjectAtViewCenterRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
     <div className="flex items-start gap-4">
@@ -1613,6 +1736,26 @@ export default function TemplateEditor({
               backgroundPosition: "center",
               backgroundRepeat: "no-repeat",
             }}
+            onPointerDown={(e) => {
+              // 何もない背景を左クリックした場合のみ発火する(壁・エリア・
+              // オブジェクト自身のonPointerDownはstopPropagation済みのため
+              // ここまで来ない)。選択中のオブジェクト・貼り付け吹き出しを
+              // 両方解除する。
+              if (e.button !== 0) return;
+              setSelectedPlacedObjectId(null);
+              setPasteBubbleAt(null);
+            }}
+            onContextMenu={(e) => {
+              // コピー済みのオブジェクトが無ければ右クリックメニューを出す
+              // 意味が無いため、ブラウザ標準の右クリックメニューのままにする。
+              if (!copiedObjectTemplateRef.current) return;
+              e.preventDefault();
+              const rect = e.currentTarget.getBoundingClientRect();
+              setPasteBubbleAt({
+                mapX: (e.clientX - rect.left) / scale,
+                mapY: (e.clientY - rect.top) / scale,
+              });
+            }}
           >
             {meetingZones.map((zone) => (
               <div
@@ -1707,49 +1850,68 @@ export default function TemplateEditor({
                 され、当たり判定は持たない。ドラッグ・リサイズ・回転の操作感は
                 壁と共通(handlePointerDown/handleRotatePointerDownをitemType
                 "object"で呼ぶ)。 */}
-            {placedObjects.map((o) => (
-              <div
-                key={o.id}
-                onPointerDown={(e) => handlePointerDown(e, "object", o.id, "move")}
-                className="absolute cursor-move rounded border border-dashed border-violet-400"
-                style={{
-                  left: o.x * scale,
-                  top: o.y * scale,
-                  width: o.width * scale,
-                  height: o.height * scale,
-                  transform: `rotate(${o.rotation ?? 0}deg)`,
-                  transformOrigin: "50% 50%",
-                }}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={o.imageUrl}
-                  alt="配置したオブジェクト"
-                  draggable={false}
-                  className="pointer-events-none h-full w-full select-none object-contain"
-                />
-                <button
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => removePlacedObject(o.id)}
-                  className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+            {placedObjects.map((o) => {
+              const isSelected = o.id === selectedPlacedObjectId;
+              return (
+                <div
+                  key={o.id}
+                  onPointerDown={(e) => handlePointerDown(e, "object", o.id, "move")}
+                  className={`absolute cursor-move rounded border ${
+                    isSelected
+                      ? "border-2 border-red-500"
+                      : "border-dashed border-violet-400"
+                  }`}
+                  style={{
+                    left: o.x * scale,
+                    top: o.y * scale,
+                    width: o.width * scale,
+                    height: o.height * scale,
+                    transform: `rotate(${o.rotation ?? 0}deg)`,
+                    transformOrigin: "50% 50%",
+                  }}
                 >
-                  ×
-                </button>
-                <div
-                  onPointerDown={(e) =>
-                    handleRotatePointerDown(e, "object", o.id, o.rotation ?? 0)
-                  }
-                  title="ドラッグで回転(Shiftで15度単位)"
-                  className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-violet-600 bg-white"
-                />
-                <div
-                  onPointerDown={(e) =>
-                    handlePointerDown(e, "object", o.id, "resize")
-                  }
-                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
-                />
-              </div>
-            ))}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={o.imageUrl}
+                    alt="配置したオブジェクト"
+                    draggable={false}
+                    className="pointer-events-none h-full w-full select-none object-contain"
+                  />
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => removePlacedObject(o.id)}
+                    className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                  >
+                    ×
+                  </button>
+                  <div
+                    onPointerDown={(e) =>
+                      handleRotatePointerDown(e, "object", o.id, o.rotation ?? 0)
+                    }
+                    title="ドラッグで回転(Shiftで15度単位)"
+                    className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-violet-600 bg-white"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "object", o.id, "resize")
+                    }
+                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                  />
+                  {/* コピー吹き出し: 選択中のオブジェクトにだけ表示する
+                      (Ctrl+Cでも同じ動作)。 */}
+                  {isSelected && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={copySelectedObject}
+                      className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-white shadow hover:bg-slate-700"
+                    >
+                      コピー
+                    </button>
+                  )}
+                </div>
+              );
+            })}
 
             {warpPoints.map((w) => (
               <Fragment key={w.id}>
@@ -1818,6 +1980,25 @@ export default function TemplateEditor({
                   ×
                 </button>
               </div>
+            )}
+
+            {/* 貼り付け吹き出し: 何かコピーした状態でマップを右クリックした
+                位置に表示する。 */}
+            {pasteBubbleAt && (
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() =>
+                  pasteCopiedObjectAt(pasteBubbleAt.mapX, pasteBubbleAt.mapY)
+                }
+                className="absolute -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full bg-slate-800 px-2 py-1 text-xs font-semibold text-white shadow hover:bg-slate-700"
+                style={{
+                  left: pasteBubbleAt.mapX * scale,
+                  top: pasteBubbleAt.mapY * scale,
+                }}
+              >
+                貼り付け
+              </button>
             )}
           </div>
         </div>
