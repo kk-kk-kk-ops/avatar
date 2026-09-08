@@ -48,6 +48,18 @@ import { useTemplateEditorGuard } from "./templateEditorGuard";
 
 type ItemType = "obstacle" | "zone" | "object";
 
+// 元に戻す/やり直すのために保持する、レイアウトの一時点の状態(「保存」で
+// 一括保存される項目一式と同じ範囲)。DBには一切保存しない。
+type LayoutSnapshot = {
+  obstacles: Obstacle[];
+  meetingZones: MeetingZone[];
+  mapWidth: number;
+  mapHeight: number;
+  spawnPoint: { x: number; y: number } | null;
+  warpPoints: WarpPoint[];
+  placedObjects: PlacedObject[];
+};
+
 type DragState =
   | {
       mode: "move";
@@ -282,6 +294,80 @@ export default function TemplateEditor({
   const renderedWidth = mapWidth * scale;
   const renderedHeight = mapHeight * scale;
 
+  // ---- 元に戻す/やり直す ----
+  // 直近30件(MAX_HISTORY)までの「変更前の状態」をブラウザのメモリ上
+  // (refのみ。stateにもDBにも保存しない)に保持するだけの機能。保存して
+  // 終了する・画面を閉じる・タブを切り替えるといった操作でこのコンポー
+  // ネント自体が破棄されれば履歴も一緒に消えるため、DBを圧迫することは
+  // ない(そもそも一度もDBへ書き込んでいない)。
+  const MAX_HISTORY = 30;
+  const undoStackRef = useRef<LayoutSnapshot[]>([]);
+  const redoStackRef = useRef<LayoutSnapshot[]>([]);
+  // ボタンのdisabled表示のためだけに件数をstateにも反映する
+  // (スタック本体はrefのまま。件数が変わった時だけ再描画すればよい)。
+  const [undoCount, setUndoCount] = useState(0);
+  const [redoCount, setRedoCount] = useState(0);
+
+  const snapshotLayout = (): LayoutSnapshot => ({
+    obstacles,
+    meetingZones,
+    mapWidth,
+    mapHeight,
+    spawnPoint,
+    warpPoints,
+    placedObjects,
+  });
+
+  // 壁・エリア・ワープ・配置オブジェクト・マップサイズ・アバター初期位置の
+  // いずれかを変更する操作の「直前」に呼ぶ。ドラッグ(移動・リサイズ・
+  // 回転)は掴んだ瞬間に1回だけ、追加・削除は実行前に1回、入力欄は
+  // フォーカス時に1回呼ぶことで、1操作につき1履歴になるようにしている
+  // (ドラッグ中の1px単位の変化ごとに履歴を積まないため)。
+  const pushUndo = () => {
+    undoStackRef.current = [...undoStackRef.current, snapshotLayout()].slice(
+      -MAX_HISTORY,
+    );
+    redoStackRef.current = [];
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(0);
+  };
+
+  const applySnapshot = (snap: LayoutSnapshot) => {
+    setObstacles(snap.obstacles);
+    setMeetingZones(snap.meetingZones);
+    setMapWidthInput(String(snap.mapWidth));
+    setMapHeightInput(String(snap.mapHeight));
+    setSpawnPoint(snap.spawnPoint);
+    setWarpPoints(snap.warpPoints);
+    setPlacedObjects(snap.placedObjects);
+  };
+
+  const handleUndo = () => {
+    const stack = undoStackRef.current;
+    if (stack.length === 0) return;
+    const prev = stack[stack.length - 1];
+    undoStackRef.current = stack.slice(0, -1);
+    redoStackRef.current = [...redoStackRef.current, snapshotLayout()].slice(
+      -MAX_HISTORY,
+    );
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(redoStackRef.current.length);
+    applySnapshot(prev);
+  };
+
+  const handleRedo = () => {
+    const stack = redoStackRef.current;
+    if (stack.length === 0) return;
+    const next = stack[stack.length - 1];
+    redoStackRef.current = stack.slice(0, -1);
+    undoStackRef.current = [...undoStackRef.current, snapshotLayout()].slice(
+      -MAX_HISTORY,
+    );
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(redoStackRef.current.length);
+    applySnapshot(next);
+  };
+
   const handlePointerDown = (
     e: React.PointerEvent,
     itemType: ItemType,
@@ -297,6 +383,7 @@ export default function TemplateEditor({
           : meetingZones;
     const item = list.find((i) => i.id === id);
     if (!item) return;
+    pushUndo();
     dragState.current =
       mode === "move"
         ? {
@@ -337,6 +424,7 @@ export default function TemplateEditor({
     e.stopPropagation();
     const wallEl = (e.currentTarget as HTMLElement).parentElement;
     if (!wallEl) return;
+    pushUndo();
     const rect = wallEl.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
@@ -490,6 +578,7 @@ export default function TemplateEditor({
     e.stopPropagation();
     const point = warpPoints.find((w) => w.id === id);
     if (!point) return;
+    pushUndo();
     warpDragState.current = {
       id,
       startX: e.clientX,
@@ -504,6 +593,7 @@ export default function TemplateEditor({
   // 2つの丸は少しずらして両方が重ならずに見えるよう、中心から左右に
   // ずらして配置する。
   const addWarpPair = (channel: (typeof WARP_CHANNELS)[number]) => {
+    pushUndo();
     const center = getVisibleCenterMapPoint();
     const offset = WARP_POINT_RADIUS + 20;
     const clamp = (x: number, y: number) => ({
@@ -519,8 +609,10 @@ export default function TemplateEditor({
     ]);
   };
 
-  const removeWarpPair = (channel: string) =>
+  const removeWarpPair = (channel: string) => {
+    pushUndo();
     setWarpPoints((prev) => prev.filter((w) => w.channel !== channel));
+  };
 
   const updateWarpLabel = (id: string, label: string) =>
     setWarpPoints((prev) =>
@@ -530,6 +622,7 @@ export default function TemplateEditor({
   const handleSpawnPointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
     if (!spawnPoint) return;
+    pushUndo();
     spawnDragState.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -618,6 +711,7 @@ export default function TemplateEditor({
   };
 
   const addObstacle = () => {
+    pushUndo();
     const center = getVisibleCenterMapPoint();
     const pos = clampPosition(
       center.x - NEW_ITEM_SIZE / 2,
@@ -640,6 +734,7 @@ export default function TemplateEditor({
   };
 
   const addMeetingZone = () => {
+    pushUndo();
     const center = getVisibleCenterMapPoint();
     const pos = clampPosition(
       center.x - NEW_ITEM_SIZE,
@@ -666,6 +761,7 @@ export default function TemplateEditor({
   // 全く同じだが、バーチャル空間内では見た目に出さない(透明・枠なし・
   // ラベル非表示)エリア。編集画面でだけ薄緑色+「会議室」と表示される。
   const addConferenceRoom = () => {
+    pushUndo();
     const center = getVisibleCenterMapPoint();
     const pos = clampPosition(
       center.x - NEW_ITEM_SIZE,
@@ -693,6 +789,7 @@ export default function TemplateEditor({
   // 見た目はミーティングエリアと同様に枠・ラベルを表示する(編集画面では
   // 区別しやすいよう琥珀色で表示)。
   const addAnnouncementZone = () => {
+    pushUndo();
     const center = getVisibleCenterMapPoint();
     const pos = clampPosition(
       center.x - NEW_ITEM_SIZE,
@@ -719,6 +816,7 @@ export default function TemplateEditor({
   // 見た目はミーティングエリアと同様に枠・ラベルを表示する(編集画面では
   // 区別しやすいよう水色で表示)。
   const addWorkArea = () => {
+    pushUndo();
     const center = getVisibleCenterMapPoint();
     const pos = clampPosition(
       center.x - NEW_ITEM_SIZE,
@@ -741,12 +839,18 @@ export default function TemplateEditor({
     ]);
   };
 
-  const removeObstacle = (id: string) =>
+  const removeObstacle = (id: string) => {
+    pushUndo();
     setObstacles((prev) => prev.filter((o) => o.id !== id));
-  const removeMeetingZone = (id: string) =>
+  };
+  const removeMeetingZone = (id: string) => {
+    pushUndo();
     setMeetingZones((prev) => prev.filter((z) => z.id !== id));
-  const removePlacedObject = (id: string) =>
+  };
+  const removePlacedObject = (id: string) => {
+    pushUndo();
     setPlacedObjects((prev) => prev.filter((o) => o.id !== id));
+  };
 
   // 「オブジェクト登録」: 選択したPNG画像をアップロードし、ライブラリに
   // 即時追加・保存する(背景画像の変更と同じ考え方。詳細はobjectLibrary
@@ -801,6 +905,7 @@ export default function TemplateEditor({
   const insertPlacedObject = () => {
     const image = objectLibrary.find((o) => o.id === selectedLibraryImageId);
     if (!image) return;
+    pushUndo();
     const placeWithSize = (width: number, height: number) => {
       const center = getVisibleCenterMapPoint();
       const pos = clampPosition(
@@ -1076,6 +1181,7 @@ export default function TemplateEditor({
           >
             ＋全体アナウンスエリア
           </button>
+          <p className="text-xs font-semibold text-slate-500">ワープ</p>
           {WARP_CHANNELS.map((channel) => {
             const pair = warpPoints.filter((w) => w.channel === channel);
             const hasPair = pair.length > 0;
@@ -1094,6 +1200,7 @@ export default function TemplateEditor({
                       <input
                         key={w.id}
                         value={w.label ?? ""}
+                        onFocus={pushUndo}
                         onChange={(e) => updateWarpLabel(w.id, e.target.value)}
                         placeholder={`丸${i + 1}の名前`}
                         maxLength={20}
@@ -1121,27 +1228,31 @@ export default function TemplateEditor({
           <p className="mb-1 text-xs font-semibold text-slate-500">オブジェクト</p>
           <div className="rounded-lg border border-slate-200 p-2">
             {objectLibrary.length > 0 && (
-              <div className="mb-2 grid grid-cols-4 gap-1.5">
-                {objectLibrary.map((image) => (
-                  <button
-                    key={image.id}
-                    type="button"
-                    onClick={() => setSelectedLibraryImageId(image.id)}
-                    title="選択"
-                    className={`flex aspect-square items-center justify-center overflow-hidden rounded border-2 bg-slate-50 p-1 ${
-                      selectedLibraryImageId === image.id
-                        ? "border-emerald-500"
-                        : "border-transparent hover:border-slate-300"
-                    }`}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={image.imageUrl}
-                      alt="登録済みオブジェクト"
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  </button>
-                ))}
+              // 3列目(3行目)まではこの枠自体が中身に合わせて伸び、4行目
+              // 以降はここだけスクロールして見る(max-h指定+overflow-y-auto)。
+              <div className="mb-2 max-h-[154px] overflow-y-auto">
+                <div className="grid grid-cols-4 gap-1.5">
+                  {objectLibrary.map((image) => (
+                    <button
+                      key={image.id}
+                      type="button"
+                      onClick={() => setSelectedLibraryImageId(image.id)}
+                      title="選択"
+                      className={`flex aspect-square items-center justify-center overflow-hidden rounded border-2 bg-slate-50 p-1 ${
+                        selectedLibraryImageId === image.id
+                          ? "border-emerald-500"
+                          : "border-transparent hover:border-slate-300"
+                      }`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={image.imageUrl}
+                        alt="登録済みオブジェクト"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             <div className="flex gap-1.5">
@@ -1163,16 +1274,15 @@ export default function TemplateEditor({
               >
                 挿入
               </button>
-            </div>
-            {selectedLibraryImageId && (
               <button
                 type="button"
                 onClick={handleDeleteLibraryImage}
-                className="mt-1.5 w-full rounded-lg border border-red-300 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                disabled={!selectedLibraryImageId}
+                className="flex-1 rounded-lg border border-red-300 px-2 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40"
               >
                 削除
               </button>
-            )}
+            </div>
           </div>
         </div>
 
@@ -1183,6 +1293,7 @@ export default function TemplateEditor({
               type="number"
               step={100}
               value={mapWidthInput}
+              onFocus={pushUndo}
               onChange={(e) => setMapWidthInput(e.target.value)}
               onBlur={() => setMapWidthInput(String(mapWidth))}
               className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
@@ -1192,6 +1303,7 @@ export default function TemplateEditor({
               type="number"
               step={100}
               value={mapHeightInput}
+              onFocus={pushUndo}
               onChange={(e) => setMapHeightInput(e.target.value)}
               onBlur={() => setMapHeightInput(String(mapHeight))}
               className="w-20 rounded border border-slate-300 px-2 py-1 text-xs outline-none focus:border-slate-500"
@@ -1199,7 +1311,10 @@ export default function TemplateEditor({
             <span className="text-xs text-slate-400">px</span>
           </div>
           <button
-            onClick={applyImageNaturalSize}
+            onClick={() => {
+              pushUndo();
+              applyImageNaturalSize();
+            }}
             disabled={measuringImageSize}
             className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
           >
@@ -1342,7 +1457,30 @@ export default function TemplateEditor({
       )}
 
       {/* 編集キャンバス: 残り幅いっぱい(画面右端)まで広げる */}
-      <div ref={measureRef} className="min-w-0 flex-1">
+      <div ref={measureRef} className="relative min-w-0 flex-1">
+        {/* 元に戻す/やり直す。プレビューエリア左上に固定表示し、中身を
+            スクロールしても位置が動かないようscrollRefの外側(この
+            relativeな親要素基準)に置く。 */}
+        <div className="absolute left-2 top-2 z-10 flex gap-1.5">
+          <button
+            type="button"
+            onClick={handleUndo}
+            disabled={undoCount === 0}
+            title="元に戻す"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white/90 text-sm font-bold text-slate-700 shadow hover:bg-white disabled:opacity-40"
+          >
+            ↩
+          </button>
+          <button
+            type="button"
+            onClick={handleRedo}
+            disabled={redoCount === 0}
+            title="やり直す"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white/90 text-sm font-bold text-slate-700 shadow hover:bg-white disabled:opacity-40"
+          >
+            ↪
+          </button>
+        </div>
         <div
           ref={scrollRef}
           className="relative touch-none overflow-auto rounded-lg border border-slate-300 bg-slate-700"
@@ -1557,7 +1695,10 @@ export default function TemplateEditor({
                 />
                 <button
                   onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => setSpawnPoint(null)}
+                  onClick={() => {
+                    pushUndo();
+                    setSpawnPoint(null);
+                  }}
                   className="absolute -right-1 -top-1 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
                 >
                   ×
