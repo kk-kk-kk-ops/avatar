@@ -4474,15 +4474,17 @@ export default function AvatarSpace({
         channelRef.current?.track(selfState.current);
       }
 
-      track.mediaStreamTrack.addEventListener("ended", () => {
-        stopVideoCall();
-      });
+      // 以前はカメラのトラックが終了した際に自動でビデオ通話をOFFにして
+      // いたが、画面共有(setScreenShareEnabled)を開始した際にもこの
+      // "ended"が発火してビデオ通話まで巻き添えでOFFになってしまう
+      // 不具合があった(2026-09報告)。画面共有中もビデオ通話はONのまま
+      // 維持したいとの要望のため、この自動OFFの仕組み自体を廃止した。
     } catch {
       setCallError(
         "カメラを使用できませんでした。ブラウザのカメラ許可設定を確認してください。",
       );
     }
-  }, [stopVideoCall, isInWorkZone]);
+  }, [isInWorkZone]);
 
   // 2026-09 QA指摘: toggleScreenShareと同じ理由で処理中ガードを追加。
   const videoToggleInFlightRef = useRef(false);
