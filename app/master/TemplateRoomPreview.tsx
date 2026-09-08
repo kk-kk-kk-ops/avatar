@@ -15,12 +15,18 @@ const AVATAR_FRONT_IMAGE = "/avatar/goo/front.webp";
 // ため、地図の見切れ方を正しく再現するには「マップを映す領域の実際の
 // 画面幅・高さ」が必要になる。固定値だと実ブラウザとの比率がずれて
 // 過剰にズームして見えてしまうため、この領域を実測して使う。
+//
+// アバターの位置は、実際のアバター初期位置(spawnPoint)ではなく常に
+// マップの中心に固定する(2026-09報告: spawnPointを使うと、アバター初期
+// 位置がマップ端寄りの場合にプレビューの画面外へ出てしまい確認の役に
+// 立たなかったため。あくまで「マップ全体の見た目をざっと確認する」ための
+// プレビューと割り切り、実際のアバター初期位置は編集キャンバス上の緑の
+// マーカーで確認する)。
 export default function TemplateRoomPreview({
   mapWidth,
   mapHeight,
   backgroundImageUrl,
   avatarSizePx,
-  spawnPoint,
   placedObjects,
   onClose,
 }: {
@@ -28,7 +34,6 @@ export default function TemplateRoomPreview({
   mapHeight: number;
   backgroundImageUrl: string;
   avatarSizePx: number;
-  spawnPoint: { x: number; y: number } | null;
   placedObjects: PlacedObject[];
   onClose: () => void;
 }) {
@@ -52,21 +57,23 @@ export default function TemplateRoomPreview({
   // 張り付いて見えてしまう(=アバターが画面中央より上に見えるバグの原因)。
   const viewportWidth = areaSize.width;
   const viewportHeight = areaSize.height;
-  const spawnX = spawnPoint?.x ?? mapWidth / 2;
-  const spawnY = spawnPoint?.y ?? mapHeight / 2;
+  // マップの中心を常にカメラ・アバターの基準点にする(spawnPointは使わない。
+  // 理由は上のコンポーネントコメント参照)。
+  const centerX = mapWidth / 2;
+  const centerY = mapHeight / 2;
   // マップが画面より小さい場合はcameraを負の値にしてマップ自体を画面中央へ
   // 寄せ、大きい場合は従来通り画面端で止める。どちらの場合も
   // 「アバターは常に画面の中央」になる。
   const cameraX = Math.min(
-    Math.max(spawnX - viewportWidth / 2, Math.min(0, mapWidth - viewportWidth)),
+    Math.max(centerX - viewportWidth / 2, Math.min(0, mapWidth - viewportWidth)),
     Math.max(0, mapWidth - viewportWidth),
   );
   const cameraY = Math.min(
-    Math.max(spawnY - viewportHeight / 2, Math.min(0, mapHeight - viewportHeight)),
+    Math.max(centerY - viewportHeight / 2, Math.min(0, mapHeight - viewportHeight)),
     Math.max(0, mapHeight - viewportHeight),
   );
-  const avatarLeft = spawnX - cameraX - avatarSizePx / 2;
-  const avatarTop = spawnY - cameraY - avatarSizePx;
+  const avatarLeft = centerX - cameraX - avatarSizePx / 2;
+  const avatarTop = centerY - cameraY - avatarSizePx;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-900">
