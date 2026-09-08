@@ -1469,7 +1469,7 @@ export default function TemplateEditor({
             title="元に戻す"
             className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white/90 text-sm font-bold text-slate-700 shadow hover:bg-white disabled:opacity-40"
           >
-            ↩
+            ←
           </button>
           <button
             type="button"
@@ -1478,7 +1478,7 @@ export default function TemplateEditor({
             title="やり直す"
             className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white/90 text-sm font-bold text-slate-700 shadow hover:bg-white disabled:opacity-40"
           >
-            ↪
+            →
           </button>
         </div>
         <div
