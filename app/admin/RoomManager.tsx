@@ -169,14 +169,14 @@ export default function RoomManager({
                       >
                         {isApplying
                           ? existingRoom
-                            ? "変更中..."
+                            ? "適用中..."
                             : "作成中..."
                           : applied
                             ? "適用しました"
                             : isCurrentlyApplied
                               ? "適用中"
                               : existingRoom
-                                ? "変更"
+                                ? "適用"
                                 : "作成"}
                       </button>
                     )}
