@@ -7688,32 +7688,6 @@ export default function AvatarSpace({
                   </div>
                 )}
 
-                {videoPausedForScreenView ? (
-                  <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300">
-                    画面共有視聴中
-                  </div>
-                ) : (
-                  inCall &&
-                  cameraStreamRef.current && (
-                    <div className="relative">
-                      <RemoteVideo
-                        stream={cameraStreamRef.current}
-                        className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
-                      />
-                      <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                        あなたのカメラ
-                      </span>
-                      <button
-                        onClick={stopVideoCall}
-                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                        aria-label="ビデオ通話を終了"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )
-                )}
-
                 {/* 画面共有は同時に何人でも共有できるが、視聴は1人だけ選ぶ方式
                     (会議室の外では排他制御を行わないため、以前と同じ)。
                     小さいプレビューは常に共有開始時点の静止画(ライブ映像には
@@ -7746,6 +7720,34 @@ export default function AvatarSpace({
                     </span>
                   </button>
                 ))}
+
+                {/* 画面共有のプレビュー(自分・相手とも)を左側にまとめ、カメラの
+                    プレビューはその後ろ(右側)に並べる(2026-09報告)。 */}
+                {videoPausedForScreenView ? (
+                  <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-slate-800 px-1 text-center text-[9px] text-slate-300">
+                    画面共有視聴中
+                  </div>
+                ) : (
+                  inCall &&
+                  cameraStreamRef.current && (
+                    <div className="relative">
+                      <RemoteVideo
+                        stream={cameraStreamRef.current}
+                        className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
+                      />
+                      <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
+                        あなたのカメラ
+                      </span>
+                      <button
+                        onClick={stopVideoCall}
+                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
+                        aria-label="ビデオ通話を終了"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )
+                )}
 
                 {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
                     全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
