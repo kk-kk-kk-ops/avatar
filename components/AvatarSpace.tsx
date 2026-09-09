@@ -7944,15 +7944,22 @@ export default function AvatarSpace({
             {/* ミーティングエリア(複数設置可能)。配置はマスターがテンプレート側で編集する
                 (ルーム内での編集は廃止)。「会議室」(kind: "conference")は機能は
                 同じ(同エリア内での自動音声接続)。ラベルは出さないが、部屋の
-                境界がわかるよう薄黄緑の背景・薄緑の枠で塗る。 */}
-            {meetingZones.map((zone) =>
-              zone.kind === "conference" ? (
+                境界がわかるよう薄黄緑の背景・薄緑の枠で塗る。
+                自分がそのエリアに入っている間だけ枠を3px太くする(この判定は
+                selfPlayerというローカルのReact stateだけを見ており、他の
+                参加者のplayers情報とはやり取りしないため、この見た目の変化は
+                自分の画面にしか反映されない=相手の画面のこの枠の太さには
+                影響しない)。 */}
+            {meetingZones.map((zone) => {
+              const isSelfInside = selfPlayer?.meetingZoneId === zone.id;
+              const borderWidthClass = isSelfInside ? "border-[3px]" : "border";
+              return zone.kind === "conference" ? (
                 (() => {
                   const locker = getConferenceZoneLocker(zone.id, players);
                   return (
                     <div
                       key={zone.id}
-                      className={`absolute rounded-xl border ${
+                      className={`absolute rounded-xl ${borderWidthClass} ${
                         locker
                           ? "border-red-300 bg-pink-200/30"
                           : "border-green-300 bg-lime-200/20"
@@ -7970,7 +7977,7 @@ export default function AvatarSpace({
               ) : (
                 <div
                   key={zone.id}
-                  className={`absolute flex items-start rounded-xl border p-2 ${
+                  className={`absolute flex items-start rounded-xl ${borderWidthClass} p-2 ${
                     zone.kind === "announcement"
                       ? "border-amber-400 bg-amber-500/20"
                       : zone.kind === "work"
@@ -7998,8 +8005,8 @@ export default function AvatarSpace({
                     {zone.label}
                   </span>
                 </div>
-              ),
-            )}
+              );
+            })}
 
             {/* 障害物(机・観葉植物・棚など)。見た目には出さず、当たり判定だけの
                 透明な壁として機能する。配置はマスターがテンプレート側で編集する。 */}
