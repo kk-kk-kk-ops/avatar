@@ -6,20 +6,11 @@ type Props = {
   disabled?: boolean;
 };
 
-// Avatar.tsxのマイクON中バッジでも同じ見た目のアイコンを使うためexportする。
-// sizeはバッジ(小さい丸)など、コントロールバー以外での再利用のために
-// 省略可能にしてある(未指定時はコントロールバーの既存サイズ18のまま)。
-export function MicIcon({
-  enabled,
-  size = 18,
-}: {
-  enabled: boolean;
-  size?: number;
-}) {
+function MicIcon({ enabled }: { enabled: boolean }) {
   return (
     <svg
-      width={size}
-      height={size}
+      width="18"
+      height="18"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
