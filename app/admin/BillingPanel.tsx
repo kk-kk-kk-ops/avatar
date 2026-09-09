@@ -45,8 +45,11 @@ export default function BillingPanel({
       // 「お支払い情報がまだ登録されていません」となりプラン変更が
       // 一切できなくなる不具合になるため、実際の契約有無
       // (hasActiveSubscription)で判定する。
+      // targetPlanを渡すと、ポータルのトップページを経由せず「このプランに
+      // 変更しますか?」の確認画面へ直接遷移する(freeへの切り替え=解約は
+      // targetPlanが有料プランではないため、従来通りトップページ経由になる)。
       const result = hasActiveSubscription
-        ? await createPortalSession()
+        ? await createPortalSession(targetPlan)
         : await createCheckoutSession(targetPlan);
       setBillingPending(null);
       if (result && !result.ok) setBillingError(result.error);
