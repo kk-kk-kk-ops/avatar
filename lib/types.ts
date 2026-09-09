@@ -243,11 +243,11 @@ export const PLANS: Record<
   pro: {
     label: "Pro",
     subLabel:
-      "（ミーティングルーム1つ　人数上限：25名／画面共有・ビデオ通話・音声通話：無制限）",
+      "（ミーティングルーム1つ　人数上限：30名／画面共有・ビデオ通話・音声通話：無制限）",
     priceLabel: "9,800円/月",
     priceYen: 9800,
     maxRooms: 1,
-    maxPeoplePerRoom: 25,
+    maxPeoplePerRoom: 30,
     screenShareDailyMinutes: null,
     videoCallDailyMinutes: null,
     voiceCallDailyMinutes: null,
