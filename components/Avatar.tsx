@@ -125,13 +125,6 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         className="h-full w-full object-contain drop-shadow-md"
       />
 
-      {/* ミーティングエリア在室バッジ */}
-      {player.meetingZoneId && (
-        <span className="absolute right-0 top-0 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] shadow">
-          💬
-        </span>
-      )}
-
       {/* マイクON中の状態(相手にも見える)。OFF時はバッジを出さない。 */}
       {showMicBadge && (
         <span className="absolute left-0 top-0 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] shadow">
