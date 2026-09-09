@@ -25,6 +25,7 @@ import {
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
   DESKTOP_AUTO_LOGOUT_SECONDS,
+  DESKTOP_AUTO_AWAY_SECONDS,
   MOBILE_AUTO_LOGOUT_SECONDS,
   MOVE_SPEED,
   MESSAGE_MAX_LENGTH,
@@ -1172,6 +1173,14 @@ export default function AvatarSpace({
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  // 「自分が設定しているステータス」(設定画面で選んだ値)。会議室への
+  // 入退室・タブの非表示/復帰による自動ステータス変更(共にapplyAuto
+  // PresenceStatus経由)はselfState.current.statusを一時的に書き換える
+  // ため、それとは別にユーザー本来の選択を覚えておき、自動変更の要因が
+  // 無くなった時点でここへ戻す。
+  const manualStatusRef = useRef<PresenceStatus>("available");
+  // 現在いずれかの会議室(kind: "conference")の中にいるかどうかは
+  // insideConferenceZoneIdsRef(このファイル内で別途宣言)のサイズで判定する。
   // DM送受信・オンライン人数カウントに使う、認証済みSupabaseユーザーの
   // 安定ID(selfId.currentはブラウザごとのランダムなゲストIDで別物)。
   // handleJoin()が組み立てるPlayerState.userIdに使うため、入室操作より
@@ -3997,6 +4006,9 @@ export default function AvatarSpace({
       moving: false,
     };
     selfState.current = initial;
+    // 会議室退室時・タブ復帰時に「自分が設定しているステータス」へ戻す
+    // 基準値。入室のたびに既定値へ揃える。
+    manualStatusRef.current = "available";
     setPlayers((prev) => ({ ...prev, [initial.id]: initial }));
     setSettingsNameInput(name);
     setSettingsAvatar(selectedAvatar);
@@ -5517,6 +5529,16 @@ export default function AvatarSpace({
                   self.lockedMeetingZoneId = null;
                   channelRef.current?.track(self);
                 }
+                // 他の会議室にも所属していなければ、在席ステータスを
+                // 自分が設定している値に戻す(タブ非表示による自動離席中
+                // への切り替えが並行して起きている場合はそちらを優先し、
+                // ここでは上書きしない)。
+                if (
+                  insideConferenceZoneIdsRef.current.size === 0 &&
+                  !autoAwayRef.current
+                ) {
+                  applyAutoPresenceStatus(manualStatusRef.current);
+                }
               }
               return;
             }
@@ -5823,6 +5845,10 @@ export default function AvatarSpace({
     autoMoveTargetRef.current = null;
     if (!zone || !self) return;
     insideConferenceZoneIdsRef.current.add(zoneId);
+    // 会議室入室時は在席ステータスを「取込み中」に自動で切り替える
+    // (退室時はmoveLoop側のinsideConferenceZoneIdsRef.deleteの直後で、
+    // manualStatusRef.currentへ戻す)。
+    applyAutoPresenceStatus("busy");
 
     const dir = MEETING_ENTRY_DIRECTION[self.dir];
     const halfW = AVATAR_HITBOX_WIDTH / 2;
@@ -6649,27 +6675,43 @@ export default function AvatarSpace({
     channelRef.current?.track(updated);
   }, []);
 
+  // タブ非表示からの復帰時など、「離席中」等の一時的な自動ステータスを
+  // 解除する際に本来戻すべき値。会議室(kind: "conference")に今も
+  // 物理的にいる間は「取込み中」を維持し、いなければ自分が設定している
+  // ステータスへ戻す。
+  const getContextualStatus = useCallback((): PresenceStatus => {
+    return insideConferenceZoneIdsRef.current.size > 0
+      ? "busy"
+      : manualStatusRef.current;
+  }, []);
+
   // ---- タブ非アクティブ・アプリのバックグラウンド化への対応 ----
   // 永遠ログイン状態(PC)・永遠入室状態を防ぐため。
   // PC(①): マイク・ビデオ通話・画面共有のいずれかがON中は、タブを
   //   切り替えてもステータス変更やカウントダウンは一切行わない
   //   (isActiveCallでガード。既存のisVoiceCallActiveのような周囲判定
   //   ではなく、トグルの生の状態で見る)。いずれもOFFの状態でタブを
-  //   非アクティブにした瞬間、即座にステータスを「離席中」にし、8時間
-  //   経過でルームから強制退出させる(handleLeaveRoomと同じ、アカウント
-  //   のログアウトはしない後始末)。タブに戻ると即座に「通話可能」へ戻す。
+  //   非アクティブにしても即座には離席中にせず、DESKTOP_AUTO_AWAY_SECONDS
+  //   (10分)経過した時点で初めてステータスを「離席中」にする(2026-09
+  //   報告:一瞬タブを切り替えただけで離席中表示になるのを避けるため)。
+  //   さらにDESKTOP_AUTO_LOGOUT_SECONDS(8時間、非表示になった時点から
+  //   起算)経過でルームから強制退出させる(handleLeaveRoomと同じ、
+  //   アカウントのログアウトはしない後始末)。タブに戻ると、会議室に
+  //   まだいれば「取込み中」、いなければ自分が設定しているステータスへ
+  //   即座に戻す(getContextualStatus参照)。
   // スマホ(③): PCと異なり、マイク・ビデオがONでも容赦なく画面オフ/
   //   バックグラウンド化した瞬間に強制マイクオフ・ビデオオフにし、
-  //   ステータスを「離席中」にする(2026-09報告: スマホは画面を伏せても
-  //   通話中判定のまま何もしない旧仕様だと、気づかず延々とマイクが
-  //   繋がりっぱなしになってしまうため)。10分間その状態が続いたら
+  //   即座にステータスを「離席中」にする(2026-09報告: スマホは画面を
+  //   伏せても通話中判定のまま何もしない旧仕様だと、気づかず延々と
+  //   マイクが繋がりっぱなしになってしまうため。PCと異なり遅延を
+  //   挟まない)。MOBILE_AUTO_LOGOUT_SECONDS(10分)その状態が続いたら
   //   ルームから退室させる(ログアウトはしない・ロビーに戻すだけ。
   //   従来の「アカウントごとログアウト」仕様は廃止した)。タブに戻れば
-  //   在席状態のみ「通話可能」に戻す(マイク・ビデオはOFFのままとし、
-  //   自動では再開しない)。
-  // 自動で「離席中」にした場合のみ、復帰時に「通話可能」へ戻す
-  // (autoAwayRefで判定。ユーザーが手動で「取込み中」等を選んでいた
-  // 場合にタブ復帰で勝手に上書きしてしまわないようにするため)。
+  //   在席状態のみ復帰させる(マイク・ビデオはOFFのままとし、自動では
+  //   再開しない)。
+  // 自動で「離席中」にした場合のみ、復帰時に元のステータスへ戻す
+  // (autoAwayRef/awayAppliedRefで判定。ユーザーが手動で「取込み中」等を
+  // 選んでいた場合にタブ復帰で勝手に上書きしてしまわないようにするため)。
   // hiddenSinceRefは実際に非表示になった時刻(壁時計)を覚えておき、復帰時に
   // 実経過時間を計算するために使う(2026-09報告: スマホは画面オフ中に
   // OSがタブ自体をサスペンドし、setTimeoutが時間通り発火しない/全く発火
@@ -6683,6 +6725,9 @@ export default function AvatarSpace({
   const isActiveCall = micEnabled || inCall || screenSharing;
   const autoAwayRef = useRef(false);
   const hiddenSinceRef = useRef<number | null>(null);
+  // PC限定:今回の非表示セッションで、実際に「離席中」を適用済みかどうか
+  // (DESKTOP_AUTO_AWAY_SECONDSの猶予中はfalseのまま)。
+  const awayAppliedRef = useRef(false);
   useEffect(() => {
     if (!joined) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -6703,8 +6748,37 @@ export default function AvatarSpace({
       clearTimer();
       autoAwayRef.current = false;
       hiddenSinceRef.current = null;
+      awayAppliedRef.current = false;
       setReceptionSuspended(false);
       handleLeaveRoom();
+    };
+
+    // PC専用:離席中への切り替え(10分後)・強制退出(8時間後)の2つの
+    // タイマーを、hiddenSinceRefからの経過時間を基準に張り直す。
+    // enterHiddenの再入(blur/visibilitychangeの重複発火)でも呼ばれる
+    // ため、毎回経過時間を計算し直すことで猶予が延びたりリセットされたり
+    // しないようにする。
+    const scheduleDesktopTimers = () => {
+      const now = Date.now();
+      const hiddenSince = hiddenSinceRef.current ?? now;
+      const elapsed = now - hiddenSince;
+      const awayThresholdMs = DESKTOP_AUTO_AWAY_SECONDS * 1000;
+      const leaveThresholdMs = DESKTOP_AUTO_LOGOUT_SECONDS * 1000;
+
+      if (!awayAppliedRef.current && elapsed < awayThresholdMs) {
+        timer = setTimeout(() => {
+          awayAppliedRef.current = true;
+          applyAutoPresenceStatus("away");
+          scheduleDesktopTimers();
+        }, awayThresholdMs - elapsed);
+        return;
+      }
+      if (!awayAppliedRef.current) {
+        awayAppliedRef.current = true;
+        applyAutoPresenceStatus("away");
+      }
+      const leaveRemainingMs = Math.max(0, leaveThresholdMs - elapsed);
+      timer = setTimeout(doLeave, leaveRemainingMs);
     };
 
     const enterHidden = () => {
@@ -6715,7 +6789,12 @@ export default function AvatarSpace({
       if (!autoAwayRef.current) {
         autoAwayRef.current = true;
         hiddenSinceRef.current = now;
-        applyAutoPresenceStatus("away");
+        // スマホは即座に離席中にする(下のmobile分岐)。PCは
+        // scheduleDesktopTimers側で猶予後に切り替えるため、ここでは
+        // まだ適用しない。
+        if (mobile) {
+          applyAutoPresenceStatus("away");
+        }
       }
       if (mobile) {
         // 2026-09報告: マイクを初めてONにする際、getUserMediaの許可
@@ -6740,13 +6819,13 @@ export default function AvatarSpace({
         // と、画面がオフでも近くにいる相手のマイク音声がスピーカーから
         // 鳴り続けてしまう(2026-09報告)。
         setReceptionSuspended(true);
+        const thresholdMs = MOBILE_AUTO_LOGOUT_SECONDS * 1000;
+        const elapsed = now - (hiddenSinceRef.current ?? now);
+        const remainingMs = Math.max(0, thresholdMs - elapsed);
+        timer = setTimeout(doLeave, remainingMs);
+      } else {
+        scheduleDesktopTimers();
       }
-      const thresholdMs =
-        (mobile ? MOBILE_AUTO_LOGOUT_SECONDS : DESKTOP_AUTO_LOGOUT_SECONDS) *
-        1000;
-      const elapsed = now - (hiddenSinceRef.current ?? now);
-      const remainingMs = Math.max(0, thresholdMs - elapsed);
-      timer = setTimeout(doLeave, remainingMs);
     };
 
     const enterVisible = () => {
@@ -6763,8 +6842,13 @@ export default function AvatarSpace({
       }
       autoAwayRef.current = false;
       hiddenSinceRef.current = null;
+      awayAppliedRef.current = false;
       setReceptionSuspended(false);
-      applyAutoPresenceStatus("available");
+      // 会議室にまだいれば「取込み中」、いなければ自分が設定している
+      // ステータスへ戻す。離席中を一度も適用していなかった場合(PCの
+      // 10分未満での復帰)はステータスが変化していないため、この呼び出し
+      // はapplyAutoPresenceStatus内の早期returnにより実質的に何もしない。
+      applyAutoPresenceStatus(getContextualStatus());
       // receptionSuspendedの変化に反応する購読effectはこの直後に走るが、
       // ちょうどLiveKit SDKが裏で再接続中だと反映されないことがあるため
       // (RoomEvent.Reconnectedハンドラ参照)、少し待ってからもう一度
@@ -6833,6 +6917,7 @@ export default function AvatarSpace({
       // 残っていた場合の保険)。
       autoAwayRef.current = false;
       hiddenSinceRef.current = null;
+      awayAppliedRef.current = false;
     }
     document.addEventListener("visibilitychange", reconcile);
     window.addEventListener("blur", reconcile);
@@ -6854,6 +6939,7 @@ export default function AvatarSpace({
     stopVideoCall,
     stopScreenShare,
     applyAutoPresenceStatus,
+    getContextualStatus,
   ]);
 
   // 前回の記録時刻からの実経過時間を計算してサーバーへ加算する。以前は
@@ -7001,6 +7087,8 @@ export default function AvatarSpace({
     selfState.current.name = name;
     selfState.current.avatarImage = settingsAvatar;
     selfState.current.status = settingsStatus;
+    // 会議室退室時・タブ復帰時に戻す先を、今回の選択で更新しておく。
+    manualStatusRef.current = settingsStatus;
     selfState.current.message = settingsMessageInput
       .trim()
       .slice(0, MESSAGE_MAX_LENGTH);
