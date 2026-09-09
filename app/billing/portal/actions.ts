@@ -2,8 +2,9 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import type Stripe from "stripe";
 import { createClient } from "@/lib/supabase/server";
-import { getStripe } from "@/lib/stripe";
+import { getStripe, priceIdForPlan, isPaidPlanId } from "@/lib/stripe";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -19,7 +20,15 @@ function getBaseUrl(): string {
 // 既に有料プラン契約中のアカウントのプラン変更は、この経路に一本化する
 // (方針確認済み。app/billing/checkout/actions.tsの新規Checkoutは
 // 初回契約専用)。
-export async function createPortalSession(): Promise<ActionResult> {
+//
+// targetPlanIdを渡すと(=管理画面の特定プランカードからの変更操作)、
+// ポータルの「現在の契約状況」トップページを経由せず、そのプランへの
+// 切り替え確認画面(flow_data: subscription_update_confirm)へ直接
+// 遷移させる。省略時(支払い方法の管理・請求履歴の確認・解約等)は
+// 従来通りポータルのトップページへ遷移する。
+export async function createPortalSession(
+  targetPlanId?: string,
+): Promise<ActionResult> {
   const supabase = createClient();
   const {
     data: { user },
@@ -28,7 +37,7 @@ export async function createPortalSession(): Promise<ActionResult> {
 
   const { data: account } = await supabase
     .from("accounts")
-    .select("id, stripe_customer_id")
+    .select("id, stripe_customer_id, stripe_subscription_id")
     .eq("owner_user_id", user.id)
     .maybeSingle();
   if (!account) return { ok: false, error: "アカウントが見つかりません" };
@@ -36,11 +45,36 @@ export async function createPortalSession(): Promise<ActionResult> {
     return { ok: false, error: "お支払い情報がまだ登録されていません" };
   }
 
+  const stripe = getStripe();
   let sessionUrl: string | null;
   try {
-    const session = await getStripe().billingPortal.sessions.create({
+    let flowData: Stripe.BillingPortal.SessionCreateParams.FlowData | undefined;
+    if (
+      targetPlanId &&
+      isPaidPlanId(targetPlanId) &&
+      account.stripe_subscription_id
+    ) {
+      // 現在のサブスクリプションアイテムIDはaccountsテーブルには保存
+      // していないため、Stripe側から都度取得する。
+      const subscription = await stripe.subscriptions.retrieve(
+        account.stripe_subscription_id,
+      );
+      const itemId = subscription.items.data[0]?.id;
+      if (itemId) {
+        flowData = {
+          type: "subscription_update_confirm",
+          subscription_update_confirm: {
+            subscription: account.stripe_subscription_id,
+            items: [{ id: itemId, price: priceIdForPlan(targetPlanId) }],
+          },
+        };
+      }
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
       customer: account.stripe_customer_id,
       return_url: `${getBaseUrl()}/admin`,
+      ...(flowData ? { flow_data: flowData } : {}),
     });
     sessionUrl = session.url;
   } catch (err) {
