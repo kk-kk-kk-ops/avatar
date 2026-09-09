@@ -10,7 +10,6 @@ import {
   getAvatarSpritePath,
   getAvatarThumbnail,
 } from "@/lib/types";
-import { MicIcon } from "./MicButton";
 
 type Props = {
   player: PlayerState;
@@ -60,10 +59,6 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   // 吹き出しは設定画面のチェックボックスで表示/非表示が切り替わる常時
   // 表示方式(自動で消えるタイマーは持たない)。
   const showBubble = !!player.showMessage && !!player.message;
-  // マイクバッジはON中(通話ボタンを押している間)だけ表示する。OFF時は
-  // 何も表示しない(手動ミュート・作業エリアでの強制ミュートいずれの
-  // 場合も同様)。
-  const showMicBadge = player.micOn === true;
   const avatarImage = player.avatarImage || AVATAR_IMAGES[0];
   const spriteSrc = getAvatarSpritePath(avatarImage, player.dir);
 
@@ -125,14 +120,6 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         onError={() => setSpriteLoadFailed(true)}
         className="h-full w-full object-contain drop-shadow-md"
       />
-
-      {/* マイクON中の状態(相手にも見える)。OFF時はバッジを出さない。
-          コントロールバーのMicButtonと同じアイコンを使う。 */}
-      {showMicBadge && (
-        <span className="absolute left-0 top-0 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white shadow">
-          <MicIcon enabled size={10} />
-        </span>
-      )}
     </div>
   );
 });
