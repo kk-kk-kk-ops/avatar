@@ -7385,11 +7385,20 @@ export default function AvatarSpace({
   // ---- カメラ計算:自分を画面中央に固定し、端では止めてアイコン側が動くようにする ----
   // スマホ(画面幅が狭い)場合は少し縮小(ズームアウト)して周囲が見えるようにする。
   const selfPlayer = players[selfId.current];
+  const selfZoneKind = selfPlayer?.meetingZoneId
+    ? meetingZones.find((z) => z.id === selfPlayer.meetingZoneId)?.kind
+    : undefined;
   // 作業エリア内かどうか(マイク・ビデオ通話・画面共有ボタンをグレーアウトするため)。
-  const selfInWorkZone = selfPlayer?.meetingZoneId
-    ? meetingZones.find((z) => z.id === selfPlayer.meetingZoneId)?.kind ===
-      "work"
-    : false;
+  const selfInWorkZone = selfZoneKind === "work";
+  // 会議室・ミーティングエリア・全体アナウンスエリアのいずれかにいるか
+  // どうか。これらのエリアはエリア全体が音声の届く範囲になるため、
+  // 距離ベースの近接サークル(緑円)は意味を持たない=表示しない
+  // (2026-09報告)。エリアを出れば、マイク・ビデオ通話のいずれかが
+  // ONの場合に限り通常通り近接サークルを表示する。
+  const selfInAreaWideVoiceZone =
+    selfZoneKind === "conference" ||
+    selfZoneKind === "meeting" ||
+    selfZoneKind === "announcement";
   // 「会議室」(kind: conference)に今いるかどうか。「会議画面」機能の
   // 常時表示プレビュー(会議室スタイル)・画面共有の排他制御はすべて
   // このフラグで判定する。ミーティングエリア(kind: meeting)は通話・
@@ -8170,11 +8179,15 @@ export default function AvatarSpace({
             ))}
 
             {/* 自分の音声が届く範囲の目安(マイクONまたはビデオ通話ON時に表示。
+                ただし会議室・ミーティングエリア・全体アナウンスエリア内は
+                エリア全体が音声の届く範囲のため非表示にする。
                 位置は毎フレームDOM操作で更新) */}
             <div
               ref={proximityCircleRef}
               className={`pointer-events-none absolute left-0 top-0 rounded-full border-2 border-emerald-400/40 ${
-                micEnabled || inCall ? "" : "hidden"
+                (micEnabled || inCall) && !selfInAreaWideVoiceZone
+                  ? ""
+                  : "hidden"
               }`}
               style={{
                 width: PROXIMITY_RADIUS * 2,
