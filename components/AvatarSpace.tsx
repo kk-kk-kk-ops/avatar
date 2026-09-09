@@ -7952,7 +7952,7 @@ export default function AvatarSpace({
                 影響しない)。 */}
             {meetingZones.map((zone) => {
               const isSelfInside = selfPlayer?.meetingZoneId === zone.id;
-              const borderWidthClass = isSelfInside ? "border-[3px]" : "border";
+              const borderWidthClass = isSelfInside ? "border-2" : "border";
               return zone.kind === "conference" ? (
                 (() => {
                   const locker = getConferenceZoneLocker(zone.id, players);
