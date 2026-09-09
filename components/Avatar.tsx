@@ -10,6 +10,7 @@ import {
   getAvatarSpritePath,
   getAvatarThumbnail,
 } from "@/lib/types";
+import { MicIcon } from "./MicButton";
 
 type Props = {
   player: PlayerState;
@@ -125,10 +126,11 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         className="h-full w-full object-contain drop-shadow-md"
       />
 
-      {/* マイクON中の状態(相手にも見える)。OFF時はバッジを出さない。 */}
+      {/* マイクON中の状態(相手にも見える)。OFF時はバッジを出さない。
+          コントロールバーのMicButtonと同じアイコンを使う。 */}
       {showMicBadge && (
-        <span className="absolute left-0 top-0 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] shadow">
-          🎤
+        <span className="absolute left-0 top-0 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white shadow">
+          <MicIcon enabled size={10} />
         </span>
       )}
     </div>
