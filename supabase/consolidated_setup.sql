@@ -2841,6 +2841,35 @@ alter table public.login_lockouts enable row level security;
 -- (service_role以外は一切アクセスできない)。
 
 
+-- ------------------------------------------------------------
+-- 18. stripe_webhook_events: Stripe Webhook(app/api/stripe/webhook/
+--     route.ts)の重複処理防止テーブル。StripeはHTTPレスポンスが
+--     非2xx/タイムアウトの場合、同じイベントを再送するため、
+--     event.id(常に同一イベントなら同じ値)を主キーにしたこのテーブルで
+--     「処理済みか」を判定する。
+--
+--     succeeded列を持たせているのは、「先にinsertしてから処理し、
+--     途中で失敗したら再送時にunique制約違反で黙ってスキップしてしまう」
+--     という単純な設計だと、処理が途中で失敗した場合の正当な再送まで
+--     二度と実行されなくなる欠陥があるため。on conflict (id) do nothingで
+--     行だけ確保し、succeeded=trueでなければ処理を進め、処理が完全に
+--     成功した場合のみsucceeded=trueに更新する(=falseのまま残っていれば、
+--     次の再送で正しく再試行される)。
+--
+--     クライアントからは一切参照しないため、RLSは有効化した上でポリシーは
+--     1つも作らない(service_roleキーのみ読み書き可能)。
+-- ------------------------------------------------------------
+create table if not exists public.stripe_webhook_events (
+  id text primary key, -- StripeのEvent ID (evt_...)
+  type text not null,
+  succeeded boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.stripe_webhook_events enable row level security;
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。

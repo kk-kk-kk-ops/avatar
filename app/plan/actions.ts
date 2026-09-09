@@ -1,12 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
+import { provisionAccountForUser } from "@/lib/accountProvisioning";
 import { FREE_TRIAL_DAYS } from "@/lib/types";
-import { LIVEKIT_SERVERS } from "@/lib/livekitServers";
-
-// β版の運用制限:全顧客合計の同時接続数がこれに達したら新規契約を停止する。
-const BETA_ONLINE_CAP = 1000;
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
 // 差し替えられてしまう(Next.jsの仕様)ため、throwではなく戻り値で
@@ -14,7 +10,9 @@ const BETA_ONLINE_CAP = 1000;
 type ActionResult = { ok: true } | { ok: false; error: string };
 
 // 無料お試し(7日間・スタンダードプラン相当)を開始する。
-// アカウント作成 → 自分をadminとして紐付け → 初期ルームを1つ作成、の順に行う。
+// アカウント作成 → 自分をadminとして紐付け → 初期ルームを1つ作成、の実処理は
+// lib/accountProvisioning.tsに共通化されている(有料プランを直接選んだ場合の
+// Checkout Session作成前にも同じ処理が必要なため)。
 export async function startFreeTrial(): Promise<ActionResult> {
   const supabase = createClient();
   const {
@@ -22,87 +20,11 @@ export async function startFreeTrial(): Promise<ActionResult> {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "ログインが必要です" };
 
-  // 既にアカウントを持っていれば作り直さない(二重送信・ブラウザバック対策)
-  const { data: existingProfile } = await supabase
-    .from("profiles")
-    .select("account_id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (existingProfile?.account_id) return { ok: true };
-
-  // β版の同時接続数上限チェック(全プラン共通の新規契約ゲート)
-  const { data: onlineCount, error: countError } = await supabase.rpc(
-    "get_online_session_count",
-  );
-  if (!countError && (onlineCount ?? 0) >= BETA_ONLINE_CAP) {
-    return {
-      ok: false,
-      error:
-        "現在アクセスが集中しているため、新規のご契約を一時的に停止しています。しばらくしてから再度お試しください。",
-    };
-  }
-
   const trialEndsAt = new Date(
     Date.now() + FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  // 新規契約に、最もアカウント数が少ない物理LiveKitサーバーをラウンドロビンで
-  // 割り当てる(契約時点で固定し、以後は変わらない。単一送信元からの
-  // 同時接続50人規模でWebARENA Indigo側の遮断が発生することが判明したため。
-  // lib/livekitServers.ts参照。マスター画面から手動で変更することも可能)。
-  const { data: serverCounts } = await supabase.rpc(
-    "count_accounts_by_livekit_server",
-  );
-  const countByServerId = new Map(
-    (serverCounts as Array<{ livekit_server_id: string; account_count: number }> | null ?? []).map(
-      (row) => [row.livekit_server_id, row.account_count],
-    ),
-  );
-  const assignedServerId = LIVEKIT_SERVERS.reduce((leastLoaded, server) =>
-    (countByServerId.get(server.id) ?? 0) <
-    (countByServerId.get(leastLoaded.id) ?? 0)
-      ? server
-      : leastLoaded,
-  ).id;
-
-  const { data: account, error: accountError } = await supabase
-    .from("accounts")
-    .insert({
-      name: "Globy",
-      plan: "free",
-      trial_ends_at: trialEndsAt,
-      owner_user_id: user.id,
-      livekit_server_id: assignedServerId,
-    })
-    .select("id")
-    .single();
-
-  if (accountError || !account) {
-    return { ok: false, error: "アカウントの作成に失敗しました" };
-  }
-
-  // roleは本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
-  // 対象列のため、service_roleクライアントで更新する(直前に自分がowner_user_id
-  // として新規accountsを作成できたこと自体がここまでの正規フローの証跡なので、
-  // この1回の書き込みに限りRLS/トリガーをバイパスしても安全)。
-  const { error: profileError } = await createServiceRoleClient()
-    .from("profiles")
-    .update({ account_id: account.id, role: "admin" })
-    .eq("user_id", user.id);
-
-  if (profileError) {
-    return { ok: false, error: "プロフィールの更新に失敗しました" };
-  }
-
-  const { error: roomError } = await supabase.from("rooms").insert({
-    account_id: account.id,
-    name: "Globy",
-    preview_image: "/map-background.webp",
-  });
-
-  if (roomError) {
-    return { ok: false, error: "初期ルームの作成に失敗しました" };
-  }
-
+  const result = await provisionAccountForUser(supabase, user, { trialEndsAt });
+  if (!result.ok) return result;
   return { ok: true };
 }

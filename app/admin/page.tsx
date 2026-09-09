@@ -18,7 +18,9 @@ export default async function AdminPage() {
 
   const { data: account } = await supabase
     .from("accounts")
-    .select("id, name, plan, trial_ends_at, invite_token, invite_inviter_name")
+    .select(
+      "id, name, plan, trial_ends_at, invite_token, invite_inviter_name, stripe_customer_id",
+    )
     .eq("id", state.accountId)
     .single();
 
@@ -91,6 +93,7 @@ export default async function AdminPage() {
       userEmail={user.email ?? ""}
       isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
       bannedParticipants={bannedParticipants}
+      hasStripeCustomer={!!account?.stripe_customer_id}
     />
   );
 }

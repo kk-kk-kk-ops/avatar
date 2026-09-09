@@ -38,6 +38,7 @@ export default function AdminDashboard({
   userEmail,
   isDebugPlanSwitcherAllowed,
   bannedParticipants,
+  hasStripeCustomer,
 }: {
   rooms: Room[];
   plan: PlanId;
@@ -50,6 +51,7 @@ export default function AdminDashboard({
   userEmail: string;
   isDebugPlanSwitcherAllowed: boolean;
   bannedParticipants: BannedParticipant[];
+  hasStripeCustomer: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -173,6 +175,7 @@ export default function AdminDashboard({
               plan={plan}
               trialEndsAt={trialEndsAt}
               isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
+              hasStripeCustomer={hasStripeCustomer}
             />
           )}
         </div>
