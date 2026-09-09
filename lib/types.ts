@@ -199,7 +199,7 @@ export const PLANS: Record<
   }
 > = {
   free: {
-    label: "無料",
+    label: "Free",
     subLabel:
       "（ミーティングルーム1つ　人数上限：5名／画面共有・ビデオ通話：1日5分まで／音声通話：無制限）",
     priceLabel: "0円/月",
@@ -213,7 +213,7 @@ export const PLANS: Record<
     historyRetentionLabel: "7日",
   },
   light: {
-    label: "ライト",
+    label: "Light",
     subLabel:
       "（ミーティングルーム1つ　人数上限：10名／画面共有・ビデオ通話：1日45分まで／音声通話：無制限）",
     priceLabel: "2,980円/月",
@@ -227,7 +227,7 @@ export const PLANS: Record<
     historyRetentionLabel: "1ヶ月",
   },
   standard: {
-    label: "スタンダード",
+    label: "Standard",
     subLabel:
       "（ミーティングルーム1つ　人数上限：15名／画面共有・ビデオ通話：1日90分まで／音声通話：無制限）",
     priceLabel: "5,980円/月",
@@ -241,7 +241,7 @@ export const PLANS: Record<
     historyRetentionLabel: "1ヶ月",
   },
   pro: {
-    label: "プロ",
+    label: "Pro",
     subLabel:
       "（ミーティングルーム1つ　人数上限：25名／画面共有・ビデオ通話・音声通話：無制限）",
     priceLabel: "9,800円/月",
