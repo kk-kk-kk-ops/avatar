@@ -1,22 +1,9 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { timingSafeEqualString } from "@/lib/timingSafeEqualString";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-// 単純な文字列比較(===)は先頭バイトの不一致で早期に処理が終わるため、
-// 理論上タイミング攻撃(応答時間の差からCRON_SECRETを1バイトずつ推測する)
-// の余地がある(2026-09 QA指摘。実際の攻撃可能性はネットワークジッタが
-// あるHTTPS越しでは極めて低いが、ベストプラクティスとして定数時間比較に
-// する)。長さが異なる場合はtimingSafeEqualが例外を投げるため、その場合は
-// 一致しないものとして扱う。
-function timingSafeEqualString(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}
 
 // チャット履歴の保管期間(プラン別)を超えたメッセージと、添付画像の
 // Storageオブジェクトを削除する。Vercel Cronから毎日4:00 JST(19:00 UTC。

@@ -6,7 +6,7 @@ import { LIVEKIT_SERVERS } from "@/lib/livekitServers";
 const BETA_ONLINE_CAP = 1000;
 
 type ProvisionResult =
-  | { ok: true; accountId: string }
+  | { ok: true; accountId: string; created: boolean }
   | { ok: false; error: string };
 
 // ユーザーに紐づくaccounts行が無ければ作る共通処理。無料お試し
@@ -15,10 +15,12 @@ type ProvisionResult =
 // 呼ばれる。accounts.planは常に'free'で作成する(DBトリガーがINSERT時の
 // free以外を拒否するため)。有料プランで契約する場合の実際のplan反映は、
 // Stripe Webhookがservice_roleクライアント経由で後から行う。
+// createdは「今回このアカウントを新規作成したか」を表す(既存ユーザーの
+// 再訪問時は早期returnするため常にfalse)。呼び出し元のstartFreeTrialは、
+// これを使って30日間無料トライアルを「初回のみ」付与する。
 export async function provisionAccountForUser(
   supabase: SupabaseClient,
   user: { id: string },
-  opts: { trialEndsAt: string | null },
 ): Promise<ProvisionResult> {
   // 既にアカウントを持っていれば作り直さない(二重送信・ブラウザバック対策)
   const { data: existingProfile } = await supabase
@@ -27,7 +29,7 @@ export async function provisionAccountForUser(
     .eq("user_id", user.id)
     .maybeSingle();
   if (existingProfile?.account_id) {
-    return { ok: true, accountId: existingProfile.account_id };
+    return { ok: true, accountId: existingProfile.account_id, created: false };
   }
 
   // β版の同時接続数上限チェック(全プラン共通の新規契約ゲート)
@@ -64,7 +66,6 @@ export async function provisionAccountForUser(
     .insert({
       name: "Globy",
       plan: "free",
-      trial_ends_at: opts.trialEndsAt,
       owner_user_id: user.id,
       livekit_server_id: assignedServerId,
     })
@@ -98,5 +99,5 @@ export async function provisionAccountForUser(
     return { ok: false, error: "初期ルームの作成に失敗しました" };
   }
 
-  return { ok: true, accountId: account.id };
+  return { ok: true, accountId: account.id, created: true };
 }

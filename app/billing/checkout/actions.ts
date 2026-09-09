@@ -29,9 +29,7 @@ export async function createCheckoutSession(planId: string): Promise<ActionResul
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "ログインが必要です" };
 
-  const provision = await provisionAccountForUser(supabase, user, {
-    trialEndsAt: null,
-  });
+  const provision = await provisionAccountForUser(supabase, user);
   if (!provision.ok) return provision;
   const accountId = provision.accountId;
 

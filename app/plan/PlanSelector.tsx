@@ -73,6 +73,13 @@ export default function PlanSelector() {
                 <li>チャット履歴保管期間: {plan.historyRetentionLabel}</li>
                 <li>ルーム: {formatPlanRoomLabel(plan.roomCreation)}</li>
               </ul>
+              {planId === "free" && (
+                <p className="mt-2 rounded-md bg-emerald-50 px-2 py-1.5 text-[10px] leading-snug text-emerald-700">
+                  初回30日間はStandardプラン相当の内容を無料でご利用いただけます
+                  (クレジットカード登録不要)。以降は上記の無料プランの内容に
+                  自動的に切り替わります。
+                </p>
+              )}
             </label>
           );
         })}

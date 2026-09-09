@@ -178,6 +178,13 @@ async function applyPlanChange(
   const update: Record<string, unknown> = {
     plan: planId,
     stripe_subscription_id: subscriptionId,
+    // 30日間無料トライアル(standardプラン相当)中のアカウントが期限前に
+    // Stripeで実際に契約した場合、trial_ends_atを残したままにすると
+    // 期限日にapp/api/cron/expire-trials/route.tsが「トライアル期限切れ」
+    // と誤判定し、正規の有料契約を巻き戻しかねない。Stripeが実際の契約
+    // 状態のソースになった時点で無効化する(解約でplan='free'に戻る
+    // 場合も含め、Stripe駆動のプラン変更では常にクリアする)。
+    trial_ends_at: null,
   };
   if (customerId) update.stripe_customer_id = customerId;
 

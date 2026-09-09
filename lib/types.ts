@@ -273,7 +273,8 @@ export function formatPlanRoomLabel(
     : "テンプレートのみ";
 }
 
-export const FREE_TRIAL_DAYS = 7;
+// 30日間無料トライアル(standardプラン相当・カード登録不要)の期間。
+export const TRIAL_DAYS = 30;
 
 // チャットへの画像添付、1日あたりのアップロード上限枚数(全プラン共通)。
 export const DAILY_IMAGE_UPLOAD_LIMIT = 30;
