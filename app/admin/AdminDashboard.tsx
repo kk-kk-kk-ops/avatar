@@ -162,6 +162,13 @@ export default function AdminDashboard({
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto bg-slate-50 p-6 pt-20 md:pt-6">
+        {trialEndsAt && (
+          <div className="mx-auto mb-4 max-w-3xl rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+            無料トライアル期間中です(
+            {new Date(trialEndsAt).toLocaleDateString("ja-JP")}まで)。
+            期間終了後は自動的に無料プランに戻ります。
+          </div>
+        )}
         <div className="mx-auto max-w-3xl">
           {tab === "dashboard" && (
             <OnlineCount rooms={rooms} bannedParticipants={bannedParticipants} />

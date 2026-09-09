@@ -89,12 +89,19 @@ export default function BillingPanel({
     <div className="space-y-6">
       <div>
         <p className="mb-1 text-xs font-semibold text-slate-500">契約プラン</p>
-        {trialEndsAt && (
-          <p className="mb-3 text-xs text-amber-600">
-            無料お試しは{new Date(trialEndsAt).toLocaleDateString("ja-JP")}
-            までです。
-          </p>
-        )}
+        {trialEndsAt && (() => {
+          const daysRemaining = Math.max(
+            0,
+            Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86400000),
+          );
+          return (
+            <p className="mb-3 text-xs text-amber-600">
+              無料トライアル期間:残り{daysRemaining}日
+              ({new Date(trialEndsAt).toLocaleDateString("ja-JP")}まで)。
+              期間終了後は自動的に無料プランに戻ります。
+            </p>
+          );
+        })()}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {PLAN_DISPLAY_ORDER.map((id) => {
             const info = PLANS[id];

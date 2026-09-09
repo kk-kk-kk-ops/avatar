@@ -31,6 +31,25 @@ create table if not exists public.accounts (
 
 alter table public.accounts enable row level security;
 
+-- 新しい30日間無料お試し(standardプラン相当)の「初回限定」を保証する
+-- フラグ。列がまだ無い場合(=このブロックを初めて実行する場合)にのみ、
+-- 既存の全accounts行にtrial_used = trueを立ててから列を追加する。
+-- 旧来の7日間お試しを経由した行・Stripe決済のみで契約した行のいずれも、
+-- 新しい30日お試しに新規に対象になってしまわないようにするため
+-- (=既存アカウントは全て「使用済み」扱いにする)。
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'accounts'
+      and column_name = 'trial_used'
+  ) then
+    alter table public.accounts
+      add column trial_used boolean not null default false;
+    update public.accounts set trial_used = true;
+  end if;
+end $$;
+
 -- ------------------------------------------------------------
 -- 1b. 権限昇格防止トリガー(関数本体+accounts分)。
 --     profiles.role/is_master、accounts.planは「本人の行である」ことしか
@@ -99,9 +118,21 @@ begin
       if new.plan is distinct from 'free' then
         raise exception '新規契約はfreeプランでのみ作成できます';
       end if;
+      -- 30日間無料トライアル(2026-09追加)のtrial_ends_at/trial_usedも、
+      -- plan列と同じ理由でこの経路からの設定を禁止する。ここを保護しないと、
+      -- ログイン済みユーザーがPostgREST経由でtrial_ends_atを自由な未来の
+      -- 日付に書き換え、Cron(app/api/cron/expire-trials)によるダウン
+      -- グレードを無期限に回避できてしまう。
+      if new.trial_ends_at is not null or new.trial_used is true then
+        raise exception 'trial_ends_at/trial_usedはこの経路からは設定できません';
+      end if;
     elsif tg_op = 'UPDATE' then
       if new.plan is distinct from old.plan then
         raise exception 'planはこの経路からは変更できません';
+      end if;
+      if new.trial_ends_at is distinct from old.trial_ends_at
+         or new.trial_used is distinct from old.trial_used then
+        raise exception 'trial_ends_at/trial_usedはこの経路からは変更できません';
       end if;
     end if;
   end if;
