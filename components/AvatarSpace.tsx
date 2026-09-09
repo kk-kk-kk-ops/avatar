@@ -7695,6 +7695,7 @@ export default function AvatarSpace({
                   widthPx={210}
                   heightPx={140}
                   isSelf
+                  micOn={micEnabled}
                 />
                 {inCall && (
                   <button
@@ -7716,6 +7717,7 @@ export default function AvatarSpace({
                   stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
                   widthPx={210}
                   heightPx={140}
+                  micOn={p.micOn === true}
                 />
               ))}
             </div>
@@ -7878,6 +7880,7 @@ export default function AvatarSpace({
                       widthPx={210}
                       heightPx={140}
                       isSelf
+                      micOn={micEnabled}
                     />
                     {otherPlayers.map((p) => (
                       <VideoTile
@@ -7886,6 +7889,7 @@ export default function AvatarSpace({
                         stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
                         widthPx={210}
                         heightPx={140}
+                        micOn={p.micOn === true}
                       />
                     ))}
                   </div>
@@ -8005,6 +8009,7 @@ export default function AvatarSpace({
                         widthPx={meetingTileWidth}
                         heightPx={meetingTileHeight}
                         isSelf
+                        micOn={micEnabled}
                       />
                       {otherPlayers.map((p) => (
                         <VideoTile
@@ -8013,6 +8018,7 @@ export default function AvatarSpace({
                           stream={p.inCall ? (remoteCallStreams[p.id] ?? null) : null}
                           widthPx={meetingTileWidth}
                           heightPx={meetingTileHeight}
+                          micOn={p.micOn === true}
                         />
                       ))}
                     </div>
