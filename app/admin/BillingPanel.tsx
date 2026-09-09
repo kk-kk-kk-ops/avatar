@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { PLANS, formatPlanDailyLimit, formatPlanRoomLabel, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
+import { createCheckoutSession } from "@/app/billing/checkout/actions";
+import { createPortalSession } from "@/app/billing/portal/actions";
 
 const PLAN_DISPLAY_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
 
@@ -10,12 +12,47 @@ export default function BillingPanel({
   plan,
   trialEndsAt,
   isDebugPlanSwitcherAllowed,
+  hasStripeCustomer,
 }: {
   plan: PlanId;
   trialEndsAt: string | null;
   isDebugPlanSwitcherAllowed: boolean;
+  hasStripeCustomer: boolean;
 }) {
-  const [showStripeNotice, setShowStripeNotice] = useState(false);
+  // 契約プランカード・支払い方法ボタンの両方から共有するpending/error状態。
+  // "portal"は「支払い方法を管理」ボタン、プランIDはそのプランカードの
+  // クリックを表す。
+  const [billingPending, setBillingPending] = useState<string | null>(null);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [, startBillingTransition] = useTransition();
+
+  const handlePlanCardClick = (targetPlan: PlanId) => {
+    if (targetPlan === plan) return;
+    setBillingError(null);
+    setBillingPending(targetPlan);
+    startBillingTransition(async () => {
+      // 既に何らかの有料プランで契約中の場合、プラン変更・freeへの
+      // ダウングレード(=解約)はどちらもCustomer Portal経由にする
+      // (方針確認済み)。まだfreeのまま(契約したことが無い)場合のみ、
+      // 新しいCheckout Sessionを作る。
+      const result =
+        plan !== "free"
+          ? await createPortalSession()
+          : await createCheckoutSession(targetPlan);
+      setBillingPending(null);
+      if (result && !result.ok) setBillingError(result.error);
+    });
+  };
+
+  const handlePortalClick = () => {
+    setBillingError(null);
+    setBillingPending("portal");
+    startBillingTransition(async () => {
+      const result = await createPortalSession();
+      setBillingPending(null);
+      if (result && !result.ok) setBillingError(result.error);
+    });
+  };
 
   const [debugPendingPlan, setDebugPendingPlan] = useState<PlanId | null>(
     null,
@@ -82,30 +119,62 @@ export default function BillingPanel({
                   <li>ルーム: {formatPlanRoomLabel(info.roomCreation)}</li>
                 </ul>
                 <button
-                  disabled
-                  className="cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-500"
+                  onClick={() => handlePlanCardClick(id)}
+                  disabled={isCurrent || billingPending !== null}
+                  className={
+                    isCurrent
+                      ? "cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-500"
+                      : "rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+                  }
                 >
-                  {isCurrent ? "利用中" : "お問い合わせください"}
+                  {isCurrent
+                    ? "利用中"
+                    : billingPending === id
+                      ? "処理中..."
+                      : plan === "free"
+                        ? "このプランで契約する"
+                        : "プランを変更する"}
                 </button>
               </div>
             );
           })}
         </div>
+        {billingError && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+            {billingError}
+          </p>
+        )}
       </div>
 
       <div>
         <p className="mb-1 text-xs font-semibold text-slate-500">支払い方法</p>
         <button
-          onClick={() => setShowStripeNotice(true)}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          onClick={handlePortalClick}
+          disabled={!hasStripeCustomer || billingPending !== null}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          支払い方法を登録・変更
+          {billingPending === "portal" ? "処理中..." : "支払い方法を登録・変更"}
         </button>
+        {!hasStripeCustomer && (
+          <p className="mt-1 text-[11px] text-slate-400">
+            有料プランに加入すると利用できます。
+          </p>
+        )}
       </div>
 
       <div>
         <p className="mb-1 text-xs font-semibold text-slate-500">請求履歴</p>
-        <p className="text-xs text-slate-400">請求履歴はまだありません。</p>
+        {hasStripeCustomer ? (
+          <button
+            onClick={handlePortalClick}
+            disabled={billingPending !== null}
+            className="text-xs font-semibold text-slate-700 underline hover:text-slate-900 disabled:opacity-50"
+          >
+            お支払い方法・請求履歴の確認はこちらから
+          </button>
+        ) : (
+          <p className="text-xs text-slate-400">請求履歴はまだありません。</p>
+        )}
       </div>
 
       {isDebugPlanSwitcherAllowed && (
@@ -173,12 +242,6 @@ export default function BillingPanel({
             </p>
           )}
         </div>
-      )}
-
-      {showStripeNotice && (
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          決済機能は現在準備中です。もうしばらくお待ちください。
-        </p>
       )}
 
       {/* トースト通知(プラン切り替え成功時) */}

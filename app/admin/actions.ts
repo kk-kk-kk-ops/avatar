@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
+import { broadcastForceLeaveForAccount } from "@/lib/broadcastForceLeave";
 import { PLANS, type PlanId } from "@/lib/types";
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
@@ -147,33 +148,6 @@ export async function updateInviteInviterName(name: string) {
   if (error) throw new Error("招待者名の更新に失敗しました");
 
   revalidatePath("/admin");
-}
-
-// プラン変更が反映された瞬間、そのアカウントのルームに入室中の全員を
-// 強制退出させる。既存のチャット等と同じavatar-room-{roomId}チャンネルへ
-// broadcastするだけで、AvatarSpace.tsx側の対応するリスナーが反応する
-// (Node.jsスクリプトでの実機検証により、サーバー側からsubscribe()せず
-// channel.httpSend()するだけで購読中の全クライアントに届くことを確認済み)。
-async function broadcastForceLeaveForAccount(
-  supabase: ReturnType<typeof createClient>,
-  accountId: string,
-) {
-  const { data: rooms } = await supabase
-    .from("rooms")
-    .select("id")
-    .eq("account_id", accountId);
-
-  await Promise.all(
-    (rooms ?? []).map((room) =>
-      supabase
-        .channel(`avatar-room-${room.id}`)
-        .httpSend("force-leave", { reason: "plan-changed" })
-        .catch(() => {
-          // 通知に失敗しても致命的ではない(次回の同期処理や再読み込みで
-          // いずれ新しいプランの制限が反映されるため)ので握りつぶす。
-        }),
-    ),
-  );
 }
 
 // ダッシュボードの入室者一覧から、特定の参加者を強制退出させ、管理者が
