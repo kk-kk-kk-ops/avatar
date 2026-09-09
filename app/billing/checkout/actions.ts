@@ -37,18 +37,24 @@ export async function createCheckoutSession(planId: string): Promise<ActionResul
 
   const { data: account } = await supabase
     .from("accounts")
-    .select("id, plan, stripe_customer_id")
+    .select("id, stripe_customer_id, stripe_subscription_id")
     .eq("id", accountId)
     .single();
   if (!account) return { ok: false, error: "アカウントが見つかりません" };
 
-  // 既に有料プラン契約中のアカウントは、この経路(新規Checkout)ではなく
-  // Customer Portal経由でのプラン変更に誘導する(方針確認済み)。
-  if (account.plan !== "free") {
+  // 既にStripe上で有効なサブスクリプションがあるアカウントは、この経路
+  // (新規Checkout)ではなくCustomer Portal経由でのプラン変更に誘導する
+  // (方針確認済み)。ここをaccounts.plan列で判定すると、Stripeを一度も
+  // 通していないのにplanだけ設定されているアカウント(デバッグ用プラン
+  // 切り替えを使ったマスターアカウント等)が、実際には有効な契約が無い
+  // せいでCustomer Portalを開けず(stripe_customer_idが無いため)、
+  // プラン変更が一切できなくなってしまう。stripe_subscription_idの
+  // 有無で判定すれば、そうしたアカウントも新規Checkoutへ正しく進める。
+  if (account.stripe_subscription_id) {
     return {
       ok: false,
       error:
-        "既にご契約中です。プラン変更は管理画面の「支払い方法を管理」からお願いします。",
+        "既にご契約中です。プラン変更は管理画面の「プランを変更する」ボタン(お支払い管理ページ)からお願いします。",
     };
   }
 
