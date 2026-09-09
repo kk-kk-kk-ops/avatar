@@ -6,11 +6,20 @@ type Props = {
   disabled?: boolean;
 };
 
-function MicIcon({ enabled }: { enabled: boolean }) {
+// Avatar.tsxの名前タグでも同じ見た目のアイコンを使うためexportする。
+// sizeはコントロールバー以外での再利用のために省略可能にしてある
+// (未指定時はコントロールバーの既存サイズ18のまま)。
+export function MicIcon({
+  enabled,
+  size = 18,
+}: {
+  enabled: boolean;
+  size?: number;
+}) {
   return (
     <svg
-      width="18"
-      height="18"
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"

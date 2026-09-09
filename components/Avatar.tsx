@@ -10,6 +10,7 @@ import {
   getAvatarSpritePath,
   getAvatarThumbnail,
 } from "@/lib/types";
+import { MicIcon } from "./MicButton";
 
 type Props = {
   player: PlayerState;
@@ -108,6 +109,11 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
             }}
           />
           {player.lockedMeetingZoneId && <span aria-hidden="true">🔒</span>}
+          {player.micOn === true && (
+            <span className="shrink-0 text-emerald-400">
+              <MicIcon enabled size={10} />
+            </span>
+          )}
           {player.name}
         </span>
       </div>
