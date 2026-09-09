@@ -154,9 +154,11 @@ export default function BillingPanel({
                     ? "利用中"
                     : billingPending === id
                       ? "処理中..."
-                      : hasActiveSubscription
-                        ? "プランを変更する"
-                        : "このプランで契約する"}
+                      : id === "free"
+                        ? "解約する"
+                        : hasActiveSubscription
+                          ? "プランを変更する"
+                          : "このプランで契約する"}
                 </button>
               </div>
             );

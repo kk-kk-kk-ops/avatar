@@ -22,9 +22,13 @@ function getBaseUrl(): string {
 // 初回契約専用)。
 //
 // targetPlanIdを渡すと(=管理画面の特定プランカードからの変更操作)、
-// ポータルの「現在の契約状況」トップページを経由せず、そのプランへの
-// 切り替え確認画面(flow_data: subscription_update_confirm)へ直接
-// 遷移させる。省略時(支払い方法の管理・請求履歴の確認・解約等)は
+// ポータルの「現在の契約状況」トップページを経由せず直接遷移させる。
+// 有料プラン(light/standard/pro)へのtargetPlanIdなら、そのプランへの
+// 切り替え確認画面(flow_data: subscription_update_confirm)。
+// targetPlanIdが"free"なら、Freeプランには対応するStripe Priceが
+// 存在せずsubscription_update_confirmが使えないため、代わりに解約確認
+// 画面(flow_data: subscription_cancel)へ遷移させる(=Freeへの切り替えは
+// 「解約」として扱う)。省略時(支払い方法の管理・請求履歴の確認等)は
 // 従来通りポータルのトップページへ遷移する。
 export async function createPortalSession(
   targetPlanId?: string,
@@ -49,7 +53,14 @@ export async function createPortalSession(
   let sessionUrl: string | null;
   try {
     let flowData: Stripe.BillingPortal.SessionCreateParams.FlowData | undefined;
-    if (
+    if (targetPlanId === "free" && account.stripe_subscription_id) {
+      flowData = {
+        type: "subscription_cancel",
+        subscription_cancel: {
+          subscription: account.stripe_subscription_id,
+        },
+      };
+    } else if (
       targetPlanId &&
       isPaidPlanId(targetPlanId) &&
       account.stripe_subscription_id
