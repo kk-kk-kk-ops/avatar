@@ -466,7 +466,7 @@ export default function AvatarSpace({
 
   // ---- サイドバーの幅可変(PC版のみ)。リロードで既定幅に戻るシンプルな
   // 実装(永続化はしない)。下限は既存の固定幅、上限は画面幅の50%。 ----
-  const SIDEBAR_MIN_WIDTH = 274; // 既存のPC版固定幅(sm:w-[274px]だった値)
+  const SIDEBAR_MIN_WIDTH = 374; // 既存のPC版固定幅(274px)+100px
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(
     null,
