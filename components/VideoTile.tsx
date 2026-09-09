@@ -1,6 +1,7 @@
 "use client";
 
 import RemoteVideo from "./RemoteVideo";
+import { MicIcon } from "./MicButton";
 
 type Props = {
   name: string;
@@ -8,6 +9,9 @@ type Props = {
   widthPx: number;
   heightPx: number;
   isSelf?: boolean;
+  // マイクON中かどうか(相手にも見える)。会議中は誰がマイクONか映像
+  // だけでは分からないため、枠の右下にアイコンで示す。
+  micOn?: boolean;
 };
 
 // ビデオ通話の映像枠(常時表示プレビュー行・会議画面モーダルの両方で
@@ -18,6 +22,7 @@ export default function VideoTile({
   widthPx,
   heightPx,
   isSelf,
+  micOn,
 }: Props) {
   return (
     <div
@@ -35,6 +40,11 @@ export default function VideoTile({
         <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-slate-300">
           {name}
         </div>
+      )}
+      {micOn && (
+        <span className="absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white shadow">
+          <MicIcon enabled size={10} />
+        </span>
       )}
     </div>
   );
