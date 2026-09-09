@@ -8081,11 +8081,12 @@ export default function AvatarSpace({
               </div>
             ))}
 
-            {/* 自分の音声が届く範囲の目安(マイクON時のみ表示。位置は毎フレームDOM操作で更新) */}
+            {/* 自分の音声が届く範囲の目安(マイクONまたはビデオ通話ON時に表示。
+                位置は毎フレームDOM操作で更新) */}
             <div
               ref={proximityCircleRef}
               className={`pointer-events-none absolute left-0 top-0 rounded-full border-2 border-emerald-400/40 ${
-                micEnabled ? "" : "hidden"
+                micEnabled || inCall ? "" : "hidden"
               }`}
               style={{
                 width: PROXIMITY_RADIUS * 2,
