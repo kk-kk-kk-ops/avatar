@@ -13,11 +13,13 @@ export default function BillingPanel({
   trialEndsAt,
   isDebugPlanSwitcherAllowed,
   hasStripeCustomer,
+  hasActiveSubscription,
 }: {
   plan: PlanId;
   trialEndsAt: string | null;
   isDebugPlanSwitcherAllowed: boolean;
   hasStripeCustomer: boolean;
+  hasActiveSubscription: boolean;
 }) {
   // 契約プランカード・支払い方法ボタンの両方から共有するpending/error状態。
   // "portal"は「支払い方法を管理」ボタン、プランIDはそのプランカードの
@@ -28,17 +30,24 @@ export default function BillingPanel({
 
   const handlePlanCardClick = (targetPlan: PlanId) => {
     if (targetPlan === plan) return;
+    // freeへの切り替えは「解約」を意味するが、実際の契約(サブスク
+    // リプション)が無ければStripe側でやることが無い(plan列だけが
+    // 実態と食い違って設定されているデバッグ用アカウント等)。
+    if (targetPlan === "free" && !hasActiveSubscription) return;
     setBillingError(null);
     setBillingPending(targetPlan);
     startBillingTransition(async () => {
-      // 既に何らかの有料プランで契約中の場合、プラン変更・freeへの
-      // ダウングレード(=解約)はどちらもCustomer Portal経由にする
-      // (方針確認済み)。まだfreeのまま(契約したことが無い)場合のみ、
-      // 新しいCheckout Sessionを作る。
-      const result =
-        plan !== "free"
-          ? await createPortalSession()
-          : await createCheckoutSession(targetPlan);
+      // Stripe上に有効なサブスクリプション(stripe_subscription_id)が
+      // 既にある場合のみCustomer Portal経由にする(プラン変更・freeへの
+      // ダウングレード=解約の両方)。ここをplan列で判定すると、Stripeを
+      // 一度も通していないのにplanだけ設定されているアカウント
+      // (デバッグ用プラン切り替えを使ったマスターアカウント等)で
+      // 「お支払い情報がまだ登録されていません」となりプラン変更が
+      // 一切できなくなる不具合になるため、実際の契約有無
+      // (hasActiveSubscription)で判定する。
+      const result = hasActiveSubscription
+        ? await createPortalSession()
+        : await createCheckoutSession(targetPlan);
       setBillingPending(null);
       if (result && !result.ok) setBillingError(result.error);
     });
@@ -120,7 +129,11 @@ export default function BillingPanel({
                 </ul>
                 <button
                   onClick={() => handlePlanCardClick(id)}
-                  disabled={isCurrent || billingPending !== null}
+                  disabled={
+                    isCurrent ||
+                    billingPending !== null ||
+                    (id === "free" && !hasActiveSubscription)
+                  }
                   className={
                     isCurrent
                       ? "cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-500"
@@ -131,9 +144,9 @@ export default function BillingPanel({
                     ? "利用中"
                     : billingPending === id
                       ? "処理中..."
-                      : plan === "free"
-                        ? "このプランで契約する"
-                        : "プランを変更する"}
+                      : hasActiveSubscription
+                        ? "プランを変更する"
+                        : "このプランで契約する"}
                 </button>
               </div>
             );
