@@ -147,22 +147,6 @@ export default function BillingPanel({
       </div>
 
       <div>
-        <p className="mb-1 text-xs font-semibold text-slate-500">支払い方法</p>
-        <button
-          onClick={handlePortalClick}
-          disabled={!hasStripeCustomer || billingPending !== null}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {billingPending === "portal" ? "処理中..." : "支払い方法を登録・変更"}
-        </button>
-        {!hasStripeCustomer && (
-          <p className="mt-1 text-[11px] text-slate-400">
-            有料プランに加入すると利用できます。
-          </p>
-        )}
-      </div>
-
-      <div>
         <p className="mb-1 text-xs font-semibold text-slate-500">請求履歴</p>
         {hasStripeCustomer ? (
           <button
