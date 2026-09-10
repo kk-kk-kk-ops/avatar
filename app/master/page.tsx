@@ -15,6 +15,8 @@ import {
   type PlacedObject,
   type TemplateObjectImage,
   type AccountSummary,
+  type Announcement,
+  type UpdateLog,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
 
@@ -122,6 +124,28 @@ export default async function MasterPage() {
     .eq("id", "default")
     .maybeSingle();
 
+  const { data: announcementRows } = await supabase
+    .from("announcements")
+    .select("id, title, body, published_at")
+    .order("published_at", { ascending: false });
+  const announcements: Announcement[] = (announcementRows ?? []).map((a) => ({
+    id: a.id,
+    title: a.title,
+    body: a.body,
+    publishedAt: a.published_at,
+  }));
+
+  const { data: updateLogRows } = await supabase
+    .from("update_logs")
+    .select("id, version, body, released_at")
+    .order("released_at", { ascending: false });
+  const updateLogs: UpdateLog[] = (updateLogRows ?? []).map((u) => ({
+    id: u.id,
+    version: u.version,
+    body: u.body,
+    releasedAt: u.released_at,
+  }));
+
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
@@ -221,6 +245,8 @@ export default async function MasterPage() {
       rooms={rooms}
       templates={templates}
       accounts={accounts}
+      announcements={announcements}
+      updateLogs={updateLogs}
       showAdminLink={state.type === "admin"}
       showRoomsLink={state.type !== "no-account"}
       ownInviteToken={ownInviteToken}

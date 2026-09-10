@@ -120,6 +120,24 @@ export type AccountSummary = {
   createdAt: string;
 };
 
+// マスター画面「お知らせ」タブに表示するお知らせ項目。将来的に一般管理者
+// (role='admin')の管理画面にも同じ内容を閲覧専用で表示する予定
+// (announcements/update_logsテーブルのRLSは既にそれを見据えた設計)。
+export type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+  publishedAt: string;
+};
+
+// マスター画面「お知らせ」タブに表示するアップデート情報(バージョン更新履歴)。
+export type UpdateLog = {
+  id: string;
+  version: string;
+  body: string;
+  releasedAt: string;
+};
+
 // マップのひな形。Supabaseのtemplatesテーブルの行に対応する。
 // マップ編集はマスターがテンプレートに対して行い、個々のルームは常に
 // 紐づくテンプレートのレイアウトを参照する(ルーム自身は編集不可)。
