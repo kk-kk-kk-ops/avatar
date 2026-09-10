@@ -2901,6 +2901,73 @@ create table if not exists public.stripe_webhook_events (
 alter table public.stripe_webhook_events enable row level security;
 
 
+-- ------------------------------------------------------------
+-- 19. announcements(お知らせ)・update_logs(アップデート情報)。
+--     マスター画面の新規メニュー「お知らせ」から入力する。将来的に
+--     一般管理者(role='admin')の管理画面にも同じ内容を閲覧専用で表示する
+--     計画があるため、RLSは最初から「マスター:読み書き可・管理者:
+--     読み取りのみ」の形にしておく(閲覧専用画面の追加時にSQL変更が
+--     不要になるようにするため。閲覧専用画面自体は別途実装する)。
+-- ------------------------------------------------------------
+create table if not exists public.announcements (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  body text not null,
+  published_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.announcements enable row level security;
+
+drop policy if exists "announcements: select master or admin" on public.announcements;
+create policy "announcements: select master or admin"
+  on public.announcements for select
+  using (
+    public.is_master(auth.uid())
+    or exists (
+      select 1 from public.profiles p
+      where p.user_id = auth.uid() and p.role = 'admin'
+    )
+  );
+
+drop policy if exists "announcements: modify master" on public.announcements;
+create policy "announcements: modify master"
+  on public.announcements for all
+  using (public.is_master(auth.uid()))
+  with check (public.is_master(auth.uid()));
+
+create table if not exists public.update_logs (
+  id uuid primary key default gen_random_uuid(),
+  version text not null,
+  body text not null,
+  released_at timestamptz not null default now(),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.update_logs enable row level security;
+
+drop policy if exists "update_logs: select master or admin" on public.update_logs;
+create policy "update_logs: select master or admin"
+  on public.update_logs for select
+  using (
+    public.is_master(auth.uid())
+    or exists (
+      select 1 from public.profiles p
+      where p.user_id = auth.uid() and p.role = 'admin'
+    )
+  );
+
+drop policy if exists "update_logs: modify master" on public.update_logs;
+create policy "update_logs: modify master"
+  on public.update_logs for all
+  using (public.is_master(auth.uid()))
+  with check (public.is_master(auth.uid()));
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。

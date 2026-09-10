@@ -19,7 +19,7 @@ import type {
 // この型で返し、呼び出し側はresult.okを見て表示する。
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-async function requireMaster() {
+export async function requireMaster() {
   const supabase = createClient();
   const {
     data: { user },

@@ -3,7 +3,14 @@
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { AccountSummary, MapTemplate, PlanId, Room } from "@/lib/types";
+import type {
+  AccountSummary,
+  Announcement,
+  MapTemplate,
+  PlanId,
+  Room,
+  UpdateLog,
+} from "@/lib/types";
 import { PLANS } from "@/lib/types";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import LogoutButton from "@/components/auth/LogoutButton";
@@ -13,12 +20,19 @@ import TemplateManager from "./TemplateManager";
 import AvatarSettingsPanel from "./AvatarSettingsPanel";
 import AccountServerAssignment from "./AccountServerAssignment";
 import MfaSettingsPanel from "./MfaSettingsPanel";
+import AnnouncementsPanel from "./AnnouncementsPanel";
 import {
   TemplateEditorGuardContext,
   type TemplateEditorGuard,
 } from "./templateEditorGuard";
 
-type Tab = "dashboard" | "templates" | "avatar" | "accounts" | "security";
+type Tab =
+  | "dashboard"
+  | "templates"
+  | "avatar"
+  | "announcements"
+  | "accounts"
+  | "security";
 
 export default function MasterDashboard({
   planCounts,
@@ -27,6 +41,8 @@ export default function MasterDashboard({
   rooms,
   templates,
   accounts,
+  announcements,
+  updateLogs,
   showAdminLink,
   showRoomsLink,
   ownInviteToken,
@@ -39,6 +55,8 @@ export default function MasterDashboard({
   rooms: Room[];
   templates: MapTemplate[];
   accounts: AccountSummary[];
+  announcements: Announcement[];
+  updateLogs: UpdateLog[];
   showAdminLink: boolean;
   showRoomsLink: boolean;
   ownInviteToken: string | null;
@@ -181,6 +199,16 @@ export default function MasterDashboard({
             アバター
           </button>
           <button
+            onClick={() => selectTab("announcements")}
+            className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
+              tab === "announcements"
+                ? "bg-red-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            お知らせ
+          </button>
+          <button
             onClick={() => selectTab("accounts")}
             className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
               tab === "accounts"
@@ -285,6 +313,13 @@ export default function MasterDashboard({
 
         {tab === "avatar" && (
           <AvatarSettingsPanel initialSizePx={avatarSizePx} />
+        )}
+
+        {tab === "announcements" && (
+          <AnnouncementsPanel
+            announcements={announcements}
+            updateLogs={updateLogs}
+          />
         )}
 
         {tab === "accounts" && (
