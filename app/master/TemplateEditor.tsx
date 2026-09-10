@@ -477,15 +477,17 @@ export default function TemplateEditor({
 
   // 「リセット」ボタン(確認モーダルの「リセット」押下時)。エリア(壁・
   // ミーティング・会議・作業・アナウンス。obstacles/meetingZonesの2配列に
-  // 分かれて入っている)と配置済みオブジェクト(placedObjects)をすべて
-  // 削除する。背景画像・マップサイズ・ワープポイント・アバター初期位置・
-  // オブジェクトライブラリ(登録画像そのもの)は対象外(変更しない)。
-  // pushUndoを先に呼んでおくので、誤操作時は通常のUndoで元に戻せる。
+  // 分かれて入っている)・配置済みオブジェクト(placedObjects)・
+  // ワープポイント(warpPoints)をすべて削除する。背景画像・マップサイズ・
+  // アバター初期位置・オブジェクトライブラリ(登録画像そのもの)は対象外
+  // (変更しない)。pushUndoを先に呼んでおくので、誤操作時は通常のUndoで
+  // 元に戻せる。
   const handleReset = () => {
     pushUndo();
     setObstacles([]);
     setMeetingZones([]);
     setPlacedObjects([]);
+    setWarpPoints([]);
     setSelectedItem(null);
     setResetConfirmOpen(false);
   };
