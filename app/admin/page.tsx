@@ -1,7 +1,13 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
-import { PLANS, type PlanId, type Room } from "@/lib/types";
+import {
+  PLANS,
+  type PlanId,
+  type Room,
+  type Announcement,
+  type UpdateLog,
+} from "@/lib/types";
 import AdminDashboard from "./AdminDashboard";
 
 // 管理画面。アカウントのオーナー(role='admin')だけがアクセスできる。
@@ -65,6 +71,32 @@ export default async function AdminPage() {
     backgroundImageUrl: t.background_image_url,
   }));
 
+  // お知らせ・アップデート情報(マスター画面「お知らせ」タブで入力したもの)。
+  // announcements/update_logsのRLSは、role='admin'のユーザーにSELECTのみ
+  // 許可する設計になっている(supabase/consolidated_setup.sql参照。
+  // INSERT/UPDATE/DELETEはマスターのみ)。
+  const { data: announcementRows } = await supabase
+    .from("announcements")
+    .select("id, title, body, published_at")
+    .order("published_at", { ascending: false });
+  const announcements: Announcement[] = (announcementRows ?? []).map((a) => ({
+    id: a.id,
+    title: a.title,
+    body: a.body,
+    publishedAt: a.published_at,
+  }));
+
+  const { data: updateLogRows } = await supabase
+    .from("update_logs")
+    .select("id, version, body, released_at")
+    .order("released_at", { ascending: false });
+  const updateLogs: UpdateLog[] = (updateLogRows ?? []).map((u) => ({
+    id: u.id,
+    version: u.version,
+    body: u.body,
+    releasedAt: u.released_at,
+  }));
+
   const plan = (account?.plan as PlanId) ?? "free";
   const maxRooms = PLANS[plan].maxRooms;
 
@@ -95,6 +127,8 @@ export default async function AdminPage() {
       bannedParticipants={bannedParticipants}
       hasStripeCustomer={!!account?.stripe_customer_id}
       hasActiveSubscription={!!account?.stripe_subscription_id}
+      announcements={announcements}
+      updateLogs={updateLogs}
     />
   );
 }
