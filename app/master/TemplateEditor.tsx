@@ -253,6 +253,9 @@ export default function TemplateEditor({
   const [helpOpen, setHelpOpen] = useState(false);
   const [warpHelpOpen, setWarpHelpOpen] = useState(false);
   const [objectHelpOpen, setObjectHelpOpen] = useState(false);
+  // 「リセット」ボタン押下時の確認モーダル(エリア・配置オブジェクトを
+  // 全削除する前に一度確認する)。
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   // 保存していないレイアウト変更があるかどうか(MasterDashboardのサイドバー
   // 経由での画面遷移ガードに使う。詳細はtemplateEditorGuard.tsx参照)。
   // 初回マウント時点の値(=DBから読み込んだそのまま)は「未保存の変更」
@@ -470,6 +473,21 @@ export default function TemplateEditor({
     setUndoCount(undoStackRef.current.length);
     setRedoCount(redoStackRef.current.length);
     applySnapshot(next);
+  };
+
+  // 「リセット」ボタン(確認モーダルの「リセット」押下時)。エリア(壁・
+  // ミーティング・会議・作業・アナウンス。obstacles/meetingZonesの2配列に
+  // 分かれて入っている)と配置済みオブジェクト(placedObjects)をすべて
+  // 削除する。背景画像・マップサイズ・ワープポイント・アバター初期位置・
+  // オブジェクトライブラリ(登録画像そのもの)は対象外(変更しない)。
+  // pushUndoを先に呼んでおくので、誤操作時は通常のUndoで元に戻せる。
+  const handleReset = () => {
+    pushUndo();
+    setObstacles([]);
+    setMeetingZones([]);
+    setPlacedObjects([]);
+    setSelectedItem(null);
+    setResetConfirmOpen(false);
   };
 
   const handlePointerDown = (
@@ -1718,6 +1736,12 @@ export default function TemplateEditor({
           >
             {measuringImageSize ? "取得中..." : "デフォルト(画像の実サイズ)"}
           </button>
+          <button
+            onClick={() => setResetConfirmOpen(true)}
+            className="mt-2 w-full rounded-lg border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+          >
+            リセット
+          </button>
         </div>
       </div>
 
@@ -1783,6 +1807,32 @@ export default function TemplateEditor({
                 className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
               >
                 閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {resetConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <p className="text-sm font-bold text-slate-800">
+              リセットしますか？
+              <br />
+              背景画像以外すべて削除します
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={handleReset}
+                className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500"
+              >
+                リセット
+              </button>
+              <button
+                onClick={() => setResetConfirmOpen(false)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                キャンセル
               </button>
             </div>
           </div>
