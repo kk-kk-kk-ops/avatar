@@ -2,20 +2,22 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { PlanId, Room } from "@/lib/types";
+import type { Announcement, PlanId, Room, UpdateLog } from "@/lib/types";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import LogoutButton from "@/components/auth/LogoutButton";
 import OnlineCount from "./OnlineCount";
 import RoomManager from "./RoomManager";
 import InvitePanel from "./InvitePanel";
 import BillingPanel from "./BillingPanel";
+import AnnouncementsView from "./AnnouncementsView";
 
-type Tab = "dashboard" | "rooms" | "invite" | "billing";
+type Tab = "dashboard" | "rooms" | "invite" | "announcements" | "billing";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "ダッシュボード" },
   { id: "rooms", label: "ルーム管理" },
   { id: "invite", label: "招待" },
+  { id: "announcements", label: "お知らせ" },
   { id: "billing", label: "契約情報" },
 ];
 
@@ -40,6 +42,8 @@ export default function AdminDashboard({
   bannedParticipants,
   hasStripeCustomer,
   hasActiveSubscription,
+  announcements,
+  updateLogs,
 }: {
   rooms: Room[];
   plan: PlanId;
@@ -54,6 +58,8 @@ export default function AdminDashboard({
   bannedParticipants: BannedParticipant[];
   hasStripeCustomer: boolean;
   hasActiveSubscription: boolean;
+  announcements: Announcement[];
+  updateLogs: UpdateLog[];
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -178,6 +184,12 @@ export default function AdminDashboard({
           )}
           {tab === "invite" && (
             <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
+          )}
+          {tab === "announcements" && (
+            <AnnouncementsView
+              announcements={announcements}
+              updateLogs={updateLogs}
+            />
           )}
           {tab === "billing" && (
             <BillingPanel
