@@ -381,7 +381,7 @@ export type MeetingZone = Rect & {
 // 付けられるようにするためのもの(channel自体はA/B/C固定でペア判定用)。
 export type WarpPoint = { id: string; channel: "A" | "B" | "C"; x: number; y: number; label?: string };
 export const WARP_CHANNELS = ["A", "B", "C"] as const;
-export const WARP_POINT_RADIUS = 36; // 円の表示半径・当たり判定半径(px)
+export const WARP_POINT_RADIUS = 24; // 円の表示半径・当たり判定半径(px)。元は36pxで、2/3に縮小した
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
 export const MIN_ITEM_SIZE = 40; // これより小さくはできない

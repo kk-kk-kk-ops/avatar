@@ -7178,22 +7178,27 @@ export default function AvatarSpace({
             .eq("id", room.id)
             .maybeSingle();
       if (cancelled || !data) return;
-      // ルーム名は、ルーム自体のnameカラム(テンプレート機能導入前の名残)
-      // ではなく、現在紐づいているテンプレートの名前を優先する
-      // (app/page.tsxのapplyTemplateNameToRoomsと同じ考え方。ここは
-      // 入室前ロビーの表示を常に最新化するための別経路の取得処理のため、
-      // 同じ解決ロジックを重複して持つ必要がある)。
+      // ルーム名・プレビュー画像は、ルーム自体のname/preview_image列
+      // (テンプレート機能導入前の名残/紐付け時点のスナップショット)では
+      // なく、現在紐づいているテンプレートの最新のname/background_image_url
+      // を優先する(app/page.tsxのapplyTemplateNameToRoomsと同じ考え方。
+      // ここは入室前ロビーの表示を常に最新化するための別経路の取得処理の
+      // ため、同じ解決ロジックを重複して持つ必要がある)。
       let name = data.name;
+      let previewImage = data.preview_image;
       if (data.template_id) {
         const { data: template } = await supabase
           .from("templates")
-          .select("name")
+          .select("name, background_image_url")
           .eq("id", data.template_id)
           .maybeSingle();
         if (!cancelled && template?.name) name = template.name;
+        if (!cancelled && template?.background_image_url) {
+          previewImage = template.background_image_url;
+        }
       }
       if (cancelled) return;
-      setLobbyRoomInfo({ name, previewImage: data.preview_image });
+      setLobbyRoomInfo({ name, previewImage });
     })();
     return () => {
       cancelled = true;
@@ -8171,16 +8176,14 @@ export default function AvatarSpace({
                   </div>
                 )}
                 <div
-                  className={`pointer-events-none absolute flex items-center justify-center rounded-full border-2 text-xs font-bold text-white ${warpChannelClasses(w.channel)}`}
+                  className={`pointer-events-none absolute rounded-full border-2 ${warpChannelClasses(w.channel)}`}
                   style={{
                     left: w.x - WARP_POINT_RADIUS,
                     top: w.y - WARP_POINT_RADIUS,
                     width: WARP_POINT_RADIUS * 2,
                     height: WARP_POINT_RADIUS * 2,
                   }}
-                >
-                  {w.channel}
-                </div>
+                />
               </div>
             ))}
 
