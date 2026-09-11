@@ -1980,7 +1980,7 @@ export default function TemplateEditor({
           <input
             type="range"
             min={1}
-            max={5}
+            max={10}
             step={0.5}
             value={zoom}
             onChange={(e) => changeZoom(Number(e.target.value))}
@@ -1988,8 +1988,8 @@ export default function TemplateEditor({
           />
           <button
             type="button"
-            onClick={() => changeZoom(Math.min(5, Math.round((zoom + 0.5) * 100) / 100))}
-            disabled={zoom >= 5}
+            onClick={() => changeZoom(Math.min(10, Math.round((zoom + 0.5) * 100) / 100))}
+            disabled={zoom >= 10}
             className="rounded border border-slate-300 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
           >
             ＋
@@ -2045,6 +2045,82 @@ export default function TemplateEditor({
               });
             }}
           >
+            {/* 装飾オブジェクト(2026-09追加)。壁と違い実際に画像として表示
+                され、当たり判定は持たない。ドラッグ・リサイズ・回転の操作感は
+                壁と共通(handlePointerDown/handleRotatePointerDownをitemType
+                "object"で呼ぶ)。エリア(この直後のmeetingZones/obstacles)より
+                先に描画し、エリアを常に手前に表示する(2026-09報告:
+                オブジェクトがエリアの上に重なると、エリアの枠が見えず
+                ドラッグもできなくなっていたため)。 */}
+            {placedObjects.map((o) => {
+              const isSelected = isItemSelected("object", o.id);
+              return (
+                <div
+                  key={o.id}
+                  onPointerDown={(e) => handlePointerDown(e, "object", o.id, "move")}
+                  className={`absolute cursor-move rounded border ${
+                    isSelected
+                      ? "border-2 border-red-500"
+                      : "border-dashed border-violet-400"
+                  }`}
+                  style={{
+                    left: o.x * scale,
+                    top: o.y * scale,
+                    width: o.width * scale,
+                    height: o.height * scale,
+                    transform: `rotate(${o.rotation ?? 0}deg)`,
+                    transformOrigin: "50% 50%",
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={o.imageUrl}
+                    alt="配置したオブジェクト"
+                    draggable={false}
+                    className="pointer-events-none h-full w-full select-none object-contain"
+                  />
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => removePlacedObject(o.id)}
+                    className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                  >
+                    ×
+                  </button>
+                  <div
+                    onPointerDown={(e) =>
+                      handleRotatePointerDown(e, "object", o.id, o.rotation ?? 0)
+                    }
+                    title="ドラッグで回転(Shiftで15度単位)"
+                    className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-violet-600 bg-white"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "object", o.id, "resize", "br")
+                    }
+                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "object", o.id, "resize", "tl")
+                    }
+                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
+                  />
+                  {/* コピー吹き出し: 選択中のオブジェクトにだけ表示する
+                      (Ctrl+Cでも同じ動作)。 */}
+                  {isSelected && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={copySelectedItem}
+                      className={copyBubbleClassName}
+                    >
+                      コピー
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
             {meetingZones.map((zone) => {
               const isSelected = isItemSelected("zone", zone.id);
               const zoneBgClass =
@@ -2184,79 +2260,6 @@ export default function TemplateEditor({
                     }
                     className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
                   />
-                  {isSelected && (
-                    <button
-                      type="button"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={copySelectedItem}
-                      className={copyBubbleClassName}
-                    >
-                      コピー
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* 装飾オブジェクト(2026-09追加)。壁と違い実際に画像として表示
-                され、当たり判定は持たない。ドラッグ・リサイズ・回転の操作感は
-                壁と共通(handlePointerDown/handleRotatePointerDownをitemType
-                "object"で呼ぶ)。 */}
-            {placedObjects.map((o) => {
-              const isSelected = isItemSelected("object", o.id);
-              return (
-                <div
-                  key={o.id}
-                  onPointerDown={(e) => handlePointerDown(e, "object", o.id, "move")}
-                  className={`absolute cursor-move rounded border ${
-                    isSelected
-                      ? "border-2 border-red-500"
-                      : "border-dashed border-violet-400"
-                  }`}
-                  style={{
-                    left: o.x * scale,
-                    top: o.y * scale,
-                    width: o.width * scale,
-                    height: o.height * scale,
-                    transform: `rotate(${o.rotation ?? 0}deg)`,
-                    transformOrigin: "50% 50%",
-                  }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={o.imageUrl}
-                    alt="配置したオブジェクト"
-                    draggable={false}
-                    className="pointer-events-none h-full w-full select-none object-contain"
-                  />
-                  <button
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={() => removePlacedObject(o.id)}
-                    className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
-                  >
-                    ×
-                  </button>
-                  <div
-                    onPointerDown={(e) =>
-                      handleRotatePointerDown(e, "object", o.id, o.rotation ?? 0)
-                    }
-                    title="ドラッグで回転(Shiftで15度単位)"
-                    className="absolute -top-4 left-1/2 h-3 w-3 -translate-x-1/2 cursor-alias rounded-full border border-violet-600 bg-white"
-                  />
-                  <div
-                    onPointerDown={(e) =>
-                      handlePointerDown(e, "object", o.id, "resize", "br")
-                    }
-                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
-                  />
-                  <div
-                    onPointerDown={(e) =>
-                      handlePointerDown(e, "object", o.id, "resize", "tl")
-                    }
-                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize bg-slate-200"
-                  />
-                  {/* コピー吹き出し: 選択中のオブジェクトにだけ表示する
-                      (Ctrl+Cでも同じ動作)。 */}
                   {isSelected && (
                     <button
                       type="button"
