@@ -36,14 +36,22 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   ref,
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // 名前タグ(+吹き出し)専用の、アバター本体とは別のルート要素。装飾
+  // オブジェクト(z-20、常に最前面)の下に名前タグが隠れてしまう問題
+  // (2026-09報告)への対応。CSSのstacking contextの仕様上、rootRef側の
+  // z-10の内側で子要素にどれだけ高いz-indexを与えても、rootRefの兄弟
+  // であるオブジェクト(z-20)より手前には出せない。そのため名前タグを
+  // rootRefの子ではなく兄弟の別要素として切り出し、そちら側だけ
+  // z-30を与えてオブジェクトより手前に表示する。位置計算(x, y)は
+  // アバター本体と全く同じものを流用し、毎フレーム両方のrefへ同時に
+  // 反映することで見た目上は常に同期して動く。
+  const nameTagRef = useRef<HTMLDivElement>(null);
   const displaySize = sizePx ?? DEFAULT_DISPLAY_SIZE;
 
   useImperativeHandle(
     ref,
     () => ({
       updatePosition: (x: number, y: number) => {
-        const el = rootRef.current;
-        if (!el) return;
         // (x, y)は当たり判定(AVATAR_HITBOX_WIDTH/HEIGHT)の中心座標。
         // 画像・当たり判定は互いに独立したサイズのまま、当たり判定の下端が
         // 画像の下端(足元)に一致するように画像の描画位置を決める
@@ -51,7 +59,12 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         // 揃えるだけでよい(当たり判定・画像とも同じxを中心とするため)。
         const left = x - displaySize / 2;
         const top = y + AVATAR_HITBOX_HEIGHT / 2 - displaySize;
-        el.style.transform = `translate(${left}px, ${top}px)`;
+        const transform = `translate(${left}px, ${top}px)`;
+        if (rootRef.current) rootRef.current.style.transform = transform;
+        // 名前タグ側もアバター本体と全く同じサイズ・原点のボックスとして
+        // 扱っているため、同じtransformをそのまま使い回せる(タグ自体の
+        // 位置は内部の"-top-6 left-1/2 -translate-x-1/2"で決まる)。
+        if (nameTagRef.current) nameTagRef.current.style.transform = transform;
       },
     }),
     [displaySize],
@@ -76,57 +89,68 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
     : spriteSrc;
 
   return (
-    <div
-      ref={rootRef}
-      // z-10: 装飾オブジェクト(2026-09追加、z-20)は常にアバターより
-      // 手前に表示する仕様のため、アバター側に明示的な低いz-indexを
-      // 与えて重なり順をDOM順ではなくz-indexで確定させる
-      // (AvatarSpace.tsxのplacedObjects描画箇所を参照)。
-      className="absolute left-0 top-0 z-10 will-change-transform"
-      style={{ width: displaySize, height: displaySize }}
-    >
-      {/* 名前タグと吹き出しをまとめて1つの基準位置に固定し、吹き出しは
-          常にその真上(bottom-full)に積み上げる。吹き出しは改行して
-          高さが伸び縮みするため、名前タグ側の位置に影響しないよう
-          このように親子関係にしている。 */}
-      <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-        {noticeText ? (
-          <div className="absolute bottom-full left-1/2 mb-1 w-max max-w-[140px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg bg-red-600 px-1.5 py-1 text-center text-[10px] leading-tight text-white shadow-md">
-            {noticeText}
-          </div>
-        ) : (
-          showBubble && (
-            <div className="absolute bottom-full left-1/2 mb-1 w-max max-w-[100px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-center text-[10px] leading-tight shadow-md">
-              {player.message}
+    <>
+      {/* 名前タグ+吹き出し専用のルート要素(アバター本体とは別、z-30)。
+          装飾オブジェクト(z-20)より手前に表示するためだけに分離している。
+          クリック等の操作対象にはならないためpointer-events-noneにする。 */}
+      <div
+        ref={nameTagRef}
+        className="pointer-events-none absolute left-0 top-0 z-30 will-change-transform"
+        style={{ width: displaySize, height: displaySize }}
+      >
+        {/* 名前タグと吹き出しをまとめて1つの基準位置に固定し、吹き出しは
+            常にその真上(bottom-full)に積み上げる。吹き出しは改行して
+            高さが伸び縮みするため、名前タグ側の位置に影響しないよう
+            このように親子関係にしている。 */}
+        <div className="absolute -top-6 left-1/2 -translate-x-1/2">
+          {noticeText ? (
+            <div className="absolute bottom-full left-1/2 mb-1 w-max max-w-[140px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg bg-red-600 px-1.5 py-1 text-center text-[10px] leading-tight text-white shadow-md">
+              {noticeText}
             </div>
-          )
-        )}
-        <span className="flex items-center gap-1 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
-          <span
-            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{
-              backgroundColor: PRESENCE_STATUS_COLORS[player.status ?? "available"],
-            }}
-          />
-          {player.lockedMeetingZoneId && <span aria-hidden="true">🔒</span>}
-          {player.micOn === true && (
-            <span className="shrink-0 text-emerald-400">
-              <MicIcon enabled size={10} />
-            </span>
+          ) : (
+            showBubble && (
+              <div className="absolute bottom-full left-1/2 mb-1 w-max max-w-[100px] -translate-x-1/2 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white px-1.5 py-1 text-center text-[10px] leading-tight shadow-md">
+                {player.message}
+              </div>
+            )
           )}
-          {player.name}
-        </span>
+          <span className="flex items-center gap-1 whitespace-nowrap rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+            <span
+              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{
+                backgroundColor: PRESENCE_STATUS_COLORS[player.status ?? "available"],
+              }}
+            />
+            {player.lockedMeetingZoneId && <span aria-hidden="true">🔒</span>}
+            {player.micOn === true && (
+              <span className="shrink-0 text-emerald-400">
+                <MicIcon enabled size={10} />
+              </span>
+            )}
+            {player.name}
+          </span>
+        </div>
       </div>
 
-      {/* アバター画像(背景・枠なしでそのまま表示) */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={displaySrc}
-        alt={player.name}
-        onError={() => setSpriteLoadFailed(true)}
-        className="h-full w-full object-contain drop-shadow-md"
-      />
-    </div>
+      <div
+        ref={rootRef}
+        // z-10: 装飾オブジェクト(2026-09追加、z-20)は常にアバターより
+        // 手前に表示する仕様のため、アバター側に明示的な低いz-indexを
+        // 与えて重なり順をDOM順ではなくz-indexで確定させる
+        // (AvatarSpace.tsxのplacedObjects描画箇所を参照)。
+        className="absolute left-0 top-0 z-10 will-change-transform"
+        style={{ width: displaySize, height: displaySize }}
+      >
+        {/* アバター画像(背景・枠なしでそのまま表示) */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={displaySrc}
+          alt={player.name}
+          onError={() => setSpriteLoadFailed(true)}
+          className="h-full w-full object-contain drop-shadow-md"
+        />
+      </div>
+    </>
   );
 });
 
