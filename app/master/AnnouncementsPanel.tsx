@@ -17,12 +17,18 @@ type ActionResult = { ok: true } | { ok: false; error: string };
 // 日付」の3項目を持つCRUDリストという同じ構造のため、フィールドラベルと
 // Server Actionを差し替えるだけの共通コンポーネント(EntryListSection)を
 // 1つ用意し、下のAnnouncementsPanelで2回使い回す。
+// レイアウトは管理画面の閲覧専用ビュー(app/admin/AnnouncementsView.tsx)に
+// 合わせたタブ+左一覧/右詳細の2ペイン構成(2026-09)。マスターはここから
+// 新規追加・編集・削除もできるため、右側は「選択中の項目の詳細(+編集・
+// 削除ボタン)」または「新規追加・編集フォーム」のどちらかを表示する。
 type Entry = {
   id: string;
   primary: string; // お知らせ: title / アップデート情報: version
   body: string;
   date: string; // ISO文字列
 };
+
+type Category = "announcements" | "updates";
 
 function toDateInputValue(iso: string): string {
   const d = new Date(iso);
@@ -44,7 +50,6 @@ function todayInputValue(): string {
 }
 
 function EntryListSection({
-  sectionTitle,
   primaryLabel,
   bodyLabel,
   dateLabel,
@@ -53,7 +58,6 @@ function EntryListSection({
   onUpdate,
   onDelete,
 }: {
-  sectionTitle: string;
   primaryLabel: string;
   bodyLabel: string;
   dateLabel: string;
@@ -69,6 +73,9 @@ function EntryListSection({
 }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    entries[0]?.id ?? null,
+  );
   const [primaryInput, setPrimaryInput] = useState("");
   const [bodyInput, setBodyInput] = useState("");
   const [dateInput, setDateInput] = useState(todayInputValue());
@@ -122,15 +129,16 @@ function EntryListSection({
         return;
       }
       setDeleteTargetId(null);
+      if (selectedId === id) setSelectedId(null);
     });
   };
 
   const formOpen = adding || editingId !== null;
+  const selected = entries.find((e) => e.id === selectedId) ?? null;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-xs font-semibold text-slate-500">{sectionTitle}</p>
+    <div>
+      <div className="mb-3 flex justify-end">
         {!formOpen && (
           <button
             onClick={startAdd}
@@ -141,104 +149,132 @@ function EntryListSection({
         )}
       </div>
 
-      {formOpen && (
-        <div className="mb-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-slate-500">
-              {primaryLabel}
-            </label>
-            <input
-              value={primaryInput}
-              onChange={(e) => setPrimaryInput(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-slate-500">
-              {dateLabel}
-            </label>
-            <input
-              type="date"
-              value={dateInput}
-              onChange={(e) => setDateInput(e.target.value)}
-              className="rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-[11px] font-semibold text-slate-500">
-              {bodyLabel}
-            </label>
-            <textarea
-              value={bodyInput}
-              onChange={(e) => setBodyInput(e.target.value)}
-              rows={4}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
-            />
-          </div>
-          {error && (
-            <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-600">
-              {error}
+      <div className="flex flex-col gap-4 sm:flex-row">
+        <div className="w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
+          {entries.length === 0 ? (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
+              まだ登録されていません
             </p>
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={handleSubmit}
-              disabled={pending}
-              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-            >
-              {pending ? "保存中..." : editingId ? "更新する" : "登録する"}
-            </button>
-            <button
-              onClick={resetForm}
-              disabled={pending}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-            >
-              キャンセル
-            </button>
-          </div>
-        </div>
-      )}
-
-      {entries.length === 0 ? (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
-          まだ登録されていません
-        </p>
-      ) : (
-        <div className="max-h-80 space-y-2 overflow-y-auto rounded-lg border border-slate-200 p-2">
-          {entries.map((entry) => (
-            <div
-              key={entry.id}
-              className="rounded-lg border border-slate-200 bg-white p-3"
-            >
-              <div className="mb-1 flex items-start justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-800">
+          ) : (
+            entries.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => {
+                  setSelectedId(entry.id);
+                  resetForm();
+                }}
+                className={`block w-full rounded-lg border p-3 text-left transition-colors ${
+                  selectedId === entry.id && !formOpen
+                    ? "border-red-300 bg-red-50"
+                    : "border-slate-200 bg-white hover:border-slate-300"
+                }`}
+              >
+                <span className="block truncate text-sm font-semibold text-slate-800">
                   {entry.primary}
-                </p>
-                <span className="shrink-0 text-[11px] text-slate-400">
+                </span>
+                <span className="block text-[11px] text-slate-400">
                   {formatDate(entry.date)}
                 </span>
+              </button>
+            ))
+          )}
+        </div>
+
+        <div className="min-h-[16rem] min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-4">
+          {formOpen ? (
+            <div className="space-y-2">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-slate-500">
+                  {primaryLabel}
+                </label>
+                <input
+                  value={primaryInput}
+                  onChange={(e) => setPrimaryInput(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+                />
               </div>
-              <p className="whitespace-pre-wrap text-xs text-slate-600">
-                {entry.body}
-              </p>
-              <div className="mt-2 flex gap-2">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-slate-500">
+                  {dateLabel}
+                </label>
+                <input
+                  type="date"
+                  value={dateInput}
+                  onChange={(e) => setDateInput(e.target.value)}
+                  className="rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold text-slate-500">
+                  {bodyLabel}
+                </label>
+                <textarea
+                  value={bodyInput}
+                  onChange={(e) => setBodyInput(e.target.value)}
+                  rows={6}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+                />
+              </div>
+              {error && (
+                <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-600">
+                  {error}
+                </p>
+              )}
+              <div className="flex gap-2">
                 <button
-                  onClick={() => startEdit(entry)}
-                  className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                  onClick={handleSubmit}
+                  disabled={pending}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
                 >
-                  編集
+                  {pending ? "保存中..." : editingId ? "更新する" : "登録する"}
                 </button>
                 <button
-                  onClick={() => setDeleteTargetId(entry.id)}
-                  className="rounded border border-red-300 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50"
+                  onClick={resetForm}
+                  disabled={pending}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
                 >
-                  削除
+                  キャンセル
                 </button>
               </div>
             </div>
-          ))}
+          ) : selected ? (
+            <>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs text-slate-400">
+                  {formatDate(selected.date)}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => startEdit(selected)}
+                    className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    編集
+                  </button>
+                  <button
+                    onClick={() => setDeleteTargetId(selected.id)}
+                    className="rounded border border-red-300 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50"
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
+              {error && (
+                <p className="mb-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-600">
+                  {error}
+                </p>
+              )}
+              <p className="whitespace-pre-wrap text-sm text-slate-600">
+                {selected.body}
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-slate-400">
+              左の一覧から選択、または新規追加してください
+            </p>
+          )}
         </div>
-      )}
+      </div>
 
       {deleteTargetId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -277,39 +313,63 @@ export default function AnnouncementsPanel({
   announcements: Announcement[];
   updateLogs: UpdateLog[];
 }) {
-  return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <EntryListSection
-        sectionTitle="お知らせ"
-        primaryLabel="タイトル"
-        bodyLabel="本文"
-        dateLabel="公開日"
-        entries={announcements.map((a) => ({
-          id: a.id,
-          primary: a.title,
-          body: a.body,
-          date: a.publishedAt,
-        }))}
-        onCreate={createAnnouncement}
-        onUpdate={updateAnnouncement}
-        onDelete={deleteAnnouncement}
-      />
+  const [category, setCategory] = useState<Category>("announcements");
 
-      <EntryListSection
-        sectionTitle="アップデート情報"
-        primaryLabel="バージョン番号(例: v2.3.1)"
-        bodyLabel="変更内容"
-        dateLabel="リリース日"
-        entries={updateLogs.map((u) => ({
-          id: u.id,
-          primary: u.version,
-          body: u.body,
-          date: u.releasedAt,
-        }))}
-        onCreate={createUpdateLog}
-        onUpdate={updateUpdateLog}
-        onDelete={deleteUpdateLog}
-      />
+  const tabs: { id: Category; label: string }[] = [
+    { id: "announcements", label: "告知" },
+    { id: "updates", label: "アップデート" },
+  ];
+
+  return (
+    <div className="mx-auto max-w-4xl">
+      <div className="mb-4 flex gap-2 border-b border-slate-200">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setCategory(t.id)}
+            className={`border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
+              category === t.id
+                ? "border-red-600 text-red-600"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {category === "announcements" ? (
+        <EntryListSection
+          primaryLabel="タイトル"
+          bodyLabel="本文"
+          dateLabel="公開日"
+          entries={announcements.map((a) => ({
+            id: a.id,
+            primary: a.title,
+            body: a.body,
+            date: a.publishedAt,
+          }))}
+          onCreate={createAnnouncement}
+          onUpdate={updateAnnouncement}
+          onDelete={deleteAnnouncement}
+        />
+      ) : (
+        <EntryListSection
+          primaryLabel="バージョン番号(例: v2.3.1)"
+          bodyLabel="変更内容"
+          dateLabel="リリース日"
+          entries={updateLogs.map((u) => ({
+            id: u.id,
+            primary: u.version,
+            body: u.body,
+            date: u.releasedAt,
+          }))}
+          onCreate={createUpdateLog}
+          onUpdate={updateUpdateLog}
+          onDelete={deleteUpdateLog}
+        />
+      )}
     </div>
   );
 }
