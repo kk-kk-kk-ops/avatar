@@ -174,6 +174,14 @@ alter table public.accounts
 alter table public.accounts
   add column if not exists livekit_server_id text;
 
+-- 管理画面「お知らせ」タブの未読アイコン表示用。この日時より新しい
+-- announcements.published_at / update_logs.released_atが1件でもあれば
+-- 未読とみなす。列追加時点の既存アカウントはnow()をデフォルトにして、
+-- 追加前からある投稿を既読扱いにする(追加後の新規投稿だけが未読として
+-- 検知される)。admin本人がお知らせタブを開いた時にだけ更新する。
+alter table public.accounts
+  add column if not exists announcements_last_read_at timestamptz not null default now();
+
 drop policy if exists "accounts: insert own" on public.accounts;
 create policy "accounts: insert own"
   on public.accounts for insert

@@ -25,7 +25,7 @@ export default async function AdminPage() {
   const { data: account } = await supabase
     .from("accounts")
     .select(
-      "id, name, plan, trial_ends_at, invite_token, invite_inviter_name, stripe_customer_id, stripe_subscription_id",
+      "id, name, plan, trial_ends_at, invite_token, invite_inviter_name, stripe_customer_id, stripe_subscription_id, announcements_last_read_at",
     )
     .eq("id", state.accountId)
     .single();
@@ -97,6 +97,20 @@ export default async function AdminPage() {
     releasedAt: u.released_at,
   }));
 
+  // 「お知らせ」タブの未読アイコン: announcements/update_logsのうち最新の
+  // 日時が、このアカウントが最後にタブを開いた日時より新しければ未読。
+  const latestContentAt = [
+    ...announcements.map((a) => a.publishedAt),
+    ...updateLogs.map((u) => u.releasedAt),
+  ].reduce<string | null>(
+    (latest, d) => (!latest || d > latest ? d : latest),
+    null,
+  );
+  const hasUnreadAnnouncements =
+    !!latestContentAt &&
+    (!account?.announcements_last_read_at ||
+      latestContentAt > account.announcements_last_read_at);
+
   const plan = (account?.plan as PlanId) ?? "free";
   const maxRooms = PLANS[plan].maxRooms;
 
@@ -129,6 +143,7 @@ export default async function AdminPage() {
       hasActiveSubscription={!!account?.stripe_subscription_id}
       announcements={announcements}
       updateLogs={updateLogs}
+      hasUnreadAnnouncements={hasUnreadAnnouncements}
     />
   );
 }

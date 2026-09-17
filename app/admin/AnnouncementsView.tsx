@@ -27,7 +27,7 @@ function ReadOnlyEntryList({
   entries: Entry[];
 }) {
   return (
-    <div>
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
       <p className="mb-2 text-xs font-semibold text-slate-500">{sectionTitle}</p>
       {entries.length === 0 ? (
         <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
