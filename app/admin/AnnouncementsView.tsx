@@ -84,14 +84,9 @@ function EntryPane({
 
       <div className="min-h-[16rem] min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-4">
         {selected ? (
-          <>
-            <p className="mb-2 text-right text-xs text-slate-400">
-              {formatDate(selected.date)}
-            </p>
-            <p className="whitespace-pre-wrap text-sm text-slate-600">
-              {selected.body}
-            </p>
-          </>
+          <p className="whitespace-pre-wrap text-sm text-slate-600">
+            {selected.body}
+          </p>
         ) : (
           <p className="text-xs text-slate-400">左の一覧から選択してください</p>
         )}
