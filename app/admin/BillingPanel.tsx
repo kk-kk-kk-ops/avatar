@@ -181,17 +181,15 @@ export default function BillingPanel({
         )}
       </div>
 
-      {hasStripeCustomer && (
-        <div>
-          <button
-            onClick={handlePaymentMethodClick}
-            disabled={billingPending !== null}
-            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
-          >
-            {billingPending === "payment_method" ? "処理中..." : "支払い情報変更"}
-          </button>
-        </div>
-      )}
+      <div>
+        <button
+          onClick={handlePaymentMethodClick}
+          disabled={billingPending !== null}
+          className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+        >
+          {billingPending === "payment_method" ? "処理中..." : "支払い情報変更"}
+        </button>
+      </div>
 
       <div>
         <p className="mb-1 text-xs font-semibold text-slate-500">請求履歴</p>
