@@ -27,14 +27,14 @@ function ReadOnlyEntryList({
   entries: Entry[];
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
+    <div>
       <p className="mb-2 text-xs font-semibold text-slate-500">{sectionTitle}</p>
       {entries.length === 0 ? (
         <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
           まだ登録されていません
         </p>
       ) : (
-        <div className="max-h-80 space-y-2 overflow-y-auto rounded-lg border border-slate-200 p-2">
+        <div className="max-h-80 space-y-2 overflow-y-auto">
           {entries.map((entry) => (
             <div
               key={entry.id}
