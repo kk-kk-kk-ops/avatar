@@ -16,7 +16,7 @@ type Tab = "dashboard" | "rooms" | "invite" | "announcements" | "billing";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "ダッシュボード" },
-  { id: "rooms", label: "ルーム管理" },
+  { id: "rooms", label: "ルーム" },
   { id: "invite", label: "招待" },
   { id: "announcements", label: "お知らせ" },
   { id: "billing", label: "契約情報" },
