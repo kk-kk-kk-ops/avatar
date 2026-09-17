@@ -10,6 +10,7 @@ import RoomManager from "./RoomManager";
 import InvitePanel from "./InvitePanel";
 import BillingPanel from "./BillingPanel";
 import AnnouncementsView from "./AnnouncementsView";
+import { markAnnouncementsRead } from "./actions";
 
 type Tab = "dashboard" | "rooms" | "invite" | "announcements" | "billing";
 
@@ -44,6 +45,7 @@ export default function AdminDashboard({
   hasActiveSubscription,
   announcements,
   updateLogs,
+  hasUnreadAnnouncements,
 }: {
   rooms: Room[];
   plan: PlanId;
@@ -60,9 +62,14 @@ export default function AdminDashboard({
   hasActiveSubscription: boolean;
   announcements: Announcement[];
   updateLogs: UpdateLog[];
+  hasUnreadAnnouncements: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // サーバー側の判定(前回タブを開いた日時 vs 最新投稿日時)をそのまま
+  // 初期値にし、タブを開いた瞬間だけクライアント側で即座に消す
+  // (再取得を待たずにアイコンを消すため)。
+  const [unread, setUnread] = useState(hasUnreadAnnouncements);
 
   // 多重ログイン検知(2026-09追加。手順9)。別のタブ/デバイスで同じ
   // アカウントが後からログインしてきた場合、この管理画面セッションを
@@ -72,6 +79,13 @@ export default function AdminDashboard({
   const selectTab = (t: Tab) => {
     setTab(t);
     setSidebarOpen(false);
+    if (t === "announcements" && unread) {
+      setUnread(false);
+      markAnnouncementsRead().catch(() => {
+        // 既読マークの失敗は表示上は無視する(次にタブを開いた時に
+        // また未読アイコンが出るだけで、閲覧自体は既にできている)。
+      });
+    }
   };
 
   return (
@@ -133,13 +147,21 @@ export default function AdminDashboard({
             <button
               key={t.id}
               onClick={() => selectTab(t.id)}
-              className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
                 tab === t.id
                   ? "bg-red-600 text-white"
                   : "text-slate-300 hover:bg-slate-800"
               }`}
             >
-              {t.label}
+              <span>{t.label}</span>
+              {t.id === "announcements" && unread && (
+                <span
+                  aria-label="未読のお知らせがあります"
+                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold leading-none text-white"
+                >
+                  !
+                </span>
+              )}
             </button>
           ))}
         </nav>
