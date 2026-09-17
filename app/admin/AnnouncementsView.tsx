@@ -85,14 +85,9 @@ function EntryPane({
       <div className="min-h-[16rem] min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-4">
         {selected ? (
           <>
-            <div className="mb-2 flex items-start justify-between gap-2">
-              <p className="text-base font-bold text-slate-800">
-                {selected.primary}
-              </p>
-              <span className="shrink-0 text-xs text-slate-400">
-                {formatDate(selected.date)}
-              </span>
-            </div>
+            <p className="mb-2 text-right text-xs text-slate-400">
+              {formatDate(selected.date)}
+            </p>
             <p className="whitespace-pre-wrap text-sm text-slate-600">
               {selected.body}
             </p>
