@@ -77,8 +77,9 @@ export default async function AdminPage() {
   // INSERT/UPDATE/DELETEはマスターのみ)。
   const { data: announcementRows } = await supabase
     .from("announcements")
-    .select("id, title, body, published_at")
-    .order("published_at", { ascending: false });
+    .select("id, title, body, published_at, created_at")
+    .order("published_at", { ascending: false })
+    .order("created_at", { ascending: false });
   const announcements: Announcement[] = (announcementRows ?? []).map((a) => ({
     id: a.id,
     title: a.title,
@@ -88,8 +89,9 @@ export default async function AdminPage() {
 
   const { data: updateLogRows } = await supabase
     .from("update_logs")
-    .select("id, version, body, released_at")
-    .order("released_at", { ascending: false });
+    .select("id, version, body, released_at, created_at")
+    .order("released_at", { ascending: false })
+    .order("created_at", { ascending: false });
   const updateLogs: UpdateLog[] = (updateLogRows ?? []).map((u) => ({
     id: u.id,
     version: u.version,
@@ -97,11 +99,16 @@ export default async function AdminPage() {
     releasedAt: u.released_at,
   }));
 
-  // 「お知らせ」タブの未読アイコン: announcements/update_logsのうち最新の
-  // 日時が、このアカウントが最後にタブを開いた日時より新しければ未読。
+  // 「お知らせ」タブの未読アイコン: 実際に投稿された時刻(created_at)の
+  // うち最新のものが、このアカウントが最後にタブを開いた日時より新しければ
+  // 未読とする。published_at/released_atはマスターが自由に選べる「表示上の
+  // 日付」(日付のみで時刻を持たない)なので、これを基準にすると同日投稿が
+  // 既読時刻より前と判定されてしまいアイコンが出ないことがあった
+  // (2026-09報告)。created_atは常にサーバー側でその時点のnow()が入るため、
+  // 投稿順の判定として確実。
   const latestContentAt = [
-    ...announcements.map((a) => a.publishedAt),
-    ...updateLogs.map((u) => u.releasedAt),
+    ...(announcementRows ?? []).map((a) => a.created_at),
+    ...(updateLogRows ?? []).map((u) => u.created_at),
   ].reduce<string | null>(
     (latest, d) => (!latest || d > latest ? d : latest),
     null,
