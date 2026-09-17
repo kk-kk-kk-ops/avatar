@@ -25,7 +25,7 @@ export default async function AdminPage() {
   const { data: account } = await supabase
     .from("accounts")
     .select(
-      "id, name, plan, trial_ends_at, invite_token, invite_inviter_name, stripe_customer_id, stripe_subscription_id, announcements_last_read_at",
+      "id, name, plan, trial_ends_at, invite_token, invite_inviter_name, stripe_customer_id, stripe_subscription_id",
     )
     .eq("id", state.accountId)
     .single();
@@ -80,43 +80,51 @@ export default async function AdminPage() {
     .select("id, title, body, published_at, created_at")
     .order("published_at", { ascending: false })
     .order("created_at", { ascending: false });
-  const announcements: Announcement[] = (announcementRows ?? []).map((a) => ({
-    id: a.id,
-    title: a.title,
-    body: a.body,
-    publishedAt: a.published_at,
-  }));
 
   const { data: updateLogRows } = await supabase
     .from("update_logs")
     .select("id, version, body, released_at, created_at")
     .order("released_at", { ascending: false })
     .order("created_at", { ascending: false });
-  const updateLogs: UpdateLog[] = (updateLogRows ?? []).map((u) => ({
+
+  // 「告知」「アップデート」タブ内、タイトルごとの未読バッジ表示用
+  // (項目単位の既読管理。詳細はsupabase/consolidated_setup.sqlの
+  // announcement_reads/update_log_reads参照)。
+  const { data: announcementReadRows } = await supabase
+    .from("announcement_reads")
+    .select("announcement_id")
+    .eq("account_id", state.accountId);
+  const readAnnouncementIds = new Set(
+    (announcementReadRows ?? []).map((r) => r.announcement_id),
+  );
+
+  const { data: updateLogReadRows } = await supabase
+    .from("update_log_reads")
+    .select("update_log_id")
+    .eq("account_id", state.accountId);
+  const readUpdateLogIds = new Set(
+    (updateLogReadRows ?? []).map((r) => r.update_log_id),
+  );
+
+  const announcements: (Announcement & { unread: boolean })[] = (
+    announcementRows ?? []
+  ).map((a) => ({
+    id: a.id,
+    title: a.title,
+    body: a.body,
+    publishedAt: a.published_at,
+    unread: !readAnnouncementIds.has(a.id),
+  }));
+
+  const updateLogs: (UpdateLog & { unread: boolean })[] = (
+    updateLogRows ?? []
+  ).map((u) => ({
     id: u.id,
     version: u.version,
     body: u.body,
     releasedAt: u.released_at,
+    unread: !readUpdateLogIds.has(u.id),
   }));
-
-  // 「お知らせ」タブの未読アイコン: 実際に投稿された時刻(created_at)の
-  // うち最新のものが、このアカウントが最後にタブを開いた日時より新しければ
-  // 未読とする。published_at/released_atはマスターが自由に選べる「表示上の
-  // 日付」(日付のみで時刻を持たない)なので、これを基準にすると同日投稿が
-  // 既読時刻より前と判定されてしまいアイコンが出ないことがあった
-  // (2026-09報告)。created_atは常にサーバー側でその時点のnow()が入るため、
-  // 投稿順の判定として確実。
-  const latestContentAt = [
-    ...(announcementRows ?? []).map((a) => a.created_at),
-    ...(updateLogRows ?? []).map((u) => u.created_at),
-  ].reduce<string | null>(
-    (latest, d) => (!latest || d > latest ? d : latest),
-    null,
-  );
-  const hasUnreadAnnouncements =
-    !!latestContentAt &&
-    (!account?.announcements_last_read_at ||
-      latestContentAt > account.announcements_last_read_at);
 
   const plan = (account?.plan as PlanId) ?? "free";
   const maxRooms = PLANS[plan].maxRooms;
@@ -150,7 +158,6 @@ export default async function AdminPage() {
       hasActiveSubscription={!!account?.stripe_subscription_id}
       announcements={announcements}
       updateLogs={updateLogs}
-      hasUnreadAnnouncements={hasUnreadAnnouncements}
     />
   );
 }
