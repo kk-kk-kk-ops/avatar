@@ -1045,6 +1045,12 @@ export default function AvatarSpace({
   const [meetingZones, setMeetingZones] = useState<MeetingZone[]>(
     DEFAULT_MEETING_ZONES,
   );
+  // 入室直後、実際のテンプレート(背景画像・障害物・ミーティングエリア)を
+  // DBから取り直す間、上のDEFAULT_OBSTACLES/DEFAULT_MEETING_ZONES(汎用の
+  // ダミーレイアウト)がそのまま一瞬表示されてしまう不具合があった
+  // (2026-09報告)。取得が終わるまでマップ本体を表示せず、代わりに
+  // 「読み込み中」を出すためのフラグ。
+  const [templateLoaded, setTemplateLoaded] = useState(false);
 
   const obstaclesRef = useRef<Obstacle[]>(DEFAULT_OBSTACLES);
   const meetingZonesRef = useRef<MeetingZone[]>(DEFAULT_MEETING_ZONES);
@@ -4096,143 +4102,151 @@ export default function AvatarSpace({
     // 連続した場合、既にアンマウント/差し替え済みの古いfetchの結果で
     // setState群が呼ばれてしまう経路があった。
     let cancelled = false;
+    // ルーム切り替え時も、切り替え前のテンプレートがそのまま一瞬表示
+    // されないようリセットする(初回入室時はデフォルト値の表示を防ぐため
+    // どちらも同じフラグで扱う)。
+    setTemplateLoaded(false);
     (async () => {
-      // 2026-09 QA指摘(新規不具合): 以前はここで props の rooms(=
-      // app/page.tsxのサーバーコンポーネントがページ表示時に1回だけ
-      // 取得したスナップショット)からtemplate_idを読んでいた。招待URL
-      // 経由のゲストが入室前のロビー画面で待っている間に管理者がルーム
-      // デザインを変更すると、既に入室済みの参加者はforce-leaveの
-      // broadcastで強制退出・再入室させられる一方、まだRealtime
-      // チャンネルを購読していないロビー待機中のゲストにはbroadcastが
-      // 届かない。その結果、ロビーで待っていたゲストだけが古い
-      // template_idのまま入室してしまい、見た目上は別のルームデザインに
-      // 見えるのに、実際には同じLiveKitルーム(roomIdは変わらないため)
-      // に接続され、音声・映像・画面共有がそのまま繋がってしまっていた。
-      // 入室する瞬間に必ずDBからtemplate_idを取り直すことで解消する。
-      const { data: roomRow } = viewOnlyInviteToken
-        ? await (async () => {
-            const res = await supabase.rpc("list_rooms_by_invite_token", {
-              token: viewOnlyInviteToken,
-            });
-            const matched = (
-              res.data as Array<{
-                id: string;
-                template_id: string | null;
-              }> | null
-            )?.find((r) => r.id === roomId);
-            return { data: matched ? { template_id: matched.template_id } : null };
-          })()
-        : await supabase
-            .from("rooms")
-            .select("template_id")
-            .eq("id", roomId)
-            .maybeSingle();
-      if (cancelled || !roomRow?.template_id) return;
-      const templateId = roomRow.template_id;
+      try {
+        // 2026-09 QA指摘(新規不具合): 以前はここで props の rooms(=
+        // app/page.tsxのサーバーコンポーネントがページ表示時に1回だけ
+        // 取得したスナップショット)からtemplate_idを読んでいた。招待URL
+        // 経由のゲストが入室前のロビー画面で待っている間に管理者がルーム
+        // デザインを変更すると、既に入室済みの参加者はforce-leaveの
+        // broadcastで強制退出・再入室させられる一方、まだRealtime
+        // チャンネルを購読していないロビー待機中のゲストにはbroadcastが
+        // 届かない。その結果、ロビーで待っていたゲストだけが古い
+        // template_idのまま入室してしまい、見た目上は別のルームデザインに
+        // 見えるのに、実際には同じLiveKitルーム(roomIdは変わらないため)
+        // に接続され、音声・映像・画面共有がそのまま繋がってしまっていた。
+        // 入室する瞬間に必ずDBからtemplate_idを取り直すことで解消する。
+        const { data: roomRow } = viewOnlyInviteToken
+          ? await (async () => {
+              const res = await supabase.rpc("list_rooms_by_invite_token", {
+                token: viewOnlyInviteToken,
+              });
+              const matched = (
+                res.data as Array<{
+                  id: string;
+                  template_id: string | null;
+                }> | null
+              )?.find((r) => r.id === roomId);
+              return { data: matched ? { template_id: matched.template_id } : null };
+            })()
+          : await supabase
+              .from("rooms")
+              .select("template_id")
+              .eq("id", roomId)
+              .maybeSingle();
+        if (cancelled || !roomRow?.template_id) return;
+        const templateId = roomRow.template_id;
 
-      const { data } = await supabase
-        .from("templates")
-        .select(
-          "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, placed_objects",
-        )
-        .eq("id", templateId)
-        .maybeSingle();
-      if (cancelled || !data) return;
+        const { data } = await supabase
+          .from("templates")
+          .select(
+            "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, placed_objects",
+          )
+          .eq("id", templateId)
+          .maybeSingle();
+        if (cancelled || !data) return;
 
-      if (data.background_image_url) {
-        setBackgroundImageUrl(data.background_image_url);
-      }
-
-      if (data.map_width && data.map_height) {
-        setMapSize({ width: data.map_width, height: data.map_height });
-      }
-
-      let loadedObstacles: Obstacle[] | null = null;
-      if (Array.isArray(data.obstacles)) {
-        loadedObstacles = (data.obstacles as Array<Partial<Obstacle>>).map(
-          (o, i) => ({
-            id: o.id ?? `obstacle-${i}`,
-            x: o.x ?? 0,
-            y: o.y ?? 0,
-            width: o.width ?? NEW_ITEM_SIZE,
-            height: o.height ?? NEW_ITEM_SIZE,
-            label: o.label ?? "🧱 壁",
-            rotation: o.rotation ?? 0,
-          }),
-        );
-        setObstacles(loadedObstacles);
-      }
-
-      // 初期位置の反映:テンプレートにアバター初期位置(spawn_x/y)が設定
-      // されていればそちらを、なければ現在位置(handleJoin時点のマップ中心)
-      // を基準にし、障害物と重なっていれば上端のすぐ上へ押し出す。
-      if (selfState.current) {
-        const baseX = data.spawn_x ?? selfState.current.x;
-        const baseY = data.spawn_y ?? selfState.current.y;
-        const resolved = resolveSpawnPosition(
-          baseX,
-          baseY,
-          loadedObstacles ?? obstaclesRef.current,
-        );
-        if (
-          resolved.x !== selfState.current.x ||
-          resolved.y !== selfState.current.y
-        ) {
-          selfState.current.x = resolved.x;
-          selfState.current.y = resolved.y;
-          const updated = selfState.current;
-          setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
-          channelRef.current?.track(updated);
+        if (data.background_image_url) {
+          setBackgroundImageUrl(data.background_image_url);
         }
-      }
 
-      const rawZones = data.meeting_area;
-      if (rawZones) {
-        const zonesArray = Array.isArray(rawZones) ? rawZones : [rawZones];
-        const loaded = (zonesArray as Array<Partial<MeetingZone>>).map(
-          (z, i) => ({
-            id: z.id ?? `meeting-${i}`,
-            x: z.x ?? 0,
-            y: z.y ?? 0,
-            width: z.width ?? NEW_ITEM_SIZE,
-            height: z.height ?? NEW_ITEM_SIZE,
-            label: z.label ?? "ミーティングエリア",
-            kind: z.kind ?? "meeting",
-          }),
-        );
-        setMeetingZones(loaded);
-      }
+        if (data.map_width && data.map_height) {
+          setMapSize({ width: data.map_width, height: data.map_height });
+        }
 
-      const rawWarpPoints = data.warp_points;
-      if (Array.isArray(rawWarpPoints)) {
-        const loadedWarpPoints = (rawWarpPoints as Array<Partial<WarpPoint>>)
-          .filter((w) => w.channel === "A" || w.channel === "B" || w.channel === "C")
-          .map((w, i) => ({
-            id: w.id ?? `warp-${i}`,
-            channel: w.channel as "A" | "B" | "C",
-            x: w.x ?? 0,
-            y: w.y ?? 0,
-            label: w.label ?? "",
-          }));
-        setWarpPoints(loadedWarpPoints);
-      }
+        let loadedObstacles: Obstacle[] | null = null;
+        if (Array.isArray(data.obstacles)) {
+          loadedObstacles = (data.obstacles as Array<Partial<Obstacle>>).map(
+            (o, i) => ({
+              id: o.id ?? `obstacle-${i}`,
+              x: o.x ?? 0,
+              y: o.y ?? 0,
+              width: o.width ?? NEW_ITEM_SIZE,
+              height: o.height ?? NEW_ITEM_SIZE,
+              label: o.label ?? "🧱 壁",
+              rotation: o.rotation ?? 0,
+            }),
+          );
+          setObstacles(loadedObstacles);
+        }
 
-      const rawPlacedObjects = data.placed_objects;
-      if (Array.isArray(rawPlacedObjects)) {
-        const loadedPlacedObjects = (
-          rawPlacedObjects as Array<Partial<PlacedObject>>
-        )
-          .filter((o) => !!o.imageUrl)
-          .map((o, i) => ({
-            id: o.id ?? `placed-object-${i}`,
-            imageUrl: o.imageUrl as string,
-            x: o.x ?? 0,
-            y: o.y ?? 0,
-            width: o.width ?? NEW_ITEM_SIZE,
-            height: o.height ?? NEW_ITEM_SIZE,
-            rotation: o.rotation ?? 0,
-          }));
-        setPlacedObjects(loadedPlacedObjects);
+        // 初期位置の反映:テンプレートにアバター初期位置(spawn_x/y)が設定
+        // されていればそちらを、なければ現在位置(handleJoin時点のマップ中心)
+        // を基準にし、障害物と重なっていれば上端のすぐ上へ押し出す。
+        if (selfState.current) {
+          const baseX = data.spawn_x ?? selfState.current.x;
+          const baseY = data.spawn_y ?? selfState.current.y;
+          const resolved = resolveSpawnPosition(
+            baseX,
+            baseY,
+            loadedObstacles ?? obstaclesRef.current,
+          );
+          if (
+            resolved.x !== selfState.current.x ||
+            resolved.y !== selfState.current.y
+          ) {
+            selfState.current.x = resolved.x;
+            selfState.current.y = resolved.y;
+            const updated = selfState.current;
+            setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
+            channelRef.current?.track(updated);
+          }
+        }
+
+        const rawZones = data.meeting_area;
+        if (rawZones) {
+          const zonesArray = Array.isArray(rawZones) ? rawZones : [rawZones];
+          const loaded = (zonesArray as Array<Partial<MeetingZone>>).map(
+            (z, i) => ({
+              id: z.id ?? `meeting-${i}`,
+              x: z.x ?? 0,
+              y: z.y ?? 0,
+              width: z.width ?? NEW_ITEM_SIZE,
+              height: z.height ?? NEW_ITEM_SIZE,
+              label: z.label ?? "ミーティングエリア",
+              kind: z.kind ?? "meeting",
+            }),
+          );
+          setMeetingZones(loaded);
+        }
+
+        const rawWarpPoints = data.warp_points;
+        if (Array.isArray(rawWarpPoints)) {
+          const loadedWarpPoints = (rawWarpPoints as Array<Partial<WarpPoint>>)
+            .filter((w) => w.channel === "A" || w.channel === "B" || w.channel === "C")
+            .map((w, i) => ({
+              id: w.id ?? `warp-${i}`,
+              channel: w.channel as "A" | "B" | "C",
+              x: w.x ?? 0,
+              y: w.y ?? 0,
+              label: w.label ?? "",
+            }));
+          setWarpPoints(loadedWarpPoints);
+        }
+
+        const rawPlacedObjects = data.placed_objects;
+        if (Array.isArray(rawPlacedObjects)) {
+          const loadedPlacedObjects = (
+            rawPlacedObjects as Array<Partial<PlacedObject>>
+          )
+            .filter((o) => !!o.imageUrl)
+            .map((o, i) => ({
+              id: o.id ?? `placed-object-${i}`,
+              imageUrl: o.imageUrl as string,
+              x: o.x ?? 0,
+              y: o.y ?? 0,
+              width: o.width ?? NEW_ITEM_SIZE,
+              height: o.height ?? NEW_ITEM_SIZE,
+              rotation: o.rotation ?? 0,
+            }));
+          setPlacedObjects(loadedPlacedObjects);
+        }
+      } finally {
+        if (!cancelled) setTemplateLoaded(true);
       }
     })();
     return () => {
@@ -7585,6 +7599,18 @@ export default function AvatarSpace({
           ref={containerRef}
           className="relative min-w-0 flex-1 overflow-hidden bg-slate-700 sm:order-3"
         >
+          {/* 実際のテンプレート(背景画像・障害物・ミーティングエリア)を
+              DBから取得し終えるまで、下のworldRefが初期値(DEFAULT_OBSTACLES/
+              DEFAULT_MEETING_ZONES、汎用のダミーレイアウト)のまま一瞬表示
+              されてしまっていた(2026-09報告)。マップ本体はそのまま
+              (ref・エフェクト等を維持するため)アンマウントせず、読み込み中は
+              このオーバーレイで覆って見せないようにする。 */}
+          {!templateLoaded && (
+            <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-800">
+              <p className="text-sm text-slate-300">読み込み中...</p>
+            </div>
+          )}
+
           {/* 「会議モード」ボタン(旧「会議画面」。2026-09報告により
               ヘッダーからアバター空間エリアの上部中央へ移動し、名称も
               変更した)。ビデオプレビュー行(下記、常時表示プレビュー行)
