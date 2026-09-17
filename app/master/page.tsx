@@ -127,7 +127,8 @@ export default async function MasterPage() {
   const { data: announcementRows } = await supabase
     .from("announcements")
     .select("id, title, body, published_at")
-    .order("published_at", { ascending: false });
+    .order("published_at", { ascending: false })
+    .order("created_at", { ascending: false });
   const announcements: Announcement[] = (announcementRows ?? []).map((a) => ({
     id: a.id,
     title: a.title,
@@ -138,7 +139,8 @@ export default async function MasterPage() {
   const { data: updateLogRows } = await supabase
     .from("update_logs")
     .select("id, version, body, released_at")
-    .order("released_at", { ascending: false });
+    .order("released_at", { ascending: false })
+    .order("created_at", { ascending: false });
   const updateLogs: UpdateLog[] = (updateLogRows ?? []).map((u) => ({
     id: u.id,
     version: u.version,
