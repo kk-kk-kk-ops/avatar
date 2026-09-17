@@ -135,15 +135,31 @@ export async function regenerateInviteToken() {
   revalidatePath("/admin");
 }
 
-// 「お知らせ」タブを開いたときに未読アイコンを消すための既読マーク。
-// これより新しいannouncements/update_logsが投稿されると再度未読表示になる。
-export async function markAnnouncementsRead() {
+// 「告知」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
+export async function markAnnouncementRead(announcementId: string) {
   const { supabase, account } = await requireAdminAccount();
 
   const { error } = await supabase
-    .from("accounts")
-    .update({ announcements_last_read_at: new Date().toISOString() })
-    .eq("id", account.id);
+    .from("announcement_reads")
+    .upsert(
+      { account_id: account.id, announcement_id: announcementId },
+      { onConflict: "account_id,announcement_id" },
+    );
+  if (error) throw new Error("既読状態の更新に失敗しました");
+
+  revalidatePath("/admin");
+}
+
+// 「アップデート」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
+export async function markUpdateLogRead(updateLogId: string) {
+  const { supabase, account } = await requireAdminAccount();
+
+  const { error } = await supabase
+    .from("update_log_reads")
+    .upsert(
+      { account_id: account.id, update_log_id: updateLogId },
+      { onConflict: "account_id,update_log_id" },
+    );
   if (error) throw new Error("既読状態の更新に失敗しました");
 
   revalidatePath("/admin");

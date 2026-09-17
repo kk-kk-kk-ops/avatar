@@ -2976,6 +2976,67 @@ create policy "update_logs: modify master"
   with check (public.is_master(auth.uid()));
 
 
+-- ------------------------------------------------------------
+-- 20. announcement_reads・update_log_reads(項目単位の既読管理)。
+--     管理画面「告知」「アップデート」タブ内、タイトルボックスごとの
+--     未読バッジ表示用(2026-09)。account単位で「どの項目を開いたか」を
+--     記録する。以前あったaccounts.announcements_last_read_at(タブ全体
+--     を開いたら一括既読にする方式)は、項目ごとの既読管理に置き換わった
+--     ため削除する。
+-- ------------------------------------------------------------
+alter table public.accounts drop column if exists announcements_last_read_at;
+
+create table if not exists public.announcement_reads (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  announcement_id uuid not null references public.announcements(id) on delete cascade,
+  read_at timestamptz not null default now(),
+  primary key (account_id, announcement_id)
+);
+
+alter table public.announcement_reads enable row level security;
+
+drop policy if exists "announcement_reads: own account" on public.announcement_reads;
+create policy "announcement_reads: own account"
+  on public.announcement_reads for all
+  using (
+    exists (
+      select 1 from public.accounts a
+      where a.id = announcement_reads.account_id and a.owner_user_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.accounts a
+      where a.id = announcement_reads.account_id and a.owner_user_id = auth.uid()
+    )
+  );
+
+create table if not exists public.update_log_reads (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  update_log_id uuid not null references public.update_logs(id) on delete cascade,
+  read_at timestamptz not null default now(),
+  primary key (account_id, update_log_id)
+);
+
+alter table public.update_log_reads enable row level security;
+
+drop policy if exists "update_log_reads: own account" on public.update_log_reads;
+create policy "update_log_reads: own account"
+  on public.update_log_reads for all
+  using (
+    exists (
+      select 1 from public.accounts a
+      where a.id = update_log_reads.account_id and a.owner_user_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.accounts a
+      where a.id = update_log_reads.account_id and a.owner_user_id = auth.uid()
+    )
+  );
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。
