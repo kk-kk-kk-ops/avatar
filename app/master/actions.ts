@@ -149,7 +149,18 @@ export async function replaceTemplateImage(
     .eq("id", templateId);
   if (error) return { ok: false, error: "画像の更新に失敗しました" };
 
+  // rooms.preview_imageはテンプレート適用時点の背景画像をコピーした
+  // スナップショットなので、ここで背景画像だけ差し替えても自動では
+  // 追従しない。このテンプレートを使っている全ルームのプレビューも
+  // 一緒に更新し、admin画面の「現在適用中ルーム」表示が古い画像の
+  // ままにならないようにする(2026-09報告のズレ対応)。
+  await supabase
+    .from("rooms")
+    .update({ preview_image: backgroundImageUrl })
+    .eq("template_id", templateId);
+
   revalidatePath("/master");
+  revalidatePath("/admin");
   return { ok: true };
 }
 
