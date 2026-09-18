@@ -2058,10 +2058,15 @@ export default function TemplateEditor({
                 <div
                   key={o.id}
                   onPointerDown={(e) => handlePointerDown(e, "object", o.id, "move")}
-                  className={`absolute cursor-move rounded border ${
+                  className={`absolute cursor-move rounded ${
+                    // 2026-09報告: 選択時にborderの太さ(1px→2px)が変わると、
+                    // box-sizing: border-boxのもとでは中身の<img>の実サイズが
+                    // 縮んでしまう(borderは要素サイズの内側に食い込むため)。
+                    // outlineはボックスサイズに一切影響せず外側に描かれるため、
+                    // 選択・非選択で画像サイズが変わらないようoutlineに統一する。
                     isSelected
-                      ? "border-2 border-red-500"
-                      : "border-dashed border-violet-400"
+                      ? "outline outline-2 outline-red-500"
+                      : "outline-1 outline-dashed outline-violet-400"
                   }`}
                   style={{
                     left: o.x * scale,
@@ -2131,20 +2136,23 @@ export default function TemplateEditor({
                     : zone.kind === "work"
                       ? "bg-sky-200/60"
                       : "bg-slate-500/50";
+              // outlineを使う理由はplacedObjectsと同じ(選択時にborderの太さが
+              // 変わるとbox-sizing: border-boxの下で内側のコンテンツ領域が
+              // 縮んでしまうため。outlineはボックスサイズに影響しない)。
               const zoneBorderClass = isSelected
-                ? "border-2 border-red-500"
+                ? "outline outline-2 outline-red-500"
                 : zone.kind === "conference"
-                  ? "border-green-300"
+                  ? "outline-1 outline-green-300"
                   : zone.kind === "announcement"
-                    ? "border-amber-300"
+                    ? "outline-1 outline-amber-300"
                     : zone.kind === "work"
-                      ? "border-sky-300"
-                      : "border-slate-300";
+                      ? "outline-1 outline-sky-300"
+                      : "outline-1 outline-slate-300";
               return (
                 <div
                   key={zone.id}
                   onPointerDown={(e) => handlePointerDown(e, "zone", zone.id, "move")}
-                  className={`absolute cursor-move rounded-xl border p-2 ${zoneBorderClass} ${zoneBgClass}`}
+                  className={`absolute cursor-move rounded-xl p-2 ${zoneBorderClass} ${zoneBgClass}`}
                   style={{
                     left: zone.x * scale,
                     top: zone.y * scale,
@@ -2204,8 +2212,12 @@ export default function TemplateEditor({
                 <div
                   key={o.id}
                   onPointerDown={(e) => handlePointerDown(e, "obstacle", o.id, "move")}
-                  className={`absolute flex cursor-move items-center justify-center border bg-amber-500/60 text-center text-[10px] text-white ${
-                    isSelected ? "border-2 border-red-500" : "border-amber-400"
+                  className={`absolute flex cursor-move items-center justify-center bg-amber-500/60 text-center text-[10px] text-white ${
+                    // outlineを使う理由はplacedObjectsと同じ(選択時の枠の
+                    // 太さ変化でボックスサイズが変わらないようにするため)。
+                    isSelected
+                      ? "outline outline-2 outline-red-500"
+                      : "outline-1 outline-amber-400"
                   }`}
                   style={{
                     left: o.x * scale,
