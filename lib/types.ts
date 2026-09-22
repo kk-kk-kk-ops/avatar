@@ -34,6 +34,8 @@ export type PlayerState = {
   watchingScreen?: boolean; // 誰かの画面共有を視聴中かどうか(マスター画面の集計用)
   avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)
   status?: PresenceStatus; // 在席ステータス(未設定時はavailable扱い)
+  carImage?: string; // 選択した車画像のフォルダパス(例: /car/car1)
+  carVisible?: boolean; // 「shift+x」で車に乗った状態を表示中かどうか(相手にも表示する)
 };
 
 export const PRESENCE_STATUS_COLORS: Record<PresenceStatus, string> = {
@@ -77,6 +79,14 @@ const AVATAR_DIR_FILENAMES: Record<PlayerState["dir"], string> = {
   right: "right",
 };
 
+// public/car 内の選択可能な車画像一覧。アバターと同じく、拡張子なしの
+// パスは向きごとの画像(front/back/left/right)を持つフォルダを表す。
+// アバターと違いファイル形式は.png(public/car/car1配下を参照)。
+export const CAR_IMAGES = ["/car/car1"];
+
+// 車に乗っている間の移動速度倍率(shift+xで表示中のみ適用)。
+export const CAR_MOVE_SPEED_MULTIPLIER = 1.5;
+
 // アバター選択一覧やプレビューで使う「代表画像」。フォルダ形式ならfront.webp、
 // 1枚絵ならそのままの画像を返す。
 export function getAvatarThumbnail(avatarImage: string): string {
@@ -98,6 +108,20 @@ export function getAvatarSpritePath(
 ): string {
   if (!isAvatarFolder(avatarImage)) return avatarImage;
   return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.webp`;
+}
+
+// 車選択一覧のプレビューに使う代表画像(front.png)。
+export function getCarThumbnail(carImage: string): string {
+  return `${carImage}/front.png`;
+}
+
+// 移動方向(dir)に応じた車画像のパスを返す(アバターと同じ向きの画像を
+// 使い、常にアバターと同じ方を向かせる)。
+export function getCarSpritePath(
+  carImage: string,
+  dir: PlayerState["dir"],
+): string {
+  return `${carImage}/${AVATAR_DIR_FILENAMES[dir]}.png`;
 }
 
 // ルーム(バーチャル空間)。Supabaseのroomsテーブルの行に対応する

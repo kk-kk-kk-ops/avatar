@@ -44,11 +44,14 @@ import {
   DEFAULT_OBSTACLES,
   DEFAULT_MEETING_ZONES,
   AVATAR_IMAGES,
+  CAR_IMAGES,
+  CAR_MOVE_SPEED_MULTIPLIER,
   Room,
   getAvatarSpritePath,
 } from "@/lib/types";
 import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
+import CarPicker from "./CarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
 import RemoteAudio from "./RemoteAudio";
@@ -453,6 +456,7 @@ export default function AvatarSpace({
   >("participants");
   const [settingsNameInput, setSettingsNameInput] = useState("");
   const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
+  const [settingsCar, setSettingsCar] = useState(CAR_IMAGES[0]);
   const [settingsStatus, setSettingsStatus] =
     useState<PresenceStatus>("available");
   const [settingsMessageInput, setSettingsMessageInput] = useState("");
@@ -4589,6 +4593,8 @@ export default function AvatarSpace({
                 current.name !== p.name ||
                 current.color !== p.color ||
                 current.avatarImage !== p.avatarImage ||
+                current.carImage !== p.carImage ||
+                current.carVisible !== p.carVisible ||
                 current.micOn !== p.micOn ||
                 current.sharingScreen !== p.sharingScreen ||
                 current.inCall !== p.inCall ||
@@ -4603,6 +4609,8 @@ export default function AvatarSpace({
                   name: p.name,
                   color: p.color,
                   avatarImage: p.avatarImage,
+                  carImage: p.carImage,
+                  carVisible: p.carVisible,
                   micOn: p.micOn,
                   sharingScreen: p.sharingScreen,
                   inCall: p.inCall,
@@ -4717,6 +4725,8 @@ export default function AvatarSpace({
               current.name !== p.name ||
               current.color !== p.color ||
               current.avatarImage !== p.avatarImage ||
+              current.carImage !== p.carImage ||
+              current.carVisible !== p.carVisible ||
               current.micOn !== p.micOn ||
               current.sharingScreen !== p.sharingScreen ||
               current.inCall !== p.inCall ||
@@ -5334,6 +5344,18 @@ export default function AvatarSpace({
       document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [joined]);
 
+  // 「shift+x」で車の表示をON/OFF切り替える。saveSettingsと同じ
+  // 「ref更新→setPlayers→channel.track」の3点セットで、自分の画面にも
+  // 相手の画面にも即座に反映する。下のキーボード入力effectより先に
+  // 定義しておく必要がある(そちらから参照するため)。
+  const toggleCar = useCallback(() => {
+    if (!selfState.current) return;
+    selfState.current.carVisible = !selfState.current.carVisible;
+    const updated = selfState.current;
+    setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
+    channelRef.current?.track(updated);
+  }, []);
+
   // ---- キーボード入力 ----
   useEffect(() => {
     if (!joined) return;
@@ -5348,7 +5370,11 @@ export default function AvatarSpace({
     ]);
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === "INPUT") return;
+      const activeTag = document.activeElement?.tagName;
+      // チャット入力(textarea)・表示名等のテキスト入力中はショートカット
+      // キーを一切拾わない(INPUTのみのチェックだと、下のgroup chatの
+      // textareaで入力中に"x"が車の表示切り替えとして誤発火していた)。
+      if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
       const key = e.key.toLowerCase();
 
       // 矢印キー・スペースキーによる「ページ自体のスクロール」を止める。
@@ -5357,6 +5383,13 @@ export default function AvatarSpace({
       // レイアウトごと動いて見えてしまう。
       if (SCROLL_KEYS.has(key) || SCROLL_KEYS.has(e.key)) {
         e.preventDefault();
+      }
+
+      // 車の表示ON/OFF切り替え(shift+x)。キーリピートで何度も呼ばれない
+      // よう、押しっぱなし中の2回目以降(e.repeat)は無視する。
+      if (e.shiftKey && key === "x") {
+        if (!e.repeat) toggleCar();
+        return;
       }
 
       keysDown.current.add(key);
@@ -5371,7 +5404,7 @@ export default function AvatarSpace({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [joined]);
+  }, [joined, toggleCar]);
 
   // ---- 移動ループ(requestAnimationFrame) ----
   useEffect(() => {
@@ -5418,8 +5451,12 @@ export default function AvatarSpace({
 
         if (moving) {
           const len = Math.hypot(dx, dy) || 1;
-          dx = (dx / len) * MOVE_SPEED * dt;
-          dy = (dy / len) * MOVE_SPEED * dt;
+          // 車を表示中(shift+x)は移動速度を1.5倍にする。
+          const speed = self.carVisible
+            ? MOVE_SPEED * CAR_MOVE_SPEED_MULTIPLIER
+            : MOVE_SPEED;
+          dx = (dx / len) * speed * dt;
+          dy = (dy / len) * speed * dt;
 
           const halfW = AVATAR_HITBOX_WIDTH / 2;
           const halfH = AVATAR_HITBOX_HEIGHT / 2;
@@ -7088,6 +7125,7 @@ export default function AvatarSpace({
     if (sidebarTab !== "settings") return;
     setSettingsNameInput(selfState.current?.name ?? "");
     setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
+    setSettingsCar(selfState.current?.carImage ?? CAR_IMAGES[0]);
     setSettingsStatus(selfState.current?.status ?? "available");
     setSettingsMessageInput(selfState.current?.message ?? "");
     setSettingsShowMessage(selfState.current?.showMessage ?? false);
@@ -7100,6 +7138,7 @@ export default function AvatarSpace({
       settingsNameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
     selfState.current.name = name;
     selfState.current.avatarImage = settingsAvatar;
+    selfState.current.carImage = settingsCar;
     selfState.current.status = settingsStatus;
     // 会議室退室時・タブ復帰時に戻す先を、今回の選択で更新しておく。
     manualStatusRef.current = settingsStatus;
@@ -7121,6 +7160,7 @@ export default function AvatarSpace({
   }, [
     settingsNameInput,
     settingsAvatar,
+    settingsCar,
     settingsStatus,
     settingsMessageInput,
     settingsShowMessage,
@@ -9494,6 +9534,13 @@ export default function AvatarSpace({
                     selected={settingsAvatar}
                     onSelect={setSettingsAvatar}
                   />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-semibold text-slate-400">
+                    車
+                  </p>
+                  <CarPicker selected={settingsCar} onSelect={setSettingsCar} />
                 </div>
 
                 <div>

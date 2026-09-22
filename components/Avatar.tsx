@@ -3,12 +3,14 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   AVATAR_IMAGES,
+  CAR_IMAGES,
   PlayerState,
   AVATAR_RADIUS,
   AVATAR_HITBOX_HEIGHT,
   PRESENCE_STATUS_COLORS,
   getAvatarSpritePath,
   getAvatarThumbnail,
+  getCarSpritePath,
 } from "@/lib/types";
 import { MicIcon } from "./MicButton";
 
@@ -88,6 +90,14 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
     ? getAvatarThumbnail(avatarImage)
     : spriteSrc;
 
+  // 車(shift+xで表示切り替え)。アバターの下半分に重ねて「乗っている」
+  // ように見せるため、高さはアバターのちょうど半分・下端をアバターの
+  // 下端に揃える。carImage未選択(設定を一度も保存していない)場合は
+  // アバターと同じくデフォルト(先頭)の車にフォールバックする。
+  const showCar = !!player.carVisible;
+  const carImage = player.carImage || CAR_IMAGES[0];
+  const carSrc = getCarSpritePath(carImage, player.dir);
+
   return (
     <>
       {/* 名前タグ+吹き出し専用のルート要素(アバター本体とは別、z-30)。
@@ -149,6 +159,19 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
           onError={() => setSpriteLoadFailed(true)}
           className="h-full w-full object-contain drop-shadow-md"
         />
+
+        {/* 車(shift+x)。アバター画像より後にDOM上へ置くことで、同じ
+            スタッキングコンテキスト内で自然にアバターの手前(上)に
+            重なる(明示的なz-indexの指定は不要)。 */}
+        {showCar && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={carSrc}
+            alt="車"
+            className="pointer-events-none absolute bottom-0 left-0 w-full object-contain drop-shadow-md"
+            style={{ height: displaySize / 2 }}
+          />
+        )}
       </div>
     </>
   );
