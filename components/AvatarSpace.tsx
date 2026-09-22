@@ -5787,11 +5787,14 @@ export default function AvatarSpace({
         // マイクの音声が届く範囲の目安の円も、アバターと同じく毎フレーム
         // DOM操作で位置を更新する(Reactのstate経由だと追従が遅れて見える)。
         // アバター画像はAvatar.tsx側でx方向のみ中心揃え、y方向は当たり判定
-        // (足元付近を基準)に対して画像を上へずらして表示しているため、円も
-        // 同じ計算式で中心を合わせないと見た目上アバターより下にずれる。
+        // (足元付近を基準)に対して画像を上へずらして表示している(車表示中は
+        // 当たり判定の中心と画像の中心を揃える別の計算式)ため、円もAvatar.tsx
+        // と同じ計算式で中心を合わせないと見た目上アバター/車より下にずれる。
         if (proximityCircleRef.current) {
           const displaySize = avatarSizePx ?? AVATAR_RADIUS * 2;
-          const visualCenterY = self.y + AVATAR_HITBOX_HEIGHT / 2 - displaySize / 2;
+          const visualCenterY = self.carVisible
+            ? self.y
+            : self.y + AVATAR_HITBOX_HEIGHT / 2 - displaySize / 2;
           proximityCircleRef.current.style.transform = `translate(${
             self.x - PROXIMITY_RADIUS
           }px, ${visualCenterY - PROXIMITY_RADIUS}px)`;
