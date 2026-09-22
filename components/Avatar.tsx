@@ -90,10 +90,11 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
     ? getAvatarThumbnail(avatarImage)
     : spriteSrc;
 
-  // 車(shift+xで表示切り替え)。アバターの下半分に重ねて「乗っている」
-  // ように見せるため、高さはアバターのちょうど半分・下端をアバターの
-  // 下端に揃える。carImage未選択(設定を一度も保存していない)場合は
-  // アバターと同じくデフォルト(先頭)の車にフォールバックする。
+  // 車(shift+xで表示切り替え)。2026-09報告により、アバターに重ねて
+  // 表示するのではなく、車を表示中はアバター画像を隠して車だけを
+  // アバターと同じサイズで表示する(乗り換わる形)方式に変更した。
+  // carImage未選択(設定を一度も保存していない)場合はアバターと同じく
+  // デフォルト(先頭)の車にフォールバックする。
   const showCar = !!player.carVisible;
   const carImage = player.carImage || CAR_IMAGES[0];
   const carSrc = getCarSpritePath(carImage, player.dir);
@@ -151,25 +152,22 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         className="absolute left-0 top-0 z-10 will-change-transform"
         style={{ width: displaySize, height: displaySize }}
       >
-        {/* アバター画像(背景・枠なしでそのまま表示) */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={displaySrc}
-          alt={player.name}
-          onError={() => setSpriteLoadFailed(true)}
-          className="h-full w-full object-contain drop-shadow-md"
-        />
-
-        {/* 車(shift+x)。アバター画像より後にDOM上へ置くことで、同じ
-            スタッキングコンテキスト内で自然にアバターの手前(上)に
-            重なる(明示的なz-indexの指定は不要)。 */}
-        {showCar && (
+        {/* 車を表示中(shift+x)はアバター画像を隠し、代わりに車を同じ
+            サイズで表示する(乗り換わる形。重ねて表示はしない)。 */}
+        {showCar ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={carSrc}
             alt="車"
-            className="pointer-events-none absolute bottom-0 left-0 w-full object-contain drop-shadow-md"
-            style={{ height: displaySize / 2 }}
+            className="h-full w-full object-contain drop-shadow-md"
+          />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={displaySrc}
+            alt={player.name}
+            onError={() => setSpriteLoadFailed(true)}
+            className="h-full w-full object-contain drop-shadow-md"
           />
         )}
       </div>

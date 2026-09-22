@@ -9538,7 +9538,7 @@ export default function AvatarSpace({
 
                 <div>
                   <p className="mb-2 text-xs font-semibold text-slate-400">
-                    車
+                    車(shift + x)
                   </p>
                   <CarPicker selected={settingsCar} onSelect={setSettingsCar} />
                 </div>
@@ -9841,6 +9841,22 @@ export default function AvatarSpace({
           onPress={handleTouchPress}
           onRelease={handleTouchRelease}
         />
+      )}
+
+      {/* スマホ用の車ON/OFFボタン(sm以上の画面では非表示)。PCのshift+x
+          ショートカットに相当する。画面左下、移動ボタン(右下)とは
+          反対側に置く。 */}
+      {!showParticipants && (
+        <button
+          type="button"
+          onClick={toggleCar}
+          aria-label={selfPlayer?.carVisible ? "車を降りる" : "車に乗る"}
+          className={`fixed bottom-8 left-8 z-50 flex h-14 w-14 items-center justify-center rounded-full text-2xl backdrop-blur-sm select-none active:bg-white/50 sm:hidden ${
+            selfPlayer?.carVisible ? "bg-emerald-500/70" : "bg-white/25"
+          }`}
+        >
+          🚗
+        </button>
       )}
 
       {/* 相手の音声を再生する非表示要素(自動接続された分だけ生成) */}
