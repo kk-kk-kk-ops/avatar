@@ -98,6 +98,10 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   const showCar = !!player.carVisible;
   const carImage = player.carImage || CAR_IMAGES[0];
   const carSrc = getCarSpritePath(carImage, player.dir);
+  // front/back(正面・背面)は横から見たleft/rightより車体が細く見える
+  // ため、表示幅をleft/rightの半分にする(2026-09報告)。中央寄せに
+  // なるよう、親側(rootRef)にflexで中央揃えを指定している。
+  const isCarFrontOrBack = player.dir === "up" || player.dir === "down";
 
   return (
     <>
@@ -149,17 +153,20 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         // 手前に表示する仕様のため、アバター側に明示的な低いz-indexを
         // 与えて重なり順をDOM順ではなくz-indexで確定させる
         // (AvatarSpace.tsxのplacedObjects描画箇所を参照)。
-        className="absolute left-0 top-0 z-10 will-change-transform"
+        className="absolute left-0 top-0 z-10 flex items-center justify-center will-change-transform"
         style={{ width: displaySize, height: displaySize }}
       >
         {/* 車を表示中(shift+x)はアバター画像を隠し、代わりに車を同じ
-            サイズで表示する(乗り換わる形。重ねて表示はしない)。 */}
+            サイズで表示する(乗り換わる形。重ねて表示はしない)。
+            front/backは幅を半分にし、中央揃えで表示する。 */}
         {showCar ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={carSrc}
             alt="車"
-            className="h-full w-full object-contain drop-shadow-md"
+            className={`h-full object-contain drop-shadow-md ${
+              isCarFrontOrBack ? "w-1/2" : "w-full"
+            }`}
           />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
