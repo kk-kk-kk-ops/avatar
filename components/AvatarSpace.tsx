@@ -24,6 +24,7 @@ import {
   MAP_HEIGHT,
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
+  CAR_HITBOX_HEIGHT,
   DESKTOP_AUTO_LOGOUT_SECONDS,
   DESKTOP_AUTO_AWAY_SECONDS,
   MOBILE_AUTO_LOGOUT_SECONDS,
@@ -5458,8 +5459,11 @@ export default function AvatarSpace({
           dx = (dx / len) * speed * dt;
           dy = (dy / len) * speed * dt;
 
+          // 車表示中(shift+x)は当たり判定を高さ10px×幅20pxにする
+          // (幅は変えない)。アバター表示に戻したら20×20に戻る。
           const halfW = AVATAR_HITBOX_WIDTH / 2;
-          const halfH = AVATAR_HITBOX_HEIGHT / 2;
+          const halfH =
+            (self.carVisible ? CAR_HITBOX_HEIGHT : AVATAR_HITBOX_HEIGHT) / 2;
 
           let nextX = Math.min(
             Math.max(self.x + dx, halfW),
