@@ -54,13 +54,17 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
     ref,
     () => ({
       updatePosition: (x: number, y: number) => {
-        // (x, y)は当たり判定(AVATAR_HITBOX_WIDTH/HEIGHT)の中心座標。
-        // 画像・当たり判定は互いに独立したサイズのまま、当たり判定の下端が
-        // 画像の下端(足元)に一致するように画像の描画位置を決める
-        // (当たり判定は画像の下半分に重なる形になる)。横方向は中心を
-        // 揃えるだけでよい(当たり判定・画像とも同じxを中心とするため)。
+        // (x, y)は当たり判定(AVATAR_HITBOX_WIDTH/HEIGHT、車表示中は
+        // CAR_HITBOX_HEIGHT)の中心座標。横方向は常に中心を揃える
+        // (当たり判定・画像とも同じxを中心とするため)。
+        // 縦方向は、アバター表示中は当たり判定の下端が画像の下端(足元)に
+        // 一致するように(当たり判定は画像の下半分に重なる形)、車表示中は
+        // 2026-09報告により当たり判定の中心と画像の中心が一致するように
+        // (車には「足元」の概念が無いため)、位置決めの基準を変える。
         const left = x - displaySize / 2;
-        const top = y + AVATAR_HITBOX_HEIGHT / 2 - displaySize;
+        const top = player.carVisible
+          ? y - displaySize / 2
+          : y + AVATAR_HITBOX_HEIGHT / 2 - displaySize;
         const transform = `translate(${left}px, ${top}px)`;
         if (rootRef.current) rootRef.current.style.transform = transform;
         // 名前タグ側もアバター本体と全く同じサイズ・原点のボックスとして
@@ -69,7 +73,7 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         if (nameTagRef.current) nameTagRef.current.style.transform = transform;
       },
     }),
-    [displaySize],
+    [displaySize, player.carVisible],
   );
 
   // 吹き出しは設定画面のチェックボックスで表示/非表示が切り替わる常時
