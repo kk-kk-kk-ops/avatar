@@ -7803,16 +7803,20 @@ export default function AvatarSpace({
           {/* 常時表示プレビュー行(会議室の外。2026-09報告により、この
               機能追加より前の挙動に戻した:実際にビデオ通話/画面共有を
               している人がいる時だけ表示し、サイズも160×120のまま
-              (プレースホルダーは表示しない)。 */}
+              (プレースホルダーは表示しない)。2026-09報告(スマホ):
+              flex-wrapのまま3人以上並ぶと2段目ができ、地図が隠れる範囲が
+              広がってしまっていたため、折り返さず横スクロールの1行に
+              固定した(shrink-0で各プレビューが押し縮められないように
+              する)。 */}
           {!meetingViewOpen &&
             !selfInMeetingRoom &&
             (screenSharing ||
               inCall ||
               visibleScreenShares.length > 0 ||
               activeOtherVideoCalls.length > 0) && (
-              <div className="absolute left-0 right-0 top-0 z-20 flex flex-wrap gap-2 bg-slate-900/80 px-3 py-2">
+              <div className="absolute left-0 right-0 top-0 z-20 flex flex-nowrap gap-2 overflow-x-auto bg-slate-900/80 px-3 py-2">
                 {screenSharing && screenStreamRef.current && (
-                  <div className="relative">
+                  <div className="relative shrink-0">
                     {screenPreviewImages[selfId.current] ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
@@ -7850,7 +7854,7 @@ export default function AvatarSpace({
                       setFullscreenZoom(1);
                       setExpandedMedia({ peerId: p.id, kind: "screen" });
                     }}
-                    className="relative"
+                    className="relative shrink-0"
                     aria-label={`${p.name}の画面を全画面表示`}
                   >
                     {screenPreviewImages[p.id] ? (
@@ -7874,7 +7878,7 @@ export default function AvatarSpace({
                 {/* 画面共有のプレビュー(自分・相手とも)を左側にまとめ、カメラの
                     プレビューはその後ろ(右側)に並べる(2026-09報告)。 */}
                 {inCall && cameraStreamRef.current && (
-                  <div className="relative">
+                  <div className="relative shrink-0">
                     <RemoteVideo
                       stream={cameraStreamRef.current}
                       className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
@@ -7895,7 +7899,7 @@ export default function AvatarSpace({
                 {/* ビデオ通話のプレビューは全画面表示を廃止(通信量削減のため。
                     全画面にするとLiveKitのadaptiveStreamが高解像度を要求してしまう)。 */}
                 {activeOtherVideoCalls.map((p) => (
-                  <div key={`call-${p.id}`} className="relative">
+                  <div key={`call-${p.id}`} className="relative shrink-0">
                     <RemoteVideo
                       stream={remoteCallStreams[p.id]}
                       className="h-20 w-32 rounded-md border border-slate-500 bg-black object-cover"
