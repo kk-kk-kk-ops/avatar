@@ -46,7 +46,7 @@ import {
   DEFAULT_MEETING_ZONES,
   AVATAR_IMAGES,
   CAR_IMAGES,
-  CAR_MOVE_SPEED_MULTIPLIER,
+  getCarMoveSpeedMultiplier,
   Room,
   getAvatarSpritePath,
 } from "@/lib/types";
@@ -5452,9 +5452,11 @@ export default function AvatarSpace({
 
         if (moving) {
           const len = Math.hypot(dx, dy) || 1;
-          // 車を表示中(shift+x)は移動速度を1.5倍にする。
+          // 車を表示中(shift+x)は移動速度を車種ごとの倍率にする
+          // (例: car2はアバター時の2倍)。
           const speed = self.carVisible
-            ? MOVE_SPEED * CAR_MOVE_SPEED_MULTIPLIER
+            ? MOVE_SPEED *
+              getCarMoveSpeedMultiplier(self.carImage || CAR_IMAGES[0])
             : MOVE_SPEED;
           dx = (dx / len) * speed * dt;
           dy = (dy / len) * speed * dt;
