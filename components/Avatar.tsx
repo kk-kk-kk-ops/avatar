@@ -158,14 +158,14 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
       >
         {/* 車を表示中(shift+x)はアバター画像を隠し、代わりに車を同じ
             サイズで表示する(乗り換わる形。重ねて表示はしない)。
-            front/backは幅を半分にし、中央揃えで表示する。 */}
+            front/backは幅を65%にし、中央揃えで表示する。 */}
         {showCar ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={carSrc}
             alt="車"
             className={`h-full object-contain drop-shadow-md ${
-              isCarFrontOrBack ? "w-1/2" : "w-full"
+              isCarFrontOrBack ? "w-[65%]" : "w-full"
             }`}
           />
         ) : (
