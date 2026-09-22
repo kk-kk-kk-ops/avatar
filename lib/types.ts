@@ -82,10 +82,23 @@ const AVATAR_DIR_FILENAMES: Record<PlayerState["dir"], string> = {
 // public/car 内の選択可能な車画像一覧。アバターと同じく、拡張子なしの
 // パスは向きごとの画像(front/back/left/right)を持つフォルダを表す。
 // アバターと違いファイル形式は.png(public/car/car1配下を参照)。
-export const CAR_IMAGES = ["/car/car1"];
+export const CAR_IMAGES = ["/car/car1", "/car/car2"];
 
-// 車に乗っている間の移動速度倍率(shift+xで表示中のみ適用)。
-export const CAR_MOVE_SPEED_MULTIPLIER = 1.5;
+// 車に乗っている間の移動速度倍率(shift+xで表示中のみ適用)。車種ごとに
+// 倍率が異なる(2026-09報告: car2だけアバター時の2倍にしたい)ため、
+// 車のパスをキーにしたテーブルで持つ。一覧に無い車(未知の値)は
+// デフォルト値にフォールバックする。
+const CAR_MOVE_SPEED_MULTIPLIERS: Record<string, number> = {
+  "/car/car1": 1.5,
+  "/car/car2": 2,
+};
+const DEFAULT_CAR_MOVE_SPEED_MULTIPLIER = 1.5;
+
+export function getCarMoveSpeedMultiplier(carImage: string): number {
+  return (
+    CAR_MOVE_SPEED_MULTIPLIERS[carImage] ?? DEFAULT_CAR_MOVE_SPEED_MULTIPLIER
+  );
+}
 
 // アバター選択一覧やプレビューで使う「代表画像」。フォルダ形式ならfront.webp、
 // 1枚絵ならそのままの画像を返す。
