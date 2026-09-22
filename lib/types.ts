@@ -85,12 +85,11 @@ const AVATAR_DIR_FILENAMES: Record<PlayerState["dir"], string> = {
 export const CAR_IMAGES = ["/car/car1", "/car/car2"];
 
 // 車に乗っている間の移動速度倍率(shift+xで表示中のみ適用)。車種ごとに
-// 倍率が異なる(2026-09報告: car2だけアバター時の2倍にしたい)ため、
-// 車のパスをキーにしたテーブルで持つ。一覧に無い車(未知の値)は
-// デフォルト値にフォールバックする。
+// 倍率が異なるため、車のパスをキーにしたテーブルで持つ。一覧に無い車
+// (未知の値)はデフォルト値にフォールバックする。
 const CAR_MOVE_SPEED_MULTIPLIERS: Record<string, number> = {
   "/car/car1": 1.5,
-  "/car/car2": 2,
+  "/car/car2": 2.5,
 };
 const DEFAULT_CAR_MOVE_SPEED_MULTIPLIER = 1.5;
 
