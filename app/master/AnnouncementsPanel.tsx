@@ -149,8 +149,13 @@ function EntryListSection({
         )}
       </div>
 
+      {/* 2026-09報告: 一覧(左)と本文(右)は横並びflexの兄弟のため、
+          高さ指定が無いと一覧の項目数によって行全体の高さが決まり、
+          本文エリアもそれに引きずられて伸び縮みしていた。両方を
+          「5項目分」の目安の固定高さ(h-80)にし、それぞれの内側だけで
+          スクロールするようにする。 */}
       <div className="flex flex-col gap-4 sm:flex-row">
-        <div className="w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
+        <div className="h-80 w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
           {entries.length === 0 ? (
             <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
               まだ登録されていません
@@ -181,7 +186,7 @@ function EntryListSection({
           )}
         </div>
 
-        <div className="min-h-[16rem] min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-4">
+        <div className="h-80 min-w-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
           {formOpen ? (
             <div className="space-y-2">
               <div>
