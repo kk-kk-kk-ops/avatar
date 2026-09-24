@@ -164,13 +164,18 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
       >
         {/* 車を表示中(shift+x)はアバター画像を隠し、代わりに車を同じ
             サイズで表示する(乗り換わる形。重ねて表示はしない)。
-            front/backは幅を65%にし、中央揃えで表示する。 */}
+            front/backは幅を65%にし、中央揃えで表示する。
+            2026-09報告: 車の画像自体は正方形ではない(例:622×388)ため、
+            正方形の表示枠にobject-containで収めると、object-position既定の
+            中央揃えにより画像の実際の見た目(車体)は枠の上下中央に浮き、
+            枠の下端(当たり判定の下端と揃えている位置)との間に余白ができて
+            いた。object-bottomで画像の見た目そのものを枠の下端に揃える。 */}
         {showCar ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={carSrc}
             alt="車"
-            className={`h-full object-contain drop-shadow-md ${
+            className={`h-full object-contain object-bottom drop-shadow-md ${
               isCarFrontOrBack ? "w-[65%]" : "w-full"
             }`}
           />
