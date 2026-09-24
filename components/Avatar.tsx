@@ -7,6 +7,7 @@ import {
   PlayerState,
   AVATAR_RADIUS,
   AVATAR_HITBOX_HEIGHT,
+  CAR_HITBOX_HEIGHT,
   PRESENCE_STATUS_COLORS,
   getAvatarSpritePath,
   getAvatarThumbnail,
@@ -56,15 +57,16 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
       updatePosition: (x: number, y: number) => {
         // (x, y)は当たり判定(AVATAR_HITBOX_WIDTH/HEIGHT、車表示中は
         // CAR_HITBOX_HEIGHT)の中心座標。横方向は常に中心を揃える
-        // (当たり判定・画像とも同じxを中心とするため)。
-        // 縦方向は、アバター表示中は当たり判定の下端が画像の下端(足元)に
-        // 一致するように(当たり判定は画像の下半分に重なる形)、車表示中は
-        // 2026-09報告により当たり判定の中心と画像の中心が一致するように
-        // (車には「足元」の概念が無いため)、位置決めの基準を変える。
+        // (当たり判定・画像とも同じxを中心とするため)。縦方向はアバター・
+        // 車表示のどちらも、当たり判定の下端と画像の下端が一致するように
+        // する(2026-09報告により、車も中心揃えからアバターと同じ下端揃えに
+        // 統一)。当たり判定の高さ自体はアバター/車で異なる
+        // (AVATAR_HITBOX_HEIGHT/CAR_HITBOX_HEIGHT)。
         const left = x - displaySize / 2;
-        const top = player.carVisible
-          ? y - displaySize / 2
-          : y + AVATAR_HITBOX_HEIGHT / 2 - displaySize;
+        const hitboxHeight = player.carVisible
+          ? CAR_HITBOX_HEIGHT
+          : AVATAR_HITBOX_HEIGHT;
+        const top = y + hitboxHeight / 2 - displaySize;
         const transform = `translate(${left}px, ${top}px)`;
         if (rootRef.current) rootRef.current.style.transform = transform;
         // 名前タグ側もアバター本体と全く同じサイズ・原点のボックスとして
