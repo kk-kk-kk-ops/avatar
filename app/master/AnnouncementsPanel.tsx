@@ -187,10 +187,18 @@ function EntryListSection({
           )}
         </div>
 
-        <div className="h-80 min-w-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
+        <div
+          className={`min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-4 ${
+            // 編集・新規追加フォームは全文が見えるよう画面の高さいっぱいまで
+            // 広げる(2026-09報告: 一覧5項目分の高さ(h-80)に固定していたため、
+            // 長文を編集する際に本文欄が窮屈だった)。一覧表示中は従来通り
+            // h-80固定+内側スクロールのまま。
+            formOpen ? "flex h-[75vh] flex-col" : "h-80 overflow-y-auto"
+          }`}
+        >
           {formOpen ? (
-            <div className="space-y-2">
-              <div>
+            <div className="flex h-full min-h-0 flex-col gap-2">
+              <div className="shrink-0">
                 <label className="mb-1 block text-[11px] font-semibold text-slate-500">
                   {primaryLabel}
                 </label>
@@ -200,7 +208,7 @@ function EntryListSection({
                   className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
                 />
               </div>
-              <div>
+              <div className="shrink-0">
                 <label className="mb-1 block text-[11px] font-semibold text-slate-500">
                   {dateLabel}
                 </label>
@@ -211,23 +219,22 @@ function EntryListSection({
                   className="rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold text-slate-500">
+              <div className="flex min-h-0 flex-1 flex-col">
+                <label className="mb-1 block shrink-0 text-[11px] font-semibold text-slate-500">
                   {bodyLabel}
                 </label>
                 <textarea
                   value={bodyInput}
                   onChange={(e) => setBodyInput(e.target.value)}
-                  rows={6}
-                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+                  className="w-full flex-1 resize-none rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
                 />
               </div>
               {error && (
-                <p className="rounded bg-red-50 px-2 py-1.5 text-xs text-red-600">
+                <p className="shrink-0 rounded bg-red-50 px-2 py-1.5 text-xs text-red-600">
                   {error}
                 </p>
               )}
-              <div className="flex gap-2">
+              <div className="flex shrink-0 gap-2">
                 <button
                   onClick={handleSubmit}
                   disabled={pending}
