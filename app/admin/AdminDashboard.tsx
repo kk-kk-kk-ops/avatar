@@ -197,17 +197,25 @@ export default function AdminDashboard({
             期間終了後は自動的に無料プランに戻ります。
           </div>
         )}
-        {/* お知らせ・契約情報・ルームは他タブと同じmax-w-3xlだと横幅が
-            狭すぎる(2026-09報告: お知らせは一覧+本文の2ペイン、契約情報は
-            4プランのカード、ルームはデザイン4列がそれぞれ1列に並びきら
-            なかったため)。それぞれ専用の幅で表示する。 */}
-        {tab === "announcements" ? (
-          <AnnouncementsView
-            announcements={announcementItems}
-            onReadAnnouncement={handleReadAnnouncement}
-          />
-        ) : tab === "billing" ? (
-          <div className="mx-auto max-w-5xl">
+        {/* 2026-09報告: 各タブの表示エリアの横幅をルームタブと同じ
+            max-w-5xlに統一する。 */}
+        <div className="mx-auto max-w-5xl">
+          {tab === "dashboard" && (
+            <OnlineCount rooms={rooms} bannedParticipants={bannedParticipants} />
+          )}
+          {tab === "rooms" && (
+            <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
+          )}
+          {tab === "invite" && (
+            <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
+          )}
+          {tab === "announcements" && (
+            <AnnouncementsView
+              announcements={announcementItems}
+              onReadAnnouncement={handleReadAnnouncement}
+            />
+          )}
+          {tab === "billing" && (
             <BillingPanel
               plan={plan}
               trialEndsAt={trialEndsAt}
@@ -215,21 +223,8 @@ export default function AdminDashboard({
               hasStripeCustomer={hasStripeCustomer}
               hasActiveSubscription={hasActiveSubscription}
             />
-          </div>
-        ) : tab === "rooms" ? (
-          <div className="mx-auto max-w-5xl">
-            <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
-          </div>
-        ) : (
-          <div className="mx-auto max-w-3xl">
-            {tab === "dashboard" && (
-              <OnlineCount rooms={rooms} bannedParticipants={bannedParticipants} />
-            )}
-            {tab === "invite" && (
-              <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </main>
     </div>
   );
