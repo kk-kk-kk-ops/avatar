@@ -49,6 +49,10 @@ import {
   getCarMoveSpeedMultiplier,
   Room,
   getAvatarSpritePath,
+  type MaintenanceSettings,
+  isMaintenanceActive,
+  isMaintenanceScheduled,
+  formatMaintenanceDateTime,
 } from "@/lib/types";
 import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
@@ -388,6 +392,13 @@ type Props = {
   // だけ渡される招待トークン。LiveKitのToken発行APIへ、通常のRLSでは
   // 証明できないルームアクセス権を伝えるために使う。
   viewOnlyInviteToken?: string;
+  // メンテナンス予告・強制退出機能(2026-09追加)。app_settingsの
+  // maintenance_*列をページ表示時点のスナップショットとして渡す
+  // (入室後は別途ポーリングで最新値を取り直す。詳細は下の
+  // メンテナンス監視effect参照)。
+  maintenanceEnabled?: boolean;
+  maintenanceStartsAt?: string | null;
+  maintenanceEndsAt?: string | null;
 };
 
 export default function AvatarSpace({
@@ -402,6 +413,9 @@ export default function AvatarSpace({
   guestInviteToken,
   avatarSizePx,
   viewOnlyInviteToken,
+  maintenanceEnabled: initialMaintenanceEnabled,
+  maintenanceStartsAt: initialMaintenanceStartsAt,
+  maintenanceEndsAt: initialMaintenanceEndsAt,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -445,6 +459,14 @@ export default function AvatarSpace({
     Record<string, number>
   >({});
   const [joined, setJoined] = useState(false);
+  // メンテナンス予告・強制退出機能(2026-09追加)。propsのスナップショット
+  // を初期値にし、下のeffectで定期的に最新値へ更新する(マスターが入室中に
+  // ON/OFF切り替えても反映されるようにするため)。
+  const [maintenance, setMaintenance] = useState<MaintenanceSettings>({
+    enabled: initialMaintenanceEnabled ?? false,
+    startsAt: initialMaintenanceStartsAt ?? null,
+    endsAt: initialMaintenanceEndsAt ?? null,
+  });
   // 入室直後のアバター向き別スプライトのプリロードが完了したかどうか。
   // 完了するまでローディング画面を表示し、移動・向き変更操作をロックする。
   const [assetsReady, setAssetsReady] = useState(false);
@@ -5298,6 +5320,43 @@ export default function AvatarSpace({
     return () => clearInterval(interval);
   }, [joined]);
 
+  // ---- メンテナンス監視(強制退出) ----
+  // マスターが入室中にメンテナンスをON/OFF切り替えたり、開始/終了時刻を
+  // またいだりしても反映されるよう、入室propsのスナップショットに頼らず
+  // 一定間隔でapp_settingsの最新値を取り直す。マスター以外が期間内に
+  // 入ってしまっている場合は、既存のforce-leave機構(既に用意されている
+  // forceLeaveMessage表示→リロード)と同じ見せ方で退出させる。
+  useEffect(() => {
+    if (!joined) return;
+    let cancelled = false;
+    const checkMaintenance = async () => {
+      const { data } = await supabase
+        .from("app_settings")
+        .select(
+          "maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+        )
+        .eq("id", "default")
+        .maybeSingle();
+      if (cancelled || !data) return;
+      const next: MaintenanceSettings = {
+        enabled: data.maintenance_enabled ?? false,
+        startsAt: data.maintenance_starts_at ?? null,
+        endsAt: data.maintenance_ends_at ?? null,
+      };
+      setMaintenance(next);
+      if (!isMaster && isMaintenanceActive(next)) {
+        setForceLeaveMessage("メンテナンスのため、まもなく退出します...");
+        setTimeout(() => window.location.reload(), 1500);
+      }
+    };
+    checkMaintenance();
+    const interval = setInterval(checkMaintenance, 20000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [joined, isMaster, supabase]);
+
   // ---- ブラウザを閉じる/タブを閉じる際、明示的に退室を通知する ----
   // 何もしないと、Supabase側が「切断された」と気づくまで数十秒かかることがあり、
   // その間は「もう存在しない古い自分」が在室したまま残ってしまう
@@ -7279,6 +7338,12 @@ export default function AvatarSpace({
           previewImage: lobbyRoomInfo?.previewImage ?? rooms[0].previewImage,
         }
       : undefined;
+    // メンテナンス予告・入室ブロック(2026-09追加)。マスターは期間中も
+    // 通常通り入室できる(他人の招待URLを閲覧中のviewOnlyではisMasterが
+    // 常にfalseになるため、そちらは対象外にならない=ブロック対象になる)。
+    const maintenancePublished =
+      isMaintenanceScheduled(maintenance) || isMaintenanceActive(maintenance);
+    const maintenanceBlocking = isMaintenanceActive(maintenance) && !isMaster;
     return (
       <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
         <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
@@ -7309,6 +7374,13 @@ export default function AvatarSpace({
             アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)
           </p>
 
+          {maintenancePublished && maintenance.startsAt && maintenance.endsAt && (
+            <p className="mb-4 text-xs font-semibold text-red-600">
+              メンテナンス予告 {formatMaintenanceDateTime(maintenance.startsAt)}{" "}
+              〜 {formatMaintenanceDateTime(maintenance.endsAt)}
+            </p>
+          )}
+
           {roomJoinError && (
             <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
               {roomJoinError}
@@ -7332,10 +7404,14 @@ export default function AvatarSpace({
           />
           <button
             onClick={handleJoin}
-            disabled={!room || isJoining}
+            disabled={!room || isJoining || maintenanceBlocking}
             className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
-            {isJoining ? "確認中..." : "入室"}
+            {maintenanceBlocking && maintenance.startsAt && maintenance.endsAt
+              ? `メンテナンス中 ${formatMaintenanceDateTime(maintenance.startsAt)} 〜 ${formatMaintenanceDateTime(maintenance.endsAt)}`
+              : isJoining
+                ? "確認中..."
+                : "入室"}
           </button>
 
           {/* ログインフロー統一(2026-08-24): 管理者は/adminへ自動転送

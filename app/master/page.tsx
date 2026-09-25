@@ -120,7 +120,9 @@ export default async function MasterPage() {
 
   const { data: appSettings } = await supabase
     .from("app_settings")
-    .select("avatar_size_px")
+    .select(
+      "avatar_size_px, maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+    )
     .eq("id", "default")
     .maybeSingle();
 
@@ -249,6 +251,11 @@ export default async function MasterPage() {
       accounts={accounts}
       announcements={announcements}
       updateLogs={updateLogs}
+      maintenance={{
+        enabled: appSettings?.maintenance_enabled ?? false,
+        startsAt: appSettings?.maintenance_starts_at ?? null,
+        endsAt: appSettings?.maintenance_ends_at ?? null,
+      }}
       showAdminLink={state.type === "admin"}
       showRoomsLink={state.type !== "no-account"}
       ownInviteToken={ownInviteToken}

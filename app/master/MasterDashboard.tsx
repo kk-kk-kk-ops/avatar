@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type {
   AccountSummary,
   Announcement,
+  MaintenanceSettings,
   MapTemplate,
   PlanId,
   Room,
@@ -43,6 +44,7 @@ export default function MasterDashboard({
   accounts,
   announcements,
   updateLogs,
+  maintenance,
   showAdminLink,
   showRoomsLink,
   ownInviteToken,
@@ -57,6 +59,7 @@ export default function MasterDashboard({
   accounts: AccountSummary[];
   announcements: Announcement[];
   updateLogs: UpdateLog[];
+  maintenance: MaintenanceSettings;
   showAdminLink: boolean;
   showRoomsLink: boolean;
   ownInviteToken: string | null;
@@ -319,6 +322,7 @@ export default function MasterDashboard({
           <AnnouncementsPanel
             announcements={announcements}
             updateLogs={updateLogs}
+            maintenance={maintenance}
           />
         )}
 

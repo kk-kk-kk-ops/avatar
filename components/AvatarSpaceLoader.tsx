@@ -20,6 +20,9 @@ type Props = {
   guestInviteToken?: string | null;
   avatarSizePx?: number;
   viewOnlyInviteToken?: string;
+  maintenanceEnabled?: boolean;
+  maintenanceStartsAt?: string | null;
+  maintenanceEndsAt?: string | null;
 };
 
 export default function AvatarSpaceLoader({
@@ -34,6 +37,9 @@ export default function AvatarSpaceLoader({
   guestInviteToken,
   avatarSizePx,
   viewOnlyInviteToken,
+  maintenanceEnabled,
+  maintenanceStartsAt,
+  maintenanceEndsAt,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -56,6 +62,9 @@ export default function AvatarSpaceLoader({
         guestInviteToken={guestInviteToken}
         avatarSizePx={avatarSizePx}
         viewOnlyInviteToken={viewOnlyInviteToken}
+        maintenanceEnabled={maintenanceEnabled}
+        maintenanceStartsAt={maintenanceStartsAt}
+        maintenanceEndsAt={maintenanceEndsAt}
       />
     </div>
   );

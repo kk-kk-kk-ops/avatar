@@ -105,7 +105,9 @@ async function renderRoomJoin(
       .limit(1),
     supabase
       .from("app_settings")
-      .select("avatar_size_px")
+      .select(
+        "avatar_size_px, maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+      )
       .eq("id", "default")
       .maybeSingle(),
   ]);
@@ -167,6 +169,9 @@ async function renderRoomJoin(
       isMaster={isAccountAdmin && state.isMaster}
       guestInviteToken={guestInviteToken}
       avatarSizePx={appSettings?.avatar_size_px ?? undefined}
+      maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
+      maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
+      maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
     />
   );
 }
@@ -217,7 +222,9 @@ async function renderViewOnlyRoomJoin(
         .limit(1),
       supabase
         .from("app_settings")
-        .select("avatar_size_px")
+        .select(
+          "avatar_size_px, maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+        )
         .eq("id", "default")
         .maybeSingle(),
     ]);
@@ -257,6 +264,9 @@ async function renderViewOnlyRoomJoin(
       // ゲスト用ログインではなく管理者用ログイン(TOPページ)に戻す。
       guestInviteToken={null}
       avatarSizePx={appSettings?.avatar_size_px ?? undefined}
+      maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
+      maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
+      maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
       // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
       // であることをLiveKitのToken発行APIに伝えるためのトークン。
       // profiles.account_idを書き換えていないため、通常のRLS経由では
