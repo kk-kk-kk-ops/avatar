@@ -150,21 +150,6 @@ export async function markAnnouncementRead(announcementId: string) {
   revalidatePath("/admin");
 }
 
-// 「アップデート」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
-export async function markUpdateLogRead(updateLogId: string) {
-  const { supabase, account } = await requireAdminAccount();
-
-  const { error } = await supabase
-    .from("update_log_reads")
-    .upsert(
-      { account_id: account.id, update_log_id: updateLogId },
-      { onConflict: "account_id,update_log_id" },
-    );
-  if (error) throw new Error("既読状態の更新に失敗しました");
-
-  revalidatePath("/admin");
-}
-
 // 招待URLからログイン画面に遷移したときに表示する招待者名
 // (「〇〇〇さんからの招待」の〇〇〇部分)を設定する。
 export async function updateInviteInviterName(name: string) {

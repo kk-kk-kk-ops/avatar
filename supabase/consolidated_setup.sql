@@ -2924,13 +2924,24 @@ alter table public.stripe_webhook_events enable row level security;
 
 
 -- ------------------------------------------------------------
--- 19. announcements(お知らせ)・update_logs(アップデート情報)。
---     マスター画面の新規メニュー「お知らせ」から入力する。将来的に
---     一般管理者(role='admin')の管理画面にも同じ内容を閲覧専用で表示する
---     計画があるため、RLSは最初から「マスター:読み書き可・管理者:
---     読み取りのみ」の形にしておく(閲覧専用画面の追加時にSQL変更が
---     不要になるようにするため。閲覧専用画面自体は別途実装する)。
+-- 19. announcements(お知らせ)。マスター画面の新規メニュー「お知らせ」
+--     から入力する。将来的に一般管理者(role='admin')の管理画面にも
+--     同じ内容を閲覧専用で表示する計画があるため、RLSは最初から
+--     「マスター:読み書き可・管理者:読み取りのみ」の形にしておく
+--     (閲覧専用画面の追加時にSQL変更が不要になるようにするため。
+--     閲覧専用画面自体は別途実装する)。
+--
+--     2026-09-25: 当初はここに「アップデート情報」用のupdate_logs
+--     テーブルも併設していたが、マスター/管理画面の「アップデート」
+--     タブ自体を廃止したため、対応するテーブルをdropする(このファイルは
+--     冪等な「まとめSQL」のため、削除もdrop table if existsとして残す)。
+--     update_log_reads(旧セクション20)はupdate_logsへの外部キーを
+--     持つが、drop table ... cascadeはFK制約を消すだけで依存テーブル
+--     自体は残ることを本番適用時に確認したため、両方を明示的にdropする。
 -- ------------------------------------------------------------
+drop table if exists public.update_log_reads cascade;
+drop table if exists public.update_logs cascade;
+
 create table if not exists public.announcements (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -2960,43 +2971,13 @@ create policy "announcements: modify master"
   using (public.is_master(auth.uid()))
   with check (public.is_master(auth.uid()));
 
-create table if not exists public.update_logs (
-  id uuid primary key default gen_random_uuid(),
-  version text not null,
-  body text not null,
-  released_at timestamptz not null default now(),
-  created_by uuid references auth.users(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-alter table public.update_logs enable row level security;
-
-drop policy if exists "update_logs: select master or admin" on public.update_logs;
-create policy "update_logs: select master or admin"
-  on public.update_logs for select
-  using (
-    public.is_master(auth.uid())
-    or exists (
-      select 1 from public.profiles p
-      where p.user_id = auth.uid() and p.role = 'admin'
-    )
-  );
-
-drop policy if exists "update_logs: modify master" on public.update_logs;
-create policy "update_logs: modify master"
-  on public.update_logs for all
-  using (public.is_master(auth.uid()))
-  with check (public.is_master(auth.uid()));
-
 
 -- ------------------------------------------------------------
--- 20. announcement_reads・update_log_reads(項目単位の既読管理)。
---     管理画面「告知」「アップデート」タブ内、タイトルボックスごとの
---     未読バッジ表示用(2026-09)。account単位で「どの項目を開いたか」を
---     記録する。以前あったaccounts.announcements_last_read_at(タブ全体
---     を開いたら一括既読にする方式)は、項目ごとの既読管理に置き換わった
---     ため削除する。
+-- 20. announcement_reads(項目単位の既読管理)。管理画面「お知らせ」
+--     タブ内、タイトルボックスごとの未読バッジ表示用(2026-09)。
+--     account単位で「どの項目を開いたか」を記録する。以前あった
+--     accounts.announcements_last_read_at(タブ全体を開いたら一括既読に
+--     する方式)は、項目ごとの既読管理に置き換わったため削除する。
 -- ------------------------------------------------------------
 alter table public.accounts drop column if exists announcements_last_read_at;
 
@@ -3022,31 +3003,6 @@ create policy "announcement_reads: own account"
     exists (
       select 1 from public.accounts a
       where a.id = announcement_reads.account_id and a.owner_user_id = auth.uid()
-    )
-  );
-
-create table if not exists public.update_log_reads (
-  account_id uuid not null references public.accounts(id) on delete cascade,
-  update_log_id uuid not null references public.update_logs(id) on delete cascade,
-  read_at timestamptz not null default now(),
-  primary key (account_id, update_log_id)
-);
-
-alter table public.update_log_reads enable row level security;
-
-drop policy if exists "update_log_reads: own account" on public.update_log_reads;
-create policy "update_log_reads: own account"
-  on public.update_log_reads for all
-  using (
-    exists (
-      select 1 from public.accounts a
-      where a.id = update_log_reads.account_id and a.owner_user_id = auth.uid()
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.accounts a
-      where a.id = update_log_reads.account_id and a.owner_user_id = auth.uid()
     )
   );
 
