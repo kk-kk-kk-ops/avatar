@@ -107,7 +107,7 @@ export default function RoomManager({
             利用できるルームデザインがまだありません。マスター画面で作成してください。
           </p>
         ) : (
-          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {templates.map((t) => {
               // 現在ルームに適用されているデザインかどうか(選択中かとは
               // 別の概念)。適用中のものはボタンを押しても意味がないため
