@@ -7375,9 +7375,11 @@ export default function AvatarSpace({
           </p>
 
           {maintenancePublished && maintenance.startsAt && maintenance.endsAt && (
-            <p className="mb-4 text-xs font-semibold text-red-600">
-              メンテナンス予告 {formatMaintenanceDateTime(maintenance.startsAt)}{" "}
-              〜 {formatMaintenanceDateTime(maintenance.endsAt)}
+            <p className="mb-4 rounded-lg border border-red-300 px-3 py-2 text-xs font-semibold text-red-600">
+              【メンテナンスのお知らせ】
+              <br />
+              期間:{formatMaintenanceDateTime(maintenance.startsAt)} 〜{" "}
+              {formatMaintenanceDateTime(maintenance.endsAt)}
             </p>
           )}
 
@@ -7407,8 +7409,8 @@ export default function AvatarSpace({
             disabled={!room || isJoining || maintenanceBlocking}
             className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
-            {maintenanceBlocking && maintenance.startsAt && maintenance.endsAt
-              ? `メンテナンス中 ${formatMaintenanceDateTime(maintenance.startsAt)} 〜 ${formatMaintenanceDateTime(maintenance.endsAt)}`
+            {maintenanceBlocking
+              ? "メンテナンス中"
               : isJoining
                 ? "確認中..."
                 : "入室"}
