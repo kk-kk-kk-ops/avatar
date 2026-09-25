@@ -197,32 +197,36 @@ export default function AdminDashboard({
             期間終了後は自動的に無料プランに戻ります。
           </div>
         )}
-        <div className="mx-auto max-w-3xl">
-          {tab === "dashboard" && (
-            <OnlineCount rooms={rooms} bannedParticipants={bannedParticipants} />
-          )}
-          {tab === "rooms" && (
-            <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
-          )}
-          {tab === "invite" && (
-            <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
-          )}
-          {tab === "announcements" && (
-            <AnnouncementsView
-              announcements={announcementItems}
-              onReadAnnouncement={handleReadAnnouncement}
-            />
-          )}
-          {tab === "billing" && (
-            <BillingPanel
-              plan={plan}
-              trialEndsAt={trialEndsAt}
-              isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
-              hasStripeCustomer={hasStripeCustomer}
-              hasActiveSubscription={hasActiveSubscription}
-            />
-          )}
-        </div>
+        {/* お知らせだけは一覧+本文の2ペイン表示のため、他タブと同じ
+            max-w-3xlだと横幅が狭すぎる(2026-09報告)。専用に幅の制限を
+            外したラッパーを使う。 */}
+        {tab === "announcements" ? (
+          <AnnouncementsView
+            announcements={announcementItems}
+            onReadAnnouncement={handleReadAnnouncement}
+          />
+        ) : (
+          <div className="mx-auto max-w-3xl">
+            {tab === "dashboard" && (
+              <OnlineCount rooms={rooms} bannedParticipants={bannedParticipants} />
+            )}
+            {tab === "rooms" && (
+              <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
+            )}
+            {tab === "invite" && (
+              <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
+            )}
+            {tab === "billing" && (
+              <BillingPanel
+                plan={plan}
+                trialEndsAt={trialEndsAt}
+                isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
+                hasStripeCustomer={hasStripeCustomer}
+                hasActiveSubscription={hasActiveSubscription}
+              />
+            )}
+          </div>
+        )}
       </main>
     </div>
   );

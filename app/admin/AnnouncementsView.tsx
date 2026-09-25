@@ -76,10 +76,11 @@ export default function AnnouncementsView({
   return (
     // 2026-09報告: 一覧(左)と本文(右)は横並びflexの兄弟のため、高さ指定が
     // 無いと一覧の項目数によって行全体の高さが決まり、本文エリアもそれに
-    // 引きずられて伸び縮みしていた。両方を画面の高さいっぱい(75vh)にし、
-    // それぞれの内側だけでスクロールするようにする。
+    // 引きずられて伸び縮みしていた。両方を画面の高さいっぱい(90vh)にし、
+    // それぞれの内側だけでスクロールするようにする(2026-09報告により
+    // 75vhから拡大)。
     <div className="flex flex-col gap-4 sm:flex-row">
-      <div className="h-[75vh] w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
+      <div className="h-[90vh] w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
         {entries.length === 0 ? (
           <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
             まだ登録されていません
@@ -110,7 +111,7 @@ export default function AnnouncementsView({
         )}
       </div>
 
-      <div className="h-[75vh] min-w-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
+      <div className="h-[90vh] min-w-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
         {selected ? (
           <p className="whitespace-pre-wrap text-sm text-slate-600">
             {selected.body}
