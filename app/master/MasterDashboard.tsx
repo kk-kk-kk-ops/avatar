@@ -10,7 +10,6 @@ import type {
   MapTemplate,
   PlanId,
   Room,
-  UpdateLog,
 } from "@/lib/types";
 import { PLANS } from "@/lib/types";
 import { useSessionGuard } from "@/lib/useSessionGuard";
@@ -43,7 +42,6 @@ export default function MasterDashboard({
   templates,
   accounts,
   announcements,
-  updateLogs,
   maintenance,
   showAdminLink,
   showRoomsLink,
@@ -58,7 +56,6 @@ export default function MasterDashboard({
   templates: MapTemplate[];
   accounts: AccountSummary[];
   announcements: Announcement[];
-  updateLogs: UpdateLog[];
   maintenance: MaintenanceSettings;
   showAdminLink: boolean;
   showRoomsLink: boolean;
@@ -321,7 +318,6 @@ export default function MasterDashboard({
         {tab === "announcements" && (
           <AnnouncementsPanel
             announcements={announcements}
-            updateLogs={updateLogs}
             maintenance={maintenance}
           />
         )}

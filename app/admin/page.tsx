@@ -6,7 +6,6 @@ import {
   type PlanId,
   type Room,
   type Announcement,
-  type UpdateLog,
   type MaintenanceSettings,
   isMaintenanceActive,
   formatMaintenanceDateTime,
@@ -116,39 +115,23 @@ export default async function AdminPage() {
     backgroundImageUrl: t.background_image_url,
   }));
 
-  // お知らせ・アップデート情報(マスター画面「お知らせ」タブで入力したもの)。
-  // announcements/update_logsのRLSは、role='admin'のユーザーにSELECTのみ
-  // 許可する設計になっている(supabase/consolidated_setup.sql参照。
-  // INSERT/UPDATE/DELETEはマスターのみ)。
+  // お知らせ(マスター画面「お知らせ」タブで入力したもの)。announcementsの
+  // RLSは、role='admin'のユーザーにSELECTのみ許可する設計になっている
+  // (supabase/consolidated_setup.sql参照。INSERT/UPDATE/DELETEはマスターのみ)。
   const { data: announcementRows } = await supabase
     .from("announcements")
     .select("id, title, body, published_at, created_at")
     .order("published_at", { ascending: false })
     .order("created_at", { ascending: false });
 
-  const { data: updateLogRows } = await supabase
-    .from("update_logs")
-    .select("id, version, body, released_at, created_at")
-    .order("released_at", { ascending: false })
-    .order("created_at", { ascending: false });
-
-  // 「告知」「アップデート」タブ内、タイトルごとの未読バッジ表示用
-  // (項目単位の既読管理。詳細はsupabase/consolidated_setup.sqlの
-  // announcement_reads/update_log_reads参照)。
+  // タイトルごとの未読バッジ表示用(項目単位の既読管理。詳細は
+  // supabase/consolidated_setup.sqlのannouncement_reads参照)。
   const { data: announcementReadRows } = await supabase
     .from("announcement_reads")
     .select("announcement_id")
     .eq("account_id", state.accountId);
   const readAnnouncementIds = new Set(
     (announcementReadRows ?? []).map((r) => r.announcement_id),
-  );
-
-  const { data: updateLogReadRows } = await supabase
-    .from("update_log_reads")
-    .select("update_log_id")
-    .eq("account_id", state.accountId);
-  const readUpdateLogIds = new Set(
-    (updateLogReadRows ?? []).map((r) => r.update_log_id),
   );
 
   const announcements: (Announcement & { unread: boolean })[] = (
@@ -159,16 +142,6 @@ export default async function AdminPage() {
     body: a.body,
     publishedAt: a.published_at,
     unread: !readAnnouncementIds.has(a.id),
-  }));
-
-  const updateLogs: (UpdateLog & { unread: boolean })[] = (
-    updateLogRows ?? []
-  ).map((u) => ({
-    id: u.id,
-    version: u.version,
-    body: u.body,
-    releasedAt: u.released_at,
-    unread: !readUpdateLogIds.has(u.id),
   }));
 
   const plan = (account?.plan as PlanId) ?? "free";
@@ -202,7 +175,6 @@ export default async function AdminPage() {
       hasStripeCustomer={!!account?.stripe_customer_id}
       hasActiveSubscription={!!account?.stripe_subscription_id}
       announcements={announcements}
-      updateLogs={updateLogs}
     />
   );
 }
