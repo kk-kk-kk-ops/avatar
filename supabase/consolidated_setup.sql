@@ -554,6 +554,20 @@ insert into public.app_settings (id, avatar_size_px)
 values ('default', 17)
 on conflict (id) do nothing;
 
+-- メンテナンス予告・強制退出機能(2026-09追加)。マスター画面の「お知らせ」
+-- タブ内「メンテナンス」タブで設定する。maintenance_enabledは「設定した
+-- 期間を公開するか」のフラグで、期間終了後にアプリ側が自動的に
+-- (このフラグ自体は書き換えず)「実質オフ」として扱う
+-- (maintenance_enabled = true かつ now() <= maintenance_ends_at の時だけ
+-- 有効、というのをアプリ側の判定基準にするため。バッチ処理での自動オフは
+-- 不要)。
+alter table public.app_settings
+  add column if not exists maintenance_enabled boolean not null default false;
+alter table public.app_settings
+  add column if not exists maintenance_starts_at timestamptz;
+alter table public.app_settings
+  add column if not exists maintenance_ends_at timestamptz;
+
 alter table public.app_settings enable row level security;
 
 drop policy if exists "app_settings: select authenticated" on public.app_settings;

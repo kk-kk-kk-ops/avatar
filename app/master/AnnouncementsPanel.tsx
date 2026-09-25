@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Announcement, UpdateLog } from "@/lib/types";
+import type { Announcement, MaintenanceSettings, UpdateLog } from "@/lib/types";
 import {
   createAnnouncement,
   updateAnnouncement,
@@ -10,6 +10,7 @@ import {
   updateUpdateLog,
   deleteUpdateLog,
 } from "./announcementActions";
+import MaintenancePanel from "./MaintenancePanel";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -28,7 +29,7 @@ type Entry = {
   date: string; // ISO文字列
 };
 
-type Category = "announcements" | "updates";
+type Category = "announcements" | "updates" | "maintenance";
 
 function toDateInputValue(iso: string): string {
   const d = new Date(iso);
@@ -314,15 +315,18 @@ function EntryListSection({
 export default function AnnouncementsPanel({
   announcements,
   updateLogs,
+  maintenance,
 }: {
   announcements: Announcement[];
   updateLogs: UpdateLog[];
+  maintenance: MaintenanceSettings;
 }) {
   const [category, setCategory] = useState<Category>("announcements");
 
   const tabs: { id: Category; label: string }[] = [
     { id: "announcements", label: "告知" },
     { id: "updates", label: "アップデート" },
+    { id: "maintenance", label: "メンテナンス" },
   ];
 
   return (
@@ -359,7 +363,7 @@ export default function AnnouncementsPanel({
           onUpdate={updateAnnouncement}
           onDelete={deleteAnnouncement}
         />
-      ) : (
+      ) : category === "updates" ? (
         <EntryListSection
           primaryLabel="バージョン番号(例: v2.3.1)"
           bodyLabel="変更内容"
@@ -374,6 +378,8 @@ export default function AnnouncementsPanel({
           onUpdate={updateUpdateLog}
           onDelete={deleteUpdateLog}
         />
+      ) : (
+        <MaintenancePanel maintenance={maintenance} />
       )}
     </div>
   );

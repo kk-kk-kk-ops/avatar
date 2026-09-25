@@ -52,6 +52,58 @@ export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
   chatOnly: "チャットのみ可",
 };
 
+// メンテナンス予告・強制退出機能(2026-09追加)。app_settings
+// (id='default')の maintenance_* 列に対応する。マスター画面「お知らせ」
+// タブ内「メンテナンス」タブで設定し、ロビー画面(入室ボタン)・管理画面
+// (/admin)・バーチャル空間で共通して使う判定ロジックをここにまとめる。
+export type MaintenanceSettings = {
+  enabled: boolean;
+  startsAt: string | null; // ISO文字列
+  endsAt: string | null; // ISO文字列
+};
+
+// 予告表示・入室ボタン無効化の対象となる「有効なメンテナンス設定」かどうか。
+// enabledがtrueでも開始/終了日時が未設定なら無効として扱う。
+function hasValidWindow(
+  m: MaintenanceSettings,
+): m is MaintenanceSettings & { startsAt: string; endsAt: string } {
+  return m.enabled && !!m.startsAt && !!m.endsAt;
+}
+
+// 「予告」段階(開始前)かどうか。予告バナーの表示に使う。
+export function isMaintenanceScheduled(
+  m: MaintenanceSettings,
+  nowMs: number = Date.now(),
+): boolean {
+  return hasValidWindow(m) && nowMs < new Date(m.startsAt).getTime();
+}
+
+// 期間内(実施中)かどうか。入室ボタンの無効化・強制退出・管理画面の
+// アクセス制限に使う。終了時刻を過ぎると自動的にfalseになるため、
+// バッチ処理でmaintenance_enabledを書き戻す必要が無い
+// (2026-09報告: 期間終了後は自動的にチェックボックスをオフに見せたい、
+// という要望をこの判定だけで満たす)。
+export function isMaintenanceActive(
+  m: MaintenanceSettings,
+  nowMs: number = Date.now(),
+): boolean {
+  return (
+    hasValidWindow(m) &&
+    nowMs >= new Date(m.startsAt).getTime() &&
+    nowMs <= new Date(m.endsAt).getTime()
+  );
+}
+
+// マスター画面の見出し等で使う「YYYY/M/D H:MM」形式のフォーマット
+// (formatDate系は日付のみのものが既にあるため、時刻付き専用として分ける)。
+export function formatMaintenanceDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const h = d.getHours();
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${h}:${min}`;
+}
+
 // public/avatar 内の選択可能なアバター画像一覧。
 // 拡張子なしのパス(例: "/avatar/goo")は「向きごとの画像を持つフォルダ」を
 // 表し、front/back/left/right.webpを向きに応じて出し分ける

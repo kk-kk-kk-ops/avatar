@@ -7,8 +7,36 @@ import {
   type Room,
   type Announcement,
   type UpdateLog,
+  type MaintenanceSettings,
+  isMaintenanceActive,
+  formatMaintenanceDateTime,
 } from "@/lib/types";
+import LogoutButton from "@/components/auth/LogoutButton";
 import AdminDashboard from "./AdminDashboard";
+
+// メンテナンス期間中、マスター以外の管理者を管理画面から締め出す際に
+// 表示する画面(app/page.tsxのBannedNoticeと同じ考え方)。
+function MaintenanceNotice({ maintenance }: { maintenance: MaintenanceSettings }) {
+  return (
+    <div className="flex h-screen w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
+      <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
+        <h1 className="mb-2 text-lg font-bold text-slate-800">
+          メンテナンス中
+        </h1>
+        <p className="mb-2 text-sm text-red-600">
+          {maintenance.startsAt && formatMaintenanceDateTime(maintenance.startsAt)}
+          {" "}〜{" "}
+          {maintenance.endsAt && formatMaintenanceDateTime(maintenance.endsAt)}
+        </p>
+        <p className="mb-6 text-sm text-slate-500">
+          ただいまメンテナンス中のため、管理画面をご利用いただけません。
+          終了までしばらくお待ちください。
+        </p>
+        <LogoutButton className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700" />
+      </div>
+    </div>
+  );
+}
 
 // 管理画面。アカウントのオーナー(role='admin')だけがアクセスできる。
 export default async function AdminPage() {
@@ -21,6 +49,23 @@ export default async function AdminPage() {
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.type === "no-account") redirect("/plan");
   if (state.type === "guest") redirect("/");
+
+  // メンテナンス期間中は、マスター以外の管理者は管理画面に一切
+  // アクセスできない(2026-09追加)。ダッシュボード自体を出し分けるより
+  // 先に、ここで丸ごとブロックする。
+  const { data: maintenanceSettings } = await supabase
+    .from("app_settings")
+    .select("maintenance_enabled, maintenance_starts_at, maintenance_ends_at")
+    .eq("id", "default")
+    .maybeSingle();
+  const maintenance: MaintenanceSettings = {
+    enabled: maintenanceSettings?.maintenance_enabled ?? false,
+    startsAt: maintenanceSettings?.maintenance_starts_at ?? null,
+    endsAt: maintenanceSettings?.maintenance_ends_at ?? null,
+  };
+  if (isMaintenanceActive(maintenance) && !state.isMaster) {
+    return <MaintenanceNotice maintenance={maintenance} />;
+  }
 
   const { data: account } = await supabase
     .from("accounts")
