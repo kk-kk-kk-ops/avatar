@@ -197,14 +197,25 @@ export default function AdminDashboard({
             期間終了後は自動的に無料プランに戻ります。
           </div>
         )}
-        {/* お知らせだけは一覧+本文の2ペイン表示のため、他タブと同じ
-            max-w-3xlだと横幅が狭すぎる(2026-09報告)。専用に幅の制限を
-            外したラッパーを使う。 */}
+        {/* お知らせ・契約情報は他タブと同じmax-w-3xlだと横幅が狭すぎる
+            (2026-09報告: お知らせは一覧+本文の2ペイン、契約情報は4プラン
+            のカードが1列に並びきらなかったため)。それぞれ専用の幅で
+            表示する。 */}
         {tab === "announcements" ? (
           <AnnouncementsView
             announcements={announcementItems}
             onReadAnnouncement={handleReadAnnouncement}
           />
+        ) : tab === "billing" ? (
+          <div className="mx-auto max-w-5xl">
+            <BillingPanel
+              plan={plan}
+              trialEndsAt={trialEndsAt}
+              isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
+              hasStripeCustomer={hasStripeCustomer}
+              hasActiveSubscription={hasActiveSubscription}
+            />
+          </div>
         ) : (
           <div className="mx-auto max-w-3xl">
             {tab === "dashboard" && (
@@ -215,15 +226,6 @@ export default function AdminDashboard({
             )}
             {tab === "invite" && (
               <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
-            )}
-            {tab === "billing" && (
-              <BillingPanel
-                plan={plan}
-                trialEndsAt={trialEndsAt}
-                isDebugPlanSwitcherAllowed={isDebugPlanSwitcherAllowed}
-                hasStripeCustomer={hasStripeCustomer}
-                hasActiveSubscription={hasActiveSubscription}
-              />
             )}
           </div>
         )}

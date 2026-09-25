@@ -115,7 +115,7 @@ export default function BillingPanel({
             </p>
           );
         })()}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {PLAN_DISPLAY_ORDER.map((id) => {
             const info = PLANS[id];
             const isCurrent = plan === id;
