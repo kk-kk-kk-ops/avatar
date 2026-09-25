@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { Announcement, PlanId, Room, UpdateLog } from "@/lib/types";
+import type { Announcement, PlanId, Room } from "@/lib/types";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import LogoutButton from "@/components/auth/LogoutButton";
 import OnlineCount from "./OnlineCount";
@@ -10,7 +10,7 @@ import RoomManager from "./RoomManager";
 import InvitePanel from "./InvitePanel";
 import BillingPanel from "./BillingPanel";
 import AnnouncementsView from "./AnnouncementsView";
-import { markAnnouncementRead, markUpdateLogRead } from "./actions";
+import { markAnnouncementRead } from "./actions";
 
 type Tab = "dashboard" | "rooms" | "invite" | "announcements" | "billing";
 
@@ -44,7 +44,6 @@ export default function AdminDashboard({
   hasStripeCustomer,
   hasActiveSubscription,
   announcements,
-  updateLogs,
 }: {
   rooms: Room[];
   plan: PlanId;
@@ -60,19 +59,14 @@ export default function AdminDashboard({
   hasStripeCustomer: boolean;
   hasActiveSubscription: boolean;
   announcements: (Announcement & { unread: boolean })[];
-  updateLogs: (UpdateLog & { unread: boolean })[];
 }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // 項目単位の既読管理(サーバーから受け取った初期状態をローカルで保持し、
   // 個々の項目を開いた瞬間に即座にバッジを消すため。実際の既読記録は
-  // AnnouncementsView側でmarkAnnouncementRead/markUpdateLogReadを呼んで
-  // 永続化する)。
+  // AnnouncementsView側でmarkAnnouncementReadを呼んで永続化する)。
   const [announcementItems, setAnnouncementItems] = useState(announcements);
-  const [updateLogItems, setUpdateLogItems] = useState(updateLogs);
-  const hasUnreadAnnouncements =
-    announcementItems.some((a) => a.unread) ||
-    updateLogItems.some((u) => u.unread);
+  const hasUnreadAnnouncements = announcementItems.some((a) => a.unread);
 
   const handleReadAnnouncement = (id: string) => {
     setAnnouncementItems((prev) =>
@@ -82,12 +76,6 @@ export default function AdminDashboard({
       // 既読マークの失敗は表示上は無視する(次に開いた時にまた
       // 未読バッジが出るだけで、閲覧自体は既にできている)。
     });
-  };
-  const handleReadUpdateLog = (id: string) => {
-    setUpdateLogItems((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, unread: false } : u)),
-    );
-    markUpdateLogRead(id).catch(() => {});
   };
 
   // 多重ログイン検知(2026-09追加。手順9)。別のタブ/デバイスで同じ
@@ -222,9 +210,7 @@ export default function AdminDashboard({
           {tab === "announcements" && (
             <AnnouncementsView
               announcements={announcementItems}
-              updateLogs={updateLogItems}
               onReadAnnouncement={handleReadAnnouncement}
-              onReadUpdateLog={handleReadUpdateLog}
             />
           )}
           {tab === "billing" && (

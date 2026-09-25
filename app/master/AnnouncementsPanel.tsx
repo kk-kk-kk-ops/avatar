@@ -1,14 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Announcement, MaintenanceSettings, UpdateLog } from "@/lib/types";
+import type { Announcement, MaintenanceSettings } from "@/lib/types";
 import {
   createAnnouncement,
   updateAnnouncement,
   deleteAnnouncement,
-  createUpdateLog,
-  updateUpdateLog,
-  deleteUpdateLog,
 } from "./announcementActions";
 import MaintenancePanel from "./MaintenancePanel";
 
@@ -29,7 +26,7 @@ type Entry = {
   date: string; // ISO文字列
 };
 
-type Category = "announcements" | "updates" | "maintenance";
+type Category = "announcements" | "maintenance";
 
 function toDateInputValue(iso: string): string {
   const d = new Date(iso);
@@ -321,18 +318,15 @@ function EntryListSection({
 
 export default function AnnouncementsPanel({
   announcements,
-  updateLogs,
   maintenance,
 }: {
   announcements: Announcement[];
-  updateLogs: UpdateLog[];
   maintenance: MaintenanceSettings;
 }) {
   const [category, setCategory] = useState<Category>("announcements");
 
   const tabs: { id: Category; label: string }[] = [
-    { id: "announcements", label: "告知" },
-    { id: "updates", label: "アップデート" },
+    { id: "announcements", label: "お知らせ" },
     { id: "maintenance", label: "メンテナンス" },
   ];
 
@@ -369,21 +363,6 @@ export default function AnnouncementsPanel({
           onCreate={createAnnouncement}
           onUpdate={updateAnnouncement}
           onDelete={deleteAnnouncement}
-        />
-      ) : category === "updates" ? (
-        <EntryListSection
-          primaryLabel="バージョン番号(例: v2.3.1)"
-          bodyLabel="変更内容"
-          dateLabel="リリース日"
-          entries={updateLogs.map((u) => ({
-            id: u.id,
-            primary: u.version,
-            body: u.body,
-            date: u.releasedAt,
-          }))}
-          onCreate={createUpdateLog}
-          onUpdate={updateUpdateLog}
-          onDelete={deleteUpdateLog}
         />
       ) : (
         <MaintenancePanel maintenance={maintenance} />

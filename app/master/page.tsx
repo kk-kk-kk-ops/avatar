@@ -16,7 +16,6 @@ import {
   type TemplateObjectImage,
   type AccountSummary,
   type Announcement,
-  type UpdateLog,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
 
@@ -138,18 +137,6 @@ export default async function MasterPage() {
     publishedAt: a.published_at,
   }));
 
-  const { data: updateLogRows } = await supabase
-    .from("update_logs")
-    .select("id, version, body, released_at")
-    .order("released_at", { ascending: false })
-    .order("created_at", { ascending: false });
-  const updateLogs: UpdateLog[] = (updateLogRows ?? []).map((u) => ({
-    id: u.id,
-    version: u.version,
-    body: u.body,
-    releasedAt: u.released_at,
-  }));
-
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
@@ -250,7 +237,6 @@ export default async function MasterPage() {
       templates={templates}
       accounts={accounts}
       announcements={announcements}
-      updateLogs={updateLogs}
       maintenance={{
         enabled: appSettings?.maintenance_enabled ?? false,
         startsAt: appSettings?.maintenance_starts_at ?? null,
