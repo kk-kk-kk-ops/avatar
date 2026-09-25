@@ -197,10 +197,10 @@ export default function AdminDashboard({
             期間終了後は自動的に無料プランに戻ります。
           </div>
         )}
-        {/* お知らせ・契約情報は他タブと同じmax-w-3xlだと横幅が狭すぎる
-            (2026-09報告: お知らせは一覧+本文の2ペイン、契約情報は4プラン
-            のカードが1列に並びきらなかったため)。それぞれ専用の幅で
-            表示する。 */}
+        {/* お知らせ・契約情報・ルームは他タブと同じmax-w-3xlだと横幅が
+            狭すぎる(2026-09報告: お知らせは一覧+本文の2ペイン、契約情報は
+            4プランのカード、ルームはデザイン4列がそれぞれ1列に並びきら
+            なかったため)。それぞれ専用の幅で表示する。 */}
         {tab === "announcements" ? (
           <AnnouncementsView
             announcements={announcementItems}
@@ -216,13 +216,14 @@ export default function AdminDashboard({
               hasActiveSubscription={hasActiveSubscription}
             />
           </div>
+        ) : tab === "rooms" ? (
+          <div className="mx-auto max-w-5xl">
+            <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
+          </div>
         ) : (
           <div className="mx-auto max-w-3xl">
             {tab === "dashboard" && (
               <OnlineCount rooms={rooms} bannedParticipants={bannedParticipants} />
-            )}
-            {tab === "rooms" && (
-              <RoomManager rooms={rooms} maxRooms={maxRooms} templates={templates} />
             )}
             {tab === "invite" && (
               <InvitePanel inviteToken={inviteToken} inviterName={inviterName} />
