@@ -152,11 +152,12 @@ function EntryListSection({
 
       {/* 2026-09報告: 一覧(左)と本文(右)は横並びflexの兄弟のため、
           高さ指定が無いと一覧の項目数によって行全体の高さが決まり、
-          本文エリアもそれに引きずられて伸び縮みしていた。両方を
-          「5項目分」の目安の固定高さ(h-80)にし、それぞれの内側だけで
-          スクロールするようにする。 */}
+          本文エリアもそれに引きずられて伸び縮みしていた。両方を画面の
+          高さいっぱい(75vh)にし、それぞれの内側だけでスクロールする
+          ようにする(2026-09報告により、当初の「5項目分」目安の固定高さ
+          h-80から拡大)。 */}
       <div className="flex flex-col gap-4 sm:flex-row">
-        <div className="h-80 w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
+        <div className="h-[75vh] w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
           {entries.length === 0 ? (
             <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
               まだ登録されていません
@@ -189,11 +190,10 @@ function EntryListSection({
 
         <div
           className={`min-w-0 flex-1 rounded-lg border border-slate-200 bg-white p-4 ${
-            // 編集・新規追加フォームは全文が見えるよう画面の高さいっぱいまで
-            // 広げる(2026-09報告: 一覧5項目分の高さ(h-80)に固定していたため、
-            // 長文を編集する際に本文欄が窮屈だった)。一覧表示中は従来通り
-            // h-80固定+内側スクロールのまま。
-            formOpen ? "flex h-[75vh] flex-col" : "h-80 overflow-y-auto"
+            // 表示・編集どちらも画面の高さいっぱい(75vh)まで広げる。
+            // フォーム表示時はtextareaを可変(flex-1)にするためflex-col、
+            // 閲覧時は単純にbox全体をスクロールさせる。
+            formOpen ? "flex h-[75vh] flex-col" : "h-[75vh] overflow-y-auto"
           }`}
         >
           {formOpen ? (
