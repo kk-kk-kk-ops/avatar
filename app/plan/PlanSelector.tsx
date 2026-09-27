@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { PLANS, formatPlanDailyLimit, formatPlanRoomLabel, type PlanId } from "@/lib/types";
+import { PLANS, formatPlanDailyLimit, type PlanId } from "@/lib/types";
 import { startFreeTrial } from "./actions";
 import LogoutButton from "@/components/auth/LogoutButton";
 
@@ -71,7 +71,6 @@ export default function PlanSelector() {
                 <li>ビデオ通話: {formatPlanDailyLimit(plan.videoCallDailyMinutes)}</li>
                 <li>音声通話: {formatPlanDailyLimit(plan.voiceCallDailyMinutes)}</li>
                 <li>チャット履歴保管期間: {plan.historyRetentionLabel}</li>
-                <li>ルーム: {formatPlanRoomLabel(plan.roomCreation)}</li>
               </ul>
               {planId === "free" && (
                 <p className="mt-2 rounded-md bg-emerald-50 px-2 py-1.5 text-[10px] leading-snug text-emerald-700">

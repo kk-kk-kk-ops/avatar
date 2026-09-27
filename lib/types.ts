@@ -278,8 +278,8 @@ export type PlanId = "free" | "light" | "standard" | "pro";
 // 音声通話の1日あたり利用可能時間)と表示用ラベル。
 // screenShareDailyMinutes/videoCallDailyMinutes/voiceCallDailyMinutesは
 // nullで「無制限」を表す(無制限プランでは日次カウント自体を行わない)。
-// roomCreationは表示用(契約情報画面向け)で、実際のアクセス制御はまだ
-// 存在しない(テンプレート以外のルーム作成機能自体が未実装のため)。
+// ルームは全プラン共通でテンプレートのみ(オリジナル作成機能自体が
+// 未実装のため、2026-09にプラン間の差として表示する項目自体を廃止)。
 // 料金・上限はサービス側の固定値のためDBではなくここで管理する。
 export const PLANS: Record<
   PlanId,
@@ -293,7 +293,6 @@ export const PLANS: Record<
     screenShareDailyMinutes: number | null; // 1人1日あたりの画面共有可能時間(分)。毎日4:00にリセット。nullは無制限
     videoCallDailyMinutes: number | null; // 1人1日あたりのビデオ通話可能時間(分)。毎日4:00にリセット。nullは無制限
     voiceCallDailyMinutes: number | null; // 1人1日あたりの音声通話可能時間(分)。毎日4:00にリセット。nullは無制限
-    roomCreation: "template-only" | "template-or-original"; // 表示用。ルーム作成方法の説明
     historyRetentionLabel: string; // チャット・画像履歴の保管期間(表示用)。実際の削除判定は
     // supabase/consolidated_setup.sqlのget_expired_chat_message_ids()に同じ期間をハードコードしている
     // (DBはこの表示値を読まない。他の上限値と同じくコード側を唯一の情報源とする方針のため)
@@ -310,7 +309,6 @@ export const PLANS: Record<
     screenShareDailyMinutes: 5,
     videoCallDailyMinutes: 5,
     voiceCallDailyMinutes: null,
-    roomCreation: "template-only",
     historyRetentionLabel: "7日",
   },
   light: {
@@ -324,7 +322,6 @@ export const PLANS: Record<
     screenShareDailyMinutes: 45,
     videoCallDailyMinutes: 45,
     voiceCallDailyMinutes: null,
-    roomCreation: "template-only",
     historyRetentionLabel: "1ヶ月",
   },
   standard: {
@@ -338,7 +335,6 @@ export const PLANS: Record<
     screenShareDailyMinutes: 90,
     videoCallDailyMinutes: 90,
     voiceCallDailyMinutes: null,
-    roomCreation: "template-only",
     historyRetentionLabel: "1ヶ月",
   },
   pro: {
@@ -352,7 +348,6 @@ export const PLANS: Record<
     screenShareDailyMinutes: null,
     videoCallDailyMinutes: null,
     voiceCallDailyMinutes: null,
-    roomCreation: "template-or-original",
     historyRetentionLabel: "3ヶ月",
   },
 };
@@ -364,15 +359,6 @@ export function formatPlanDailyLimit(minutes: number | null): string {
   return minutes === null ? "無制限" : `1人/1日${minutes}分`;
 }
 
-// プラン選択画面・契約情報画面で共通して使うプランの項目一覧
-// (「ルーム」の作成方法説明を含む)。
-export function formatPlanRoomLabel(
-  roomCreation: "template-only" | "template-or-original",
-): string {
-  return roomCreation === "template-or-original"
-    ? "テンプレート＋オリジナル作成可"
-    : "テンプレートのみ";
-}
 
 // 30日間無料トライアル(standardプラン相当・カード登録不要)の期間。
 export const TRIAL_DAYS = 30;
