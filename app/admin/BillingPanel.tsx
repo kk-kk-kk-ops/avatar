@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { PLANS, formatPlanDailyLimit, formatPlanRoomLabel, type PlanId } from "@/lib/types";
+import { PLANS, formatPlanDailyLimit, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
 import { createCheckoutSession } from "@/app/billing/checkout/actions";
 import { createPortalSession } from "@/app/billing/portal/actions";
@@ -145,7 +145,6 @@ export default function BillingPanel({
                   <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
                   <li>音声通話: {formatPlanDailyLimit(info.voiceCallDailyMinutes)}</li>
                   <li>チャット履歴保管期間: {info.historyRetentionLabel}</li>
-                  <li>ルーム: {formatPlanRoomLabel(info.roomCreation)}</li>
                 </ul>
                 <button
                   onClick={() => handlePlanCardClick(id)}
