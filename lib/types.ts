@@ -117,6 +117,7 @@ export const AVATAR_IMAGES = [
   "/avatar/kids1",
   "/avatar/kids2",
   "/avatar/men",
+  "/avatar/men2",
   "/avatar/rabi",
   "/avatar/tora",
   "/avatar/usagi",
