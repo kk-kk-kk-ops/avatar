@@ -112,6 +112,7 @@ export const AVATAR_IMAGES = [
   "/avatar/goo",
   "/avatar/goo_blue",
   "/avatar/goo_yewllow",
+  "/avatar/goo2_red",
   "/avatar/gorira",
   "/avatar/kids1",
   "/avatar/kids2",
