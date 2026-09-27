@@ -5,6 +5,12 @@ import { LIVEKIT_SERVERS } from "@/lib/livekitServers";
 // β版の運用制限:全顧客合計の同時接続数がこれに達したら新規契約を停止する。
 const BETA_ONLINE_CAP = 1000;
 
+// 新規登録時、初期ルームに割り当てるデフォルトのルームデザイン(テンプレート)。
+// 「オフィス（ビル）」のtemplates.id固定値(2026-09-27時点で確認済み)。
+// 以前はtemplate_idを設定せずルームを作っていたため、初期ルームが
+// どのルームデザインにも一致しない状態になっていた不具合の修正。
+const DEFAULT_SIGNUP_TEMPLATE_ID = "d465652c-6133-486d-8af1-4fbb95c9c315";
+
 type ProvisionResult =
   | { ok: true; accountId: string; created: boolean }
   | { ok: false; error: string };
@@ -89,10 +95,22 @@ export async function provisionAccountForUser(
     return { ok: false, error: "プロフィールの更新に失敗しました" };
   }
 
+  // 初期ルームのデザインを固定のデフォルトテンプレートに紐付ける
+  // (app/admin/actions.tsのaddRoom/updateRoomTemplateと同じくtemplate_id・
+  // preview_imageをテンプレート側の値で揃える)。テンプレートが見つからない
+  // 場合(削除された等)でもルーム作成自体は失敗させたくないため、
+  // その場合はtemplate_idを付けずに従来通り作成する。
+  const { data: defaultTemplate } = await supabase
+    .from("templates")
+    .select("id, name, background_image_url")
+    .eq("id", DEFAULT_SIGNUP_TEMPLATE_ID)
+    .maybeSingle();
+
   const { error: roomError } = await supabase.from("rooms").insert({
     account_id: account.id,
-    name: "Globy",
-    preview_image: "/map-background.webp",
+    name: defaultTemplate?.name ?? "Globy",
+    preview_image: defaultTemplate?.background_image_url ?? "/map-background.webp",
+    template_id: defaultTemplate?.id ?? null,
   });
 
   if (roomError) {
