@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
+import { getStripe, planIdForPriceId, isPaidPlanId } from "@/lib/stripe";
 import {
   PLANS,
   NEW_ITEM_SIZE,
@@ -68,6 +69,13 @@ export default async function MasterPage() {
     .from("accounts")
     .select("id, name, plan, owner_user_id, livekit_server_id, created_at")
     .order("created_at", { ascending: false });
+
+  const masterAccountIds = new Set(
+    (accountRows ?? [])
+      .filter((a) => masterUserIds.has(a.owner_user_id))
+      .map((a) => a.id),
+  );
+
   const planCounts: Record<PlanId, number> = {
     free: 0,
     light: 0,
@@ -75,13 +83,55 @@ export default async function MasterPage() {
     pro: 0,
   };
   let subscriptionTotalYen = 0;
+
+  // Freeプランはstripeを一切経由しないため、これだけはDB(accounts.plan)を
+  // そのまま数える(マスター自身のアカウントは運用担当者のものなので除外)。
   (accountRows ?? []).forEach((a) => {
-    if (masterUserIds.has(a.owner_user_id)) return;
-    const plan = a.plan as PlanId;
-    if (!(plan in planCounts)) return;
-    planCounts[plan] += 1;
-    subscriptionTotalYen += PLANS[plan]?.priceYen ?? 0;
+    if (masterAccountIds.has(a.id)) return;
+    if (a.plan === "free") planCounts.free += 1;
   });
+
+  // 有料3プラン(light/standard/pro)は、DBのaccounts.plan(Webhook経由の
+  // 反映で多少ラグがありうる)ではなく、Stripe上の実際に有効な契約を正として
+  // 集計する。値上げ後も旧価格のまま据え置かれた契約者がいる場合、
+  // 「サブスク合計金額」もその契約者が実際に支払っている金額(契約時点の
+  // Price)を反映する必要があるため、PLANS[plan].priceYen(＝現在の
+  // 新規契約時の価格)は使わない。
+  try {
+    const stripe = getStripe();
+    let startingAfter: string | undefined;
+    do {
+      const page = await stripe.subscriptions.list({
+        status: "active",
+        limit: 100,
+        starting_after: startingAfter,
+      });
+      for (const sub of page.data) {
+        const accountId = sub.metadata?.accountId;
+        if (accountId && masterAccountIds.has(accountId)) continue;
+        const item = sub.items.data[0];
+        const priceId = item?.price?.id;
+        if (!priceId) continue;
+        const planId = planIdForPriceId(priceId);
+        if (!planId || !isPaidPlanId(planId)) continue;
+        planCounts[planId] += 1;
+        subscriptionTotalYen += (item.price.unit_amount ?? 0) * (item.quantity ?? 1);
+      }
+      startingAfter = page.has_more ? page.data[page.data.length - 1]?.id : undefined;
+    } while (startingAfter);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Stripeの契約情報取得に失敗しました", err);
+    // フォールバック: 取得に失敗した場合はDB(accounts.plan)ベースの
+    // 簡易集計に戻す(表示が完全に壊れるよりはマシ、実額とはズレうる)。
+    (accountRows ?? []).forEach((a) => {
+      if (masterAccountIds.has(a.id)) return;
+      const plan = a.plan as PlanId;
+      if (plan === "free" || !(plan in planCounts)) return;
+      planCounts[plan] += 1;
+      subscriptionTotalYen += PLANS[plan]?.priceYen ?? 0;
+    });
+  }
 
   const { count: totalProfiles } = await supabase
     .from("profiles")
