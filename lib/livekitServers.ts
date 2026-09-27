@@ -23,9 +23,14 @@ export const LIVEKIT_SERVERS: LivekitServerConfig[] = [
     id: "node-1",
     // 2026-08、WebARENA Indigo(grovina-livekit-prod)からIndigoPro
     // (target-pro)へ本番移行済み。負荷検証の結果、1台での安全な収容力は
-    // プロプラン(30人)顧客4組(120接続)まで(deploy/livekit/LOAD_TEST_PLAN.md
-    // 参照)。旧Indigoサーバーは解約済みのため、このidを増やす際は新しい
-    // 物理サーバーとして扱う。
+    // 「プロプラン(当時30人)顧客4組(120接続)まで」(deploy/livekit/
+    // LOAD_TEST_PLAN.md参照)。2026-09-27にProプランの人数上限を50人へ
+    // 引き上げたため、この収容力の見積もりは当時の30人前提から古くなって
+    // いる(50人版の負荷再検証は未実施。ユーザー確認の上でリスクを許容し
+    // 先に人数上限だけ変更した経緯はproject_globy_loadtest_multiserver
+    // メモ参照)。同一サーバーに複数のPro契約が乗る場合は特に注意すること。
+    // 旧Indigoサーバーは解約済みのため、このidを増やす際は新しい物理
+    // サーバーとして扱う。
     label: "grovina-livekit-pro①",
     urlEnv: "LIVEKIT_URL",
     apiKeyEnv: "LIVEKIT_API_KEY",
