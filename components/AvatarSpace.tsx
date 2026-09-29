@@ -235,6 +235,15 @@ function extractGroupMentions(
   return { everyone, userIds: Array.from(userIds) };
 }
 
+// DM版のextractGroupMentions。DMは相手が1人だけなので判定はシンプルに
+// 「本文中に@<相手の表示名>が(直後が空白or文字列終端の形で)含まれるか」
+// だけでよい。判定条件はextractGroupMentions/renderTextWithMentionsと揃える。
+function extractDmMention(text: string, peerName: string | null): boolean {
+  if (!text || !peerName) return false;
+  const escaped = peerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`@${escaped}(?=\\s|$)`).test(text);
+}
+
 // グループチャット・DMの@メンション表示用。テキスト中の「@全員」「@<相手
 // の表示名>」を藍色でハイライトする(入力中のオーバーレイ・送信済み
 // メッセージの吹き出し表示、両方で共有する)。表示名の直後が空白または
@@ -723,12 +732,17 @@ export default function AvatarSpace({
   // 再取得トリガーにする。
   const [chatThreadsRefreshTrigger, setChatThreadsRefreshTrigger] = useState(0);
 
-  // ---- 通知(グループチャットの@メンション) ----
+  // ---- 通知(グループチャット・DMの@メンション) ----
+  // groupId/recipientUserIdはchat_mentionsと同じくどちらか一方だけが
+  // 埋まる(2026-09-29、DM対応で追加)。DM通知はrecipientUserId(=自分)
+  // 自体はジャンプ先の判定には使わず、相手(mentionerUserId)のスレッドへ
+  // 遷移する。
   type MentionNotification = {
     id: string;
     messageId: string;
-    groupId: string;
+    groupId: string | null;
     groupName: string;
+    mentionerUserId: string;
     mentionerName: string;
     isEveryone: boolean;
     createdAt: string;
@@ -977,6 +991,11 @@ export default function AvatarSpace({
   // 通知一覧からジャンプしてきた際、対象メッセージを一時的に強調表示する
   // ためのID(数秒後に自動で消える)。
   const [highlightedGroupMessageId, setHighlightedGroupMessageId] = useState<
+    string | null
+  >(null);
+  // DM版(2026-09-29追加、DMメンション通知対応)。highlightedGroupMessageId
+  // と全く同じ考え方。
+  const [highlightedDmMessageId, setHighlightedDmMessageId] = useState<
     string | null
   >(null);
   // ホバーで出した絵文字バーへ、吹き出しとの間の隙間を挟んでマウスを
@@ -1352,41 +1371,17 @@ export default function AvatarSpace({
   // しても同じ相手として履歴が引き継がれる)。
   useEffect(() => {
     if (!joined || !selectedPeerUserId) return;
-    dmForceScrollRef.current = true;
+    // 通知からのメンションジャンプ待ちが無い、通常のスレッド新規オープン/
+    // 再オープンの場合のみ、読み込み完了時に一番下へスクロールする
+    // (グループスレッドの読み込みと同じ考え方。2026-09-29のDMメンション
+    // 通知対応で追加)。
+    if (!pendingMentionScrollTargetRef.current) {
+      dmForceScrollRef.current = true;
+    }
     let cancelled = false;
     const myUserId = authUserIdRef.current;
     (async () => {
-      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
-      // 場合、通常のRLS(profiles.account_id経由)では対象ルームの
-      // チャットが見えないため、招待トークンを検証するSECURITY DEFINER
-      // 関数経由で取得する(list_rooms_by_invite_tokenと同じ考え方)。
-      const { data, error } = viewOnlyInviteToken
-        ? await supabase.rpc("list_chat_messages_by_invite_token", {
-            token: viewOnlyInviteToken,
-            target_room_id: roomId,
-            peer_user_id: selectedPeerUserId,
-          })
-        : await supabase
-            .from("chat_messages")
-            .select(
-              "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path, chat_message_reactions(user_id, emoji)",
-            )
-            .eq("room_id", roomId)
-            .or(
-              `and(sender_user_id.eq.${myUserId},recipient_user_id.eq.${selectedPeerUserId}),and(sender_user_id.eq.${selectedPeerUserId},recipient_user_id.eq.${myUserId})`,
-            )
-            .order("created_at", { ascending: false })
-            .limit(50);
-      if (cancelled) return;
-      if (error) {
-        // eslint-disable-next-line no-console
-        console.error("チャット履歴の取得に失敗しました", error);
-        setDmError(
-          `チャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
-        );
-        return;
-      }
-      const rows = (data ?? []) as Array<{
+      type MessageRow = {
         id: string;
         sender_user_id: string;
         message: string;
@@ -1395,7 +1390,97 @@ export default function AvatarSpace({
         deleted_at: string | null;
         image_path: string | null;
         chat_message_reactions?: Array<{ user_id: string; emoji: string }>;
-      }>;
+      };
+      const selectCols =
+        "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path, chat_message_reactions(user_id, emoji)";
+      const orFilter = `and(sender_user_id.eq.${myUserId},recipient_user_id.eq.${selectedPeerUserId}),and(sender_user_id.eq.${selectedPeerUserId},recipient_user_id.eq.${myUserId})`;
+      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
+      // 場合、通常のRLS(profiles.account_id経由)では対象ルームの
+      // チャットが見えないため、招待トークンを検証するSECURITY DEFINER
+      // 関数経由で取得する(list_rooms_by_invite_tokenと同じ考え方)。
+      // このRPCには前後取得(anchor)の仕組みが無いため、viewOnly経由で
+      // 開いた古いDMメンション通知は直近50件の範囲外だとジャンプできない
+      // (通常ログインでのみ対応する)。
+      // rowsは以下いずれの経路でも最終的に「古い→新しい」の昇順で揃える。
+      let rows: MessageRow[];
+      const anchor = viewOnlyInviteToken
+        ? null
+        : pendingMentionScrollTargetRef.current;
+      if (viewOnlyInviteToken) {
+        const { data, error } = await supabase.rpc(
+          "list_chat_messages_by_invite_token",
+          {
+            token: viewOnlyInviteToken,
+            target_room_id: roomId,
+            peer_user_id: selectedPeerUserId,
+          },
+        );
+        if (cancelled) return;
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("チャット履歴の取得に失敗しました", error);
+          setDmError(
+            `チャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+          );
+          return;
+        }
+        rows = (data ?? []) as MessageRow[];
+      } else if (anchor) {
+        // 通知一覧からのジャンプ待ちがある場合、「直近50件」だと対象
+        // メッセージが範囲外(それより古い)のことがあるため、対象の
+        // 送信時刻を基準に前後(前30件・後20件)をまとめて取得する
+        // (グループスレッドの同種の処理と同じ考え方)。
+        const [beforeRes, afterRes] = await Promise.all([
+          supabase
+            .from("chat_messages")
+            .select(selectCols)
+            .eq("room_id", roomId)
+            .or(orFilter)
+            .lte("created_at", anchor.createdAt)
+            .order("created_at", { ascending: false })
+            .limit(30),
+          supabase
+            .from("chat_messages")
+            .select(selectCols)
+            .eq("room_id", roomId)
+            .or(orFilter)
+            .gt("created_at", anchor.createdAt)
+            .order("created_at", { ascending: true })
+            .limit(20),
+        ]);
+        if (cancelled) return;
+        if (beforeRes.error || afterRes.error) {
+          // eslint-disable-next-line no-console
+          console.error(
+            "チャット履歴の取得に失敗しました",
+            beforeRes.error ?? afterRes.error,
+          );
+          setDmError("チャット履歴の取得に失敗しました。");
+          return;
+        }
+        rows = [
+          ...((beforeRes.data ?? []) as MessageRow[]).slice().reverse(),
+          ...((afterRes.data ?? []) as MessageRow[]),
+        ];
+      } else {
+        const { data, error } = await supabase
+          .from("chat_messages")
+          .select(selectCols)
+          .eq("room_id", roomId)
+          .or(orFilter)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (cancelled) return;
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error("チャット履歴の取得に失敗しました", error);
+          setDmError(
+            `チャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+          );
+          return;
+        }
+        rows = ((data ?? []) as MessageRow[]).slice().reverse();
+      }
       // viewOnly(招待URLの一時ゲスト)は通常のRLS経由でchat_message_
       // reactionsを埋め込みSELECTできない(9f-5のコメント参照)ため、
       // メッセージ本体の取得後にトークン検証付きの別RPCでまとめて取得し、
@@ -1429,9 +1514,9 @@ export default function AvatarSpace({
         }
       }
       if (cancelled) return;
-      const messages: DmMessage[] = (
-        viewOnlyInviteToken ? rows : rows.slice().reverse()
-      )
+      // rowsは上のどの経路でも既に昇順(古い→新しい)に揃えてあるため、
+      // ここでの追加の並べ替えは不要。
+      const messages: DmMessage[] = rows
         // 削除済みメッセージは一覧に表示しない(吹き出し自体を残さない)。
         .filter((row) => !row.deleted_at)
         .map((row) => ({
@@ -1449,7 +1534,6 @@ export default function AvatarSpace({
               : (row.chat_message_reactions ?? [])
           ).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
         }));
-      dmForceScrollRef.current = true;
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
       // スレッドを開いたので未読を消す(ローカル表示用)。
       setUnreadFromPeers((prev) =>
@@ -1486,6 +1570,30 @@ export default function AvatarSpace({
       cancelled = true;
     };
   }, [joined, roomId, supabase, viewOnlyInviteToken, selectedPeerUserId]);
+
+  // ---- 通知一覧からのジャンプ(DM版):対象メッセージまでスクロール+
+  // 一時強調 ----(2026-09-29追加、DMメンション通知対応。グループの
+  // 同種の処理と全く同じ考え方)
+  useEffect(() => {
+    const target = pendingMentionScrollTargetRef.current;
+    if (!target || !selectedPeerUserId) return;
+    const thread = dmThreads[selectedPeerUserId];
+    if (!thread || !thread.some((m) => m.id === target.messageId)) return;
+    const targetId = target.messageId;
+    pendingMentionScrollTargetRef.current = null;
+    requestAnimationFrame(() => {
+      dmBubbleRefs.current[targetId]?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+    setHighlightedDmMessageId(targetId);
+    const timer = window.setTimeout(
+      () => setHighlightedDmMessageId(null),
+      2000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [dmThreads, selectedPeerUserId]);
 
   // ---- チャット:選択中のグループスレッドを読み込む ----
   // グループのSELECT/INSERT RLSはchat_group_members.user_id=auth.uid()
@@ -1775,7 +1883,7 @@ export default function AvatarSpace({
       const { data, error } = await supabase
         .from("chat_mentions")
         .select(
-          "id, message_id, group_id, mentioner_user_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name)",
+          "id, message_id, group_id, recipient_user_id, mentioner_user_id, mentioner_name, is_everyone, created_at, read_at, chat_groups(name)",
         )
         .eq("mentioned_user_id", myUserId)
         .order("created_at", { ascending: false })
@@ -1793,7 +1901,8 @@ export default function AvatarSpace({
       const rows = (data ?? []) as Array<{
         id: string;
         message_id: string;
-        group_id: string;
+        group_id: string | null;
+        recipient_user_id: string | null;
         mentioner_user_id: string;
         mentioner_name: string;
         is_everyone: boolean;
@@ -1871,6 +1980,7 @@ export default function AvatarSpace({
             messageId: row.message_id,
             groupId: row.group_id,
             groupName: row.chat_groups?.[0]?.name ?? "グループ",
+            mentionerUserId: row.mentioner_user_id,
             mentionerName:
               mentionerNameById.get(row.mentioner_user_id) ??
               row.mentioner_name,
@@ -1913,8 +2023,16 @@ export default function AvatarSpace({
         messageId: mention.messageId,
         createdAt: mention.messageCreatedAt,
       };
-      setSelectedPeerUserId(null);
-      setSelectedGroupId(mention.groupId);
+      // groupId/mentionerUserIdはchat_mentionsと同じくどちらか一方だけが
+      // 埋まる。DM通知(groupId === null)の場合、遷移先はメンションして
+      // きた相手(mentionerUserId)とのスレッド。
+      if (mention.groupId) {
+        setSelectedPeerUserId(null);
+        setSelectedGroupId(mention.groupId);
+      } else {
+        setSelectedGroupId(null);
+        setSelectedPeerUserId(mention.mentionerUserId);
+      }
       setSidebarTab("chat");
     },
     [supabase],
@@ -2047,6 +2165,49 @@ export default function AvatarSpace({
           createdAt: data.created_at,
           imagePath,
         });
+        // @メンション(@<相手の表示名>)を含む場合、通知を作成する
+        // (2026-09-29追加。グループチャットのcreate_chat_mentions呼び出しと
+        // 同じ考え方)。表示上のハイライト(renderTextWithMentions)と対になる
+        // extractDmMentionで判定するため、色が付いた部分=通知が作られる
+        // 部分が常に一致する。相手の現在の表示名は、オンライン中はplayers
+        // (playerList)由来、そうでなければlist_chat_threads由来の
+        // threadNameにフォールバックする(入力欄の@候補・ヘッダー表示と
+        // 同じ名前解決)。
+        if (text) {
+          const peerName =
+            Object.values(players).find((p) => p.userId === peerUserId)
+              ?.name ??
+            chatThreads.find((t) => !t.isGroup && t.threadId === peerUserId)
+              ?.threadName ??
+            null;
+          if (extractDmMention(text, peerName)) {
+            const { error: mentionError } = viewOnlyInviteToken
+              ? await supabase.rpc("create_dm_mention_by_invite_token", {
+                  token: viewOnlyInviteToken,
+                  p_message_id: data.id,
+                  p_mentioner_name: senderName,
+                })
+              : await supabase.rpc("create_dm_mention", {
+                  p_message_id: data.id,
+                  p_mentioner_name: senderName,
+                });
+            if (mentionError) {
+              // eslint-disable-next-line no-console
+              console.error("メンション通知の作成に失敗しました", mentionError);
+            } else {
+              // グループと同じ"mention"broadcastイベントを再利用する
+              // (受信側ハンドラはgroupIdを見ておらず、everyone/
+              // mentionedUserIdsのみで判定するため、groupId: nullのまま
+              // 流用できる)。
+              channelRef.current?.httpSend("mention", {
+                originId: selfId.current,
+                groupId: null,
+                everyone: false,
+                mentionedUserIds: [peerUserId],
+              });
+            }
+          }
+        }
         return true;
       } catch (err) {
         // 2026-09 QA指摘: 以前はcatchが無く、送信処理中に例外が発生すると
@@ -2061,7 +2222,15 @@ export default function AvatarSpace({
         setDmSending(false);
       }
     },
-    [dmSending, roomId, selectedPeerUserId, supabase, viewOnlyInviteToken],
+    [
+      dmSending,
+      roomId,
+      selectedPeerUserId,
+      supabase,
+      viewOnlyInviteToken,
+      players,
+      chatThreads,
+    ],
   );
 
   // グループチャットの送信(画像添付・編集・削除は1対1と異なり非対応)。
@@ -5203,7 +5372,7 @@ export default function AvatarSpace({
         .on("broadcast", { event: "mention" }, ({ payload }) => {
           const msg = payload as {
             originId: string;
-            groupId: string;
+            groupId: string | null;
             everyone: boolean;
             mentionedUserIds: string[];
           };
@@ -8932,7 +9101,7 @@ export default function AvatarSpace({
                           onTouchMove={handleDmTouchMove}
                           onTouchEnd={handleDmTouchEnd}
                           onTouchCancel={handleDmTouchEnd}
-                          className={`dm-selectable w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs ${
+                          className={`dm-selectable w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs transition-shadow ${
                             dmSelectionModeMessageId === m.id
                               ? "dm-select-active"
                               : ""
@@ -8940,6 +9109,10 @@ export default function AvatarSpace({
                             m.isSelf
                               ? "ml-auto bg-emerald-600 text-white"
                               : "bg-slate-700 text-slate-100"
+                          } ${
+                            highlightedDmMessageId === m.id
+                              ? "ring-2 ring-indigo-400"
+                              : ""
                           }`}
                         >
                           {/*
@@ -9761,7 +9934,9 @@ export default function AvatarSpace({
                       )}
                       <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-400">
                         <span className="min-w-0 truncate">
-                          👥 {mention.groupName}
+                          {mention.groupId
+                            ? `👥 ${mention.groupName}`
+                            : "💬 個人チャット"}
                         </span>
                         <span className="shrink-0">
                           {formatDmListTime(mention.createdAt)}
