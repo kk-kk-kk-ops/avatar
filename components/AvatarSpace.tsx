@@ -6047,6 +6047,22 @@ export default function AvatarSpace({
 
     self.meetingZoneId = zoneId;
     lastTrackedZoneId.current = zoneId;
+    // 2026-09報告(バグ修正): 会議室(conference)は常にこの確認ポップアップ
+    // 経由でのみ入室するため、移動loop側に用意していた「全体アナウンスON
+    // のまま会議室に入ったら強制OFF」の判定(zoneId !== lastTrackedZoneId.
+    // current依存)がここでは一度も実行されず、ボタンが無効化されているのに
+    // アイコンだけ緑(ON)のまま残ってしまっていた。setAnnouncementFlagは
+    // このコールバックより後で定義されており、useCallbackの依存配列に
+    // 含めるとTDZエラーになるため、同じ処理をここに直接書く。
+    if (self.announcementOn) {
+      self.announcementOn = false;
+      setAnnouncementOn(false);
+      setPlayers((prev) => {
+        const current = prev[self.id];
+        if (!current) return prev;
+        return { ...prev, [self.id]: { ...current, announcementOn: false } };
+      });
+    }
     channelRef.current?.track(self);
     // 移動loop側の同種の更新箇所と同じ理由で、自分のplayers上のエントリ
     // にもmeetingZoneIdを反映する(会議室=conferenceは常にこの確認
