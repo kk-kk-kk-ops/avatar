@@ -3974,6 +3974,17 @@ export default function AvatarSpace({
     setScreenSharing(false);
     setInCall(false);
     setCallError(null);
+    // 2026-09報告のバグ修正: 「会議モード」モーダル(meetingViewOpen)・
+    // 画面共有の全画面表示(expandedMedia)関連のstateも、上と同じ理由
+    // (このコンポーネントは再入室時もアンマウントされないため、明示的に
+    // リセットしないと前回の表示状態が残ったまま)でリセットしないと、
+    // 会議モードのまま退出→ロビーから再入室した際に、参加者が誰もいない
+    // 真っ黒な会議モード画面から始まってしまっていた。
+    setMeetingViewOpen(false);
+    setExpandedMedia(null);
+    setSelectedScreenSharerId(null);
+    setScreenAreaZoom(1);
+    setFullscreenZoom(1);
   }, []);
 
   // ---- 入室処理 ----
