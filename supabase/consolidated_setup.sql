@@ -2119,17 +2119,21 @@ grant execute on function public.list_chat_threads_by_invite_token(text, uuid) t
 
 
 -- ------------------------------------------------------------
--- 9f-3c. chat_mentions: グループチャットの@メンション通知(2026-09-02
---   追加)。メッセージ送信時に、本文中の「@全員」または「@<メンバー表示名>」
---   を解析したクライアントが、create_chat_mentions()経由でこのテーブルに
---   1メンション対象者につき1行ずつ挿入する(「@全員」は送信者を除く
---   その時点の全メンバーへ展開して1行ずつ)。
+-- 9f-3c. chat_mentions: グループチャット・個人チャット(DM)共通の
+--   @メンション通知(2026-09-02追加、2026-09-29にDM対応)。メッセージ
+--   送信時に、本文中の「@全員」「@<メンバー表示名>」(グループ)・
+--   「@<相手の表示名>」(DM)を解析したクライアントが、create_chat_mentions()
+--   /create_dm_mention()経由でこのテーブルに1メンション対象者につき1行ずつ
+--   挿入する(「@全員」は送信者を除くその時点の全メンバーへ展開して1行ずつ。
+--   DMは相手が1人だけなので常に1行)。group_id/recipient_user_idは
+--   どちらか一方だけが埋まる(chat_messagesのrecipient_user_id/group_idと
+--   同じ設計)。
 --
 --   INSERT用のRLSポリシーはあえて用意しない。「自分が送信したメッセージ
---   かどうか」「対象ユーザーが実際にそのグループのメンバーかどうか
+--   かどうか」「対象ユーザーが実際にそのグループのメンバーか/DMの宛先か
 --   (クライアントからのなりすまし防止)」の検証がRLSのusing/with checkだけ
---   では表現しづらいため、create_chat_mentions()というSECURITY DEFINER
---   関数を必ず経由させる(create_chat_groupと同じ考え方)。
+--   では表現しづらいため、create_chat_mentions()/create_dm_mention()という
+--   SECURITY DEFINER関数を必ず経由させる(create_chat_groupと同じ考え方)。
 --   SELECT/UPDATE(既読化)は、mentioned_user_id = auth.uid()の行に
 --   限定する通常のRLSで足りる(viewOnlyゲストも含め、auth.uid()だけで
 --   完結する判定のため9f-2のような特別対応は不要)。
@@ -2137,7 +2141,7 @@ grant execute on function public.list_chat_threads_by_invite_token(text, uuid) t
 create table if not exists public.chat_mentions (
   id uuid primary key default gen_random_uuid(),
   message_id uuid not null references public.chat_messages(id) on delete cascade,
-  group_id uuid not null references public.chat_groups(id) on delete cascade,
+  group_id uuid references public.chat_groups(id) on delete cascade,
   mentioned_user_id uuid not null references auth.users(id) on delete cascade,
   mentioner_user_id uuid not null references auth.users(id) on delete cascade,
   mentioner_name text not null,
@@ -2145,6 +2149,20 @@ create table if not exists public.chat_mentions (
   created_at timestamptz not null default now(),
   read_at timestamptz
 );
+
+-- 既存インストール向けの一度きりの移行(DM対応、2026-09-29)。
+-- group_idはこれまでNOT NULLだったためdrop not nullが必要。
+alter table public.chat_mentions alter column group_id drop not null;
+
+alter table public.chat_mentions
+  add column if not exists recipient_user_id uuid references auth.users(id) on delete cascade;
+
+alter table public.chat_mentions drop constraint if exists chat_mentions_target_check;
+alter table public.chat_mentions add constraint chat_mentions_target_check
+  check (
+    (group_id is not null and recipient_user_id is null)
+    or (group_id is null and recipient_user_id is not null)
+  );
 
 create index if not exists chat_mentions_mentioned_user_id_created_at_idx
   on public.chat_mentions (mentioned_user_id, created_at desc);
@@ -2243,6 +2261,89 @@ end;
 $$;
 
 grant execute on function public.create_chat_mentions(uuid, uuid, text, boolean, uuid[]) to authenticated;
+
+-- 個人チャット(DM)のメンション行の作成(2026-09-29追加)。DMは相手が
+-- 1人だけなので、create_chat_mentionsのようなp_mention_everyone/
+-- p_mentioned_user_idsの概念が無く、対象は常に対象メッセージの
+-- recipient_user_id。
+drop function if exists public.create_dm_mention(uuid, text);
+create function public.create_dm_mention(
+  p_message_id uuid,
+  p_mentioner_name text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_recipient uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  select recipient_user_id into v_recipient
+  from public.chat_messages
+  where id = p_message_id
+    and sender_user_id = auth.uid()
+    and recipient_user_id is not null;
+
+  if v_recipient is null then
+    raise exception 'このメッセージにはメンション通知を作成できません';
+  end if;
+
+  insert into public.chat_mentions
+    (message_id, group_id, recipient_user_id, mentioned_user_id, mentioner_user_id, mentioner_name, is_everyone)
+  values
+    (p_message_id, null, v_recipient, v_recipient, auth.uid(), p_mentioner_name, false);
+end;
+$$;
+
+grant execute on function public.create_dm_mention(uuid, text) to authenticated;
+
+-- viewOnly(招待URL経由の一時ゲスト)向け。send_chat_message_by_invite_token
+-- と同じ考え方で、招待トークンがそのメッセージの所属ルームと一致することを
+-- 検証する。
+drop function if exists public.create_dm_mention_by_invite_token(text, uuid, text);
+create function public.create_dm_mention_by_invite_token(
+  token text,
+  p_message_id uuid,
+  p_mentioner_name text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_recipient uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+
+  select m.recipient_user_id into v_recipient
+  from public.chat_messages m
+  join public.rooms r on r.id = m.room_id
+  join public.accounts a on a.id = r.account_id
+  where a.invite_token = token
+    and m.id = p_message_id
+    and m.sender_user_id = auth.uid()
+    and m.recipient_user_id is not null;
+
+  if v_recipient is null then
+    raise exception 'このメッセージにはメンション通知を作成できません';
+  end if;
+
+  insert into public.chat_mentions
+    (message_id, group_id, recipient_user_id, mentioned_user_id, mentioner_user_id, mentioner_name, is_everyone)
+  values
+    (p_message_id, null, v_recipient, v_recipient, auth.uid(), p_mentioner_name, false);
+end;
+$$;
+
+grant execute on function public.create_dm_mention_by_invite_token(text, uuid, text) to authenticated;
 
 -- 通知一覧の「〇〇さんからメンションされました」の表示名を、送信時点の
 -- スナップショット(chat_mentions.mentioner_name)ではなく最新のDB値から
