@@ -5877,6 +5877,12 @@ export default function AvatarSpace({
             });
             stopVideoCall();
             stopScreenShare();
+          } else if (enteredZone?.kind === "conference" && self.announcementOn) {
+            // 2026-09報告: 全体アナウンスONのまま会議室に入れてしまうと、
+            // 会議室内の音声が意図せずルーム内全員に届いてしまうため、
+            // 会議室に入った瞬間に強制OFFにする(ボタン自体も会議室内は
+            // disabledにするが、入室直前にONだった場合の保険として)。
+            setAnnouncementFlag(false);
           }
         }
 
@@ -6363,6 +6369,15 @@ export default function AvatarSpace({
     }
     if (isInWorkZone()) {
       setMicError("作業エリア内では利用できません。");
+      return;
+    }
+    const zoneId = selfState.current?.meetingZoneId;
+    const inConferenceZone =
+      !!zoneId &&
+      meetingZonesRef.current.find((z) => z.id === zoneId)?.kind ===
+        "conference";
+    if (inConferenceZone) {
+      setMicError("会議室内では利用できません。");
       return;
     }
     setShowAnnouncementConfirm(true);
@@ -7704,7 +7719,7 @@ export default function AvatarSpace({
               <AnnouncementButton
                 enabled={announcementOn}
                 onClick={handleAnnouncementButtonClick}
-                disabled={selfInWorkZone}
+                disabled={selfInWorkZone || selfInMeetingRoom}
               />
             </div>
             <div className="flex shrink-0 flex-col items-center">
