@@ -9038,7 +9038,7 @@ export default function AvatarSpace({
                           className={`flex flex-col ${m.isSelf ? "items-end" : "items-start"}`}
                         >
                           <div
-                            className="relative min-w-0"
+                            className="relative min-w-0 max-w-[85%]"
                             onMouseEnter={() => openDmHover(m.id)}
                             onMouseLeave={() => scheduleDmHoverClose(m.id)}
                           >
@@ -9101,7 +9101,7 @@ export default function AvatarSpace({
                           onTouchMove={handleDmTouchMove}
                           onTouchEnd={handleDmTouchEnd}
                           onTouchCancel={handleDmTouchEnd}
-                          className={`dm-selectable w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs transition-shadow ${
+                          className={`dm-selectable w-fit max-w-full rounded-lg px-2.5 py-1.5 text-xs transition-shadow ${
                             dmSelectionModeMessageId === m.id
                               ? "dm-select-active"
                               : ""
@@ -9503,7 +9503,7 @@ export default function AvatarSpace({
                                 </p>
                               )}
                               <div
-                                className="relative min-w-0"
+                                className="relative min-w-0 max-w-[85%]"
                                 onMouseEnter={() => openGroupHover(m.id)}
                                 onMouseLeave={() =>
                                   scheduleGroupHoverClose(m.id)
@@ -9572,7 +9572,7 @@ export default function AvatarSpace({
                                 onTouchMove={handleGroupMessageTouchMove}
                                 onTouchEnd={handleGroupMessageTouchEnd}
                                 onTouchCancel={handleGroupMessageTouchEnd}
-                                className={`w-fit max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs transition-shadow ${
+                                className={`w-fit max-w-full rounded-lg px-2.5 py-1.5 text-xs transition-shadow ${
                                   m.isSelf
                                     ? "ml-auto bg-emerald-600 text-white"
                                     : "bg-slate-700 text-slate-100"
