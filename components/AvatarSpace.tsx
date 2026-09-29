@@ -8209,23 +8209,24 @@ export default function AvatarSpace({
           >
             {/* ミーティングエリア(複数設置可能)。配置はマスターがテンプレート側で編集する
                 (ルーム内での編集は廃止)。「会議室」(kind: "conference")は機能は
-                同じ(同エリア内での自動音声接続)。ラベルは出さないが、部屋の
-                境界がわかるよう薄黄緑の背景・薄緑の枠で塗る。
-                自分がそのエリアに入っている間だけ枠を3px太くする(この判定は
-                selfPlayerというローカルのReact stateだけを見ており、他の
-                参加者のplayers情報とはやり取りしないため、この見た目の変化は
-                自分の画面にしか反映されない=相手の画面のこの枠の太さには
-                影響しない)。 */}
+                同じ(同エリア内での自動音声接続)。
+                2026-09-29: 常時表示だと部屋の見た目が枠・色・ラベルで
+                煩雑になるという指摘を受け、自分がそのエリアに入っている
+                間だけ枠・背景・ラベルを表示し、外にいる間は完全に非表示
+                (何も描画しない)にした。この判定はselfPlayerというローカルの
+                React stateだけを見ており、他の参加者のplayers情報とは
+                やり取りしないため、この表示・非表示は自分の画面にしか
+                反映されない(相手の画面での見え方には影響しない)。 */}
             {meetingZones.map((zone) => {
               const isSelfInside = selfPlayer?.meetingZoneId === zone.id;
-              const borderWidthClass = isSelfInside ? "border-2" : "border";
+              if (!isSelfInside) return null;
               return zone.kind === "conference" ? (
                 (() => {
                   const locker = getConferenceZoneLocker(zone.id, players);
                   return (
                     <div
                       key={zone.id}
-                      className={`absolute rounded-xl ${borderWidthClass} ${
+                      className={`absolute rounded-xl border-2 ${
                         locker
                           ? "border-red-300 bg-pink-200/30"
                           : "border-green-300 bg-lime-200/20"
@@ -8243,7 +8244,7 @@ export default function AvatarSpace({
               ) : (
                 <div
                   key={zone.id}
-                  className={`absolute flex items-start rounded-xl ${borderWidthClass} p-2 ${
+                  className={`absolute flex items-start rounded-xl border-2 p-2 ${
                     zone.kind === "announcement"
                       ? "border-amber-400 bg-amber-500/20"
                       : zone.kind === "work"
