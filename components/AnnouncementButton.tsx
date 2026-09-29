@@ -43,7 +43,7 @@ export default function AnnouncementButton({ enabled, onClick, disabled }: Props
       disabled={disabled}
       title={
         disabled
-          ? "作業エリア内では利用できません"
+          ? "作業エリア・会議室内では利用できません"
           : enabled
             ? "全体アナウンス: ON(クリックでOFF)"
             : "全体アナウンス: OFF(クリックでON)"
