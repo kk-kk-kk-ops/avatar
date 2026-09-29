@@ -59,6 +59,7 @@ import AvatarPicker from "./AvatarPicker";
 import CarPicker from "./CarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
+import AnnouncementButton from "./AnnouncementButton";
 import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import VideoTile from "./VideoTile";
@@ -527,6 +528,12 @@ export default function AvatarSpace({
   const [viewport, setViewport] = useState({ width: 0, height: 0 }); // カメラ計算用の表示領域サイズ
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  // 全体アナウンス機能(2026-09追加)。物理的な全体アナウンスエリアと
+  // 同じ扱いをルーム内どこにいても有効にするヘッダーのトグル。
+  // ONにする操作だけ確認ポップアップを挟む(誤操作で全員に音声が
+  // 届いてしまうのを防ぐため)。
+  const [announcementOn, setAnnouncementOn] = useState(false);
+  const [showAnnouncementConfirm, setShowAnnouncementConfirm] = useState(false);
   // LiveKitの意図しない切断→自力再接続時に、ミュート状態を復元するための
   // 参照(RoomEventハンドラのクロージャから常に最新値を読みたいため)。
   const micEnabledRef = useRef(false);
@@ -4619,6 +4626,7 @@ export default function AvatarSpace({
                 current.carImage !== p.carImage ||
                 current.carVisible !== p.carVisible ||
                 current.micOn !== p.micOn ||
+                current.announcementOn !== p.announcementOn ||
                 current.sharingScreen !== p.sharingScreen ||
                 current.inCall !== p.inCall ||
                 current.status !== p.status ||
@@ -4635,6 +4643,7 @@ export default function AvatarSpace({
                   carImage: p.carImage,
                   carVisible: p.carVisible,
                   micOn: p.micOn,
+                  announcementOn: p.announcementOn,
                   sharingScreen: p.sharingScreen,
                   inCall: p.inCall,
                   status: p.status,
@@ -4751,6 +4760,7 @@ export default function AvatarSpace({
               current.carImage !== p.carImage ||
               current.carVisible !== p.carVisible ||
               current.micOn !== p.micOn ||
+              current.announcementOn !== p.announcementOn ||
               current.sharingScreen !== p.sharingScreen ||
               current.inCall !== p.inCall ||
               current.meetingZoneId !== p.meetingZoneId ||
@@ -5829,10 +5839,15 @@ export default function AvatarSpace({
               .catch(() => {});
             setMicEnabled(false);
             self.micOn = false;
+            self.announcementOn = false;
+            setAnnouncementOn(false);
             setPlayers((prev) => {
               const current = prev[self.id];
               if (!current) return prev;
-              return { ...prev, [self.id]: { ...current, micOn: false } };
+              return {
+                ...prev,
+                [self.id]: { ...current, micOn: false, announcementOn: false },
+              };
             });
             stopVideoCall();
             stopScreenShare();
@@ -6293,6 +6308,47 @@ export default function AvatarSpace({
     }
   }, [micEnabled, isInWorkZone]);
 
+  // ---- 全体アナウンス機能のON/OFF切り替え(2026-09追加) ----
+  // 挙動は物理的な「全体アナウンスエリア」(kind: "announcement")と同じ:
+  // ONの間にマイクもONであれば、audioEligiblePeerIds側の判定により
+  // 距離・エリアに関わらずルーム内全員に音声が届く。ここでは
+  // selfState.announcementOnの切り替えとpresence反映のみ行う
+  // (マイク自体のON/OFFは別途toggleMicで行う既存の操作のまま)。
+  const setAnnouncementFlag = useCallback((next: boolean) => {
+    setAnnouncementOn(next);
+    if (selfState.current) {
+      selfState.current.announcementOn = next;
+      channelRef.current?.track(selfState.current);
+      const self = selfState.current;
+      setPlayers((prev) => {
+        const current = prev[self.id];
+        if (!current) return prev;
+        return { ...prev, [self.id]: { ...current, announcementOn: next } };
+      });
+    }
+  }, []);
+  // OFFへの切り替えは即座に反映する。ONへの切り替えだけ、誤操作で
+  // ルーム内全員に音声が届いてしまうのを防ぐため確認ポップアップを挟む
+  // (実際にONにする処理はconfirmAnnouncementOn側で行う)。
+  const handleAnnouncementButtonClick = useCallback(() => {
+    if (announcementOn) {
+      setAnnouncementFlag(false);
+      return;
+    }
+    if (isInWorkZone()) {
+      setMicError("作業エリア内では利用できません。");
+      return;
+    }
+    setShowAnnouncementConfirm(true);
+  }, [announcementOn, isInWorkZone, setAnnouncementFlag]);
+  const confirmAnnouncementOn = useCallback(() => {
+    setShowAnnouncementConfirm(false);
+    setAnnouncementFlag(true);
+  }, [setAnnouncementFlag]);
+  const declineAnnouncementOn = useCallback(() => {
+    setShowAnnouncementConfirm(false);
+  }, []);
+
   // 音声通話の残り時間が尽きた際に、マイクを強制的にオフにする(画面共有・
   // ビデオ通話の強制終了と同じ考え方)。次にオンにしようとしてもtoggleMic側
   // のガードで弾かれる。
@@ -6417,25 +6473,26 @@ export default function AvatarSpace({
     eligiblePeerIdsRef.current = eligiblePeerIds;
   }, [eligiblePeerIds]);
 
-  // ---- 全体アナウンスエリア:音声だけの購読対象を追加で計算 ----
-  // 全体アナウンスエリア(kind: "announcement")内でマイクONの相手は、
-  // 距離・エリアに関わらずルーム内全員が音声だけ強制購読する(映像は
-  // 対象外、通常の近接判定のまま)。カメラ用のeligiblePeerIdsとは別に
-  // 音声専用のリストを持つのはこのため。
+  // ---- 全体アナウンスエリア・全体アナウンス機能:音声だけの購読対象を追加で計算 ----
+  // 全体アナウンスエリア(kind: "announcement")内でマイクONの相手、または
+  // ヘッダーの全体アナウンス機能(announcementOn。2026-09追加、物理的な
+  // エリアにいるのと同じ扱い)がONかつマイクONの相手は、距離・エリアに
+  // 関わらずルーム内全員が音声だけ強制購読する(映像は対象外、通常の
+  // 近接判定のまま)。カメラ用のeligiblePeerIdsとは別に音声専用の
+  // リストを持つのはこのため。
   const audioEligiblePeerIds = useMemo(() => {
     const announcementZoneIds = new Set(
       meetingZones
         .filter((z) => z.kind === "announcement")
         .map((z) => z.id),
     );
-    if (announcementZoneIds.size === 0) return eligiblePeerIds;
     const announcers = Object.values(players)
       .filter(
         (p) =>
           p.id !== selfId.current &&
           !!p.micOn &&
-          !!p.meetingZoneId &&
-          announcementZoneIds.has(p.meetingZoneId),
+          ((!!p.meetingZoneId && announcementZoneIds.has(p.meetingZoneId)) ||
+            !!p.announcementOn),
       )
       .map((p) => p.id);
     if (announcers.length === 0) return eligiblePeerIds;
@@ -7617,6 +7674,13 @@ export default function AvatarSpace({
               上部中央に独立したフローティング表示として置く
               (2026-09報告により変更。詳細はcontainerRef内のJSX参照)。 */}
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <div className="flex shrink-0 flex-col items-center">
+              <AnnouncementButton
+                enabled={announcementOn}
+                onClick={handleAnnouncementButtonClick}
+                disabled={selfInWorkZone}
+              />
+            </div>
             <div className="flex shrink-0 flex-col items-center">
               <MicButton
                 enabled={micEnabled}
@@ -10063,6 +10127,34 @@ export default function AvatarSpace({
                 はい
                 <br />
                 (Enter)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 全体アナウンス機能をONにする際の確認ポップアップ(2026-09追加)。
+          ルーム内全員に音声が届く操作のため、誤操作防止に確認を挟む。 */}
+      {showAnnouncementConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-[260px] rounded-xl bg-white p-6 text-center shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              全体アナウンス機能をオンにしますか?
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={declineAnnouncementOn}
+                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                いいえ
+              </button>
+              <button
+                type="button"
+                onClick={confirmAnnouncementOn}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              >
+                はい
               </button>
             </div>
           </div>
