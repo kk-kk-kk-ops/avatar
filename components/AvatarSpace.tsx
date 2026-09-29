@@ -1534,6 +1534,20 @@ export default function AvatarSpace({
               : (row.chat_message_reactions ?? [])
           ).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
         }));
+      // 2026-09報告のバグ修正: 上の「!pendingMentionScrollTargetRef.current
+      // ならdmForceScrollRef=trueにする」はfetch開始前(この非同期処理の
+      // 前)に一度だけ行っていたため、選択直後にキャッシュ済みの(短い・
+      // 古い)dmThreadsを対象にスクロール制御effectが先に発火してフラグを
+      // 消費してしまい、その後この実際の取得結果でdmThreadsが更新されて
+      // effectが再発火した時点ではフラグが既にfalseに戻っていて、最新
+      // メッセージまでスクロールされない(=開いた時に古いメッセージが
+      // 見えたままになる)ことがあった。anchor(通知からのジャンプ)が
+      // 無い通常オープンの場合は、実際にdmThreadsへ反映する直前にも
+      // 改めてtrueにし、この後発火するスクロール制御effectで確実に
+      // 一番下までスクロールされるようにする。
+      if (!anchor) {
+        dmForceScrollRef.current = true;
+      }
       setDmThreads((prev) => ({ ...prev, [selectedPeerUserId]: messages }));
       // スレッドを開いたので未読を消す(ローカル表示用)。
       setUnreadFromPeers((prev) =>
@@ -1700,6 +1714,14 @@ export default function AvatarSpace({
             emoji: r.emoji,
           })),
         }));
+      // 2026-09報告のバグ修正: DM版(dmForceScrollRef)と同じ理由。fetch
+      // 開始前に一度だけgroupForceScrollRef=trueにしていたが、選択直後に
+      // キャッシュ済みの古いgroupThreadsを対象にスクロール制御effectが
+      // 先に発火してフラグを消費してしまい、実際の取得結果への反映時には
+      // 最新メッセージまでスクロールされないことがあった。
+      if (!anchor) {
+        groupForceScrollRef.current = true;
+      }
       setGroupThreads((prev) => ({ ...prev, [selectedGroupId]: messages }));
       // タブの未読合計バッジを、スレッドを開いた時点で即座に反映する
       // (以前は一覧の再取得タイミング任せで、開いてもすぐには減らなかった)。
