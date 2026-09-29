@@ -235,8 +235,8 @@ function extractGroupMentions(
   return { everyone, userIds: Array.from(userIds) };
 }
 
-// グループチャットの@メンション表示用。テキスト中の「@全員」「@<メンバー
-// 表示名>」を紫色でハイライトする(入力中のオーバーレイ・送信済み
+// グループチャット・DMの@メンション表示用。テキスト中の「@全員」「@<相手
+// の表示名>」を藍色でハイライトする(入力中のオーバーレイ・送信済み
 // メッセージの吹き出し表示、両方で共有する)。表示名の直後が空白または
 // 文字列終端の場合のみマッチさせることで、「@k.k」の後に文字を続けて
 // 打った場合(例: 「@k.kさん」)は途中まで一致させずデフォルト色に戻す
@@ -261,7 +261,7 @@ function renderTextWithMentions(
       parts.push(text.slice(lastIndex, match.index));
     }
     parts.push(
-      <span key={key++} className="text-blue-400">
+      <span key={key++} className="text-indigo-400">
         {match[0]}
       </span>,
     );
@@ -840,7 +840,7 @@ export default function AvatarSpace({
     null,
   );
   const [dmInput, setDmInput] = useState("");
-  const dmInputRef = useRef<HTMLInputElement | null>(null);
+  const dmInputRef = useRef<HTMLTextAreaElement | null>(null);
   // グループチャットと同じ「@」候補ポップアップをDMにも表示するための状態
   // (2026-09追加)。DMは相手が1人だけなので機能的な意味は無く、見た目・
   // 操作感をグループチャットと揃えるためだけのUI。groupMentionQueryと
@@ -2647,6 +2647,19 @@ export default function AvatarSpace({
     autoResizeGroupInput();
   }, [groupInput, autoResizeGroupInput]);
 
+  // DM入力欄も2026-09に複数行(shift+Enter/alt+Enterで改行)対応の
+  // <textarea>へ変更したため、同じ自動リサイズが必要。
+  const autoResizeDmInput = useCallback(() => {
+    const el = dmInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, []);
+
+  useEffect(() => {
+    autoResizeDmInput();
+  }, [dmInput, autoResizeDmInput]);
+
   // 入力欄の内容が変わるたびに、カーソル直前が「(先頭or空白)+@+空白を
   // 含まない文字列」になっていないか調べ、なっていれば@メンション候補
   // ポップアップの状態(どこからの「@」か・現在の絞り込み文字列)を
@@ -2709,9 +2722,9 @@ export default function AvatarSpace({
 
   // DM入力欄の「@」候補ポップアップ(2026-09追加)。handleGroupInputChange
   // と全く同じ判定ロジック(直前が「(先頭or空白)+@+空白を含まない文字列」
-  // かどうか)を、DMの一行<input>向けに適用する。
+  // かどうか)を適用する。
   const handleDmInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const value = e.target.value;
       setDmInput(value);
       const cursor = e.target.selectionStart ?? value.length;
@@ -2748,9 +2761,10 @@ export default function AvatarSpace({
         if (!target) return;
         target.focus();
         target.setSelectionRange(nextCursor, nextCursor);
+        autoResizeDmInput();
       });
     },
-    [dmMentionQuery, dmInput],
+    [dmMentionQuery, dmInput, autoResizeDmInput],
   );
 
   const sendGroupMessage = useCallback(async () => {
@@ -9164,7 +9178,19 @@ export default function AvatarSpace({
                           ))}
                         </div>
                       )}
-                      <input
+                      {/* 色付きオーバーレイ(@メンション部分だけ藍色)。
+                          groupInputと全く同じ仕組み(下の実textareaは文字色を
+                          透明にし、キャレットのみ見せる)。2026-09追加。 */}
+                      <div
+                        aria-hidden
+                        className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg border border-transparent bg-slate-800 px-2.5 py-1.5 text-xs text-white"
+                      >
+                        {renderTextWithMentions(
+                          dmInput,
+                          dmMentionCandidateLabel ? [dmMentionCandidateLabel] : [],
+                        )}
+                      </div>
+                      <textarea
                         ref={dmInputRef}
                         value={dmInput}
                         onChange={handleDmInputChange}
@@ -9183,7 +9209,11 @@ export default function AvatarSpace({
                             setDmMentionQuery(null);
                             return;
                           }
-                          if (e.key === "Enter") {
+                          // shift+Enter・alt+Enterは改行(<textarea>標準の
+                          // 挙動のままpreventDefaultしない)。それ以外の
+                          // Enterのみ送信/更新として扱う。
+                          if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+                            e.preventDefault();
                             if (dmEditingMessageId) {
                               updateDmMessage();
                             } else {
@@ -9208,8 +9238,9 @@ export default function AvatarSpace({
                           }
                         }}
                         maxLength={500}
+                        rows={1}
                         placeholder="メッセージを入力"
-                        className="w-full rounded-lg border border-slate-600 bg-slate-800 px-2.5 py-1.5 text-xs text-white outline-none focus:border-slate-400"
+                        className="relative w-full resize-none overflow-hidden rounded-lg border border-slate-600 bg-transparent px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
                       />
                     </div>
                     <button
@@ -9621,7 +9652,11 @@ export default function AvatarSpace({
                                 setGroupMentionQuery(null);
                                 return;
                               }
-                              if (e.key === "Enter" && !e.shiftKey) {
+                              if (
+                                e.key === "Enter" &&
+                                !e.shiftKey &&
+                                !e.altKey
+                              ) {
                                 e.preventDefault();
                                 sendGroupMessage();
                               }
