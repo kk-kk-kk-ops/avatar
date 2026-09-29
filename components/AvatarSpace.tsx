@@ -10166,6 +10166,10 @@ export default function AvatarSpace({
           <div className="w-full max-w-[260px] rounded-xl bg-white p-6 text-center shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
               全体アナウンス機能をオンにしますか?
+              <br />
+              <span className="text-xs font-normal text-slate-500">
+                ※マイクONにするとルーム参加者全員に音声が届きます
+              </span>
             </p>
             <div className="flex justify-center gap-3">
               <button
