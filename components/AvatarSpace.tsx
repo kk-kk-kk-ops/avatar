@@ -10178,11 +10178,11 @@ export default function AvatarSpace({
           ルーム内全員に音声が届く操作のため、誤操作防止に確認を挟む。 */}
       {showAnnouncementConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+          <div className="max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
               全体アナウンス機能をオンにしますか?
               <br />
-              <span className="whitespace-nowrap text-xs font-normal text-slate-500">
+              <span className="text-xs font-normal text-slate-500">
                 ※マイクONにするとルーム参加者全員に音声が届きます
               </span>
             </p>
