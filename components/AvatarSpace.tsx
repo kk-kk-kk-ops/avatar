@@ -9183,18 +9183,10 @@ export default function AvatarSpace({
                           >
                             {m.message}
                           </p>
-                          {m.editedAt && (
-                            <span
-                              className={`ml-1 text-[10px] ${
-                                m.isSelf ? "text-emerald-100" : "text-slate-400"
-                              }`}
-                            >
-                              (編集済み)
-                            </span>
-                          )}
                         </div>
                           </div>
                           <p className="mt-0.5 text-[10px] text-slate-400">
+                            {m.editedAt && "(編集済み) "}
                             {formatDmMessageTime(m.createdAt)}
                           </p>
                           {groupedReactions.length > 0 && (
