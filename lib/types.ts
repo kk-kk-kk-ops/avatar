@@ -26,6 +26,10 @@ export type PlayerState = {
   // 施錠した人だけを「本当の施錠者」とみなす決定的な判定に使う
   // (getConferenceZoneLocker参照)。
   micOn?: boolean; // マイクが現在ONかどうか(相手にも表示する)
+  // 全体アナウンス機能がONかどうか(2026-09追加、相手にも表示する)。
+  // ONの間は、物理的に全体アナウンスエリアにいるのと同じ扱いで、
+  // マイクもONであれば距離・エリアに関わらずルーム内全員に音声が届く。
+  announcementOn?: boolean;
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
   // 画面共有開始時点の静止画プレビュー(dataURL)。broadcastは後から入室
   // した人には届かないため、presence経由でも渡せるようここに乗せる。
