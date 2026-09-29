@@ -9008,7 +9008,7 @@ export default function AvatarSpace({
                       ✕
                     </button>
                   </div>
-                  <div className="relative min-h-0 flex-1">
+                  <div className="relative min-h-0 min-w-0 flex-1">
                     <div
                       ref={dmScrollRef}
                       onScroll={(e) => {
@@ -9038,7 +9038,7 @@ export default function AvatarSpace({
                           className={`flex flex-col ${m.isSelf ? "items-end" : "items-start"}`}
                         >
                           <div
-                            className="relative"
+                            className="relative min-w-0"
                             onMouseEnter={() => openDmHover(m.id)}
                             onMouseLeave={() => scheduleDmHoverClose(m.id)}
                           >
@@ -9465,7 +9465,7 @@ export default function AvatarSpace({
                           ✕
                         </button>
                       </div>
-                      <div className="relative min-h-0 flex-1">
+                      <div className="relative min-h-0 min-w-0 flex-1">
                         <div
                           ref={groupScrollRef}
                           className="h-full space-y-2 overflow-y-auto px-3 py-2"
@@ -9503,7 +9503,7 @@ export default function AvatarSpace({
                                 </p>
                               )}
                               <div
-                                className="relative"
+                                className="relative min-w-0"
                                 onMouseEnter={() => openGroupHover(m.id)}
                                 onMouseLeave={() =>
                                   scheduleGroupHoverClose(m.id)
