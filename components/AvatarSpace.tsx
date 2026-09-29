@@ -4382,7 +4382,22 @@ export default function AvatarSpace({
     }
 
     try {
-      const publication = await room.localParticipant.setScreenShareEnabled(true);
+      // 画質(ビットレート)は指定しない場合LiveKit SDKの初期値
+      // (ScreenSharePresets.h1080fps15、maxBitrate 2.5Mbps)が使われる。
+      // 2026-09、ユーザー指示によりビットレート上限を3Mbpsへ引き上げる
+      // (解像度1920x1080・フレームレート15fps・コーデックVP8は初期値のまま
+      // 変更しない)。
+      const publication = await room.localParticipant.setScreenShareEnabled(
+        true,
+        undefined,
+        {
+          screenShareEncoding: {
+            maxBitrate: 3_000_000,
+            maxFramerate: 15,
+            priority: "medium",
+          },
+        },
+      );
       const track = publication?.track;
       if (!track) throw new Error("画面共有トラックを取得できませんでした");
       screenStreamRef.current = new MediaStream([track.mediaStreamTrack]);
