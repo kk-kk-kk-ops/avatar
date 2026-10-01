@@ -6894,9 +6894,13 @@ export default function AvatarSpace({
     };
     recognition.onend = () => {
       speechRecognitionRef.current = null;
-      // 録画中・マイクONの状態が続いている間は、ブラウザ側の都合
-      // (無音タイムアウト等)で止まった認識を自動的に再開する。
-      if (recordingOwnerIdRef.current !== null && micEnabledRef.current) {
+      // 録画中・マイクONかつ同じ会議室内にいる状態が続いている間は、
+      // ブラウザ側の都合(無音タイムアウト等)で止まった認識を自動的に
+      // 再開する。会議室の外に出ていたら再開しない(2026-10報告対応)。
+      if (
+        sameConferenceRoomAsRecorderRef.current &&
+        micEnabledRef.current
+      ) {
         startSpeechRecognition();
       }
     };
@@ -6909,16 +6913,35 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 録画中かどうか/マイクONの組み合わせが変わるたびに認識の開始・停止を
-  // 行う(録画していない・マイクOFFのいずれかなら停止)。
+  // 2026-10報告のバグ修正: 録画中かどうかだけで文字起こしの対象にして
+  // いたため、会議室の外にいる人(マイクONで近接通話中の人など)の声まで
+  // 拾って文字起こししてしまっていた。録画は会議室内でしか開始できない
+  // ため、「自分が録画開始者と同じ会議室(ゾーン)に今いるかどうか」も
+  // あわせて見るようにし、同じ会議室内にいる人だけを対象にする。
+  const selfZoneId = players[selfId.current]?.meetingZoneId ?? null;
+  const sameConferenceRoomAsRecorder =
+    recordingOwner !== null &&
+    selfZoneId !== null &&
+    selfZoneId === recordingOwner.meetingZoneId;
+  const sameConferenceRoomAsRecorderRef = useRef(false);
   useEffect(() => {
-    if (recordingOwnerId !== null && micEnabled && speechRecognitionAvailable) {
+    sameConferenceRoomAsRecorderRef.current = sameConferenceRoomAsRecorder;
+  }, [sameConferenceRoomAsRecorder]);
+
+  // 録画中かどうか/マイクONの組み合わせが変わるたびに認識の開始・停止を
+  // 行う(録画していない・マイクOFF・会議室が違うのいずれかなら停止)。
+  useEffect(() => {
+    if (
+      sameConferenceRoomAsRecorder &&
+      micEnabled &&
+      speechRecognitionAvailable
+    ) {
       startSpeechRecognition();
     } else {
       stopSpeechRecognition();
     }
   }, [
-    recordingOwnerId,
+    sameConferenceRoomAsRecorder,
     micEnabled,
     speechRecognitionAvailable,
     startSpeechRecognition,
