@@ -6888,9 +6888,14 @@ export default function AvatarSpace({
         });
       }
     };
-    recognition.onerror = () => {
-      // 無音が続いた場合などもerrorになりうるが、字幕ON・マイクONが
-      // 続く限りonendから自動再起動されるため、ここでは何もしない。
+    recognition.onerror = (event: any) => {
+      // 無音が続いた場合などもerrorになりうるが、録画中・マイクONが
+      // 続く限りonendから自動再起動されるため、ここでは何もしない
+      // (ただし原因究明のためコンソールには残す。2026-10報告: 繰り返し
+      // 録画のテストをすると文字起こしが保存されなくなる事例があり、
+      // 発生時の手がかりにする)。
+      // eslint-disable-next-line no-console
+      console.warn("[speech-recognition] error", event?.error);
     };
     recognition.onend = () => {
       speechRecognitionRef.current = null;
@@ -6907,7 +6912,9 @@ export default function AvatarSpace({
     speechRecognitionRef.current = recognition;
     try {
       recognition.start();
-    } catch {
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[speech-recognition] start失敗", err);
       speechRecognitionRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6922,16 +6929,30 @@ export default function AvatarSpace({
   // 2026-10報告の追加修正: 一度は「録画開始者と全く同じゾーンIDか」まで
   // 照合する実装にしていたが、録画開始者側のplayers上のmeetingZoneIdが
   // 必ずしも即座に反映されるとは限らず、自分自身の発言まで対象から
-  // 外れて文字起こしが一切保存されなくなる回帰を起こした。self自身の
-  // ゾーンがconference種別かどうかだけを見るシンプルな判定に戻し、
-  // 同一ネットワーク越しの値同士を突き合わせる不安定さを無くした
-  // (この施設には会議室が1つのみのため、実用上は同じ会議室の判定として
-  // 機能する)。
-  const selfZoneId = players[selfId.current]?.meetingZoneId ?? null;
+  // 外れて文字起こしが一切保存されなくなる回帰を起こした。
+  //
+  // 2026-10報告(再発): self自身のゾーンをplayers(React state)経由だけで
+  // 見るよう直したつもりだったが、それでも繰り返し録画のテストをする
+  // うちに保存されなくなる事例が再発した。players上のmeetingZoneIdの
+  // 反映タイミングに依存するのをやめ、以下の2点でさらに頑健にする。
+  // (1) 自分が録画開始者本人の場合は、録画自体が会議室内でしか開始
+  //     できない以上「今会議室にいる」ことが保証されているため、ゾーン
+  //     判定を介さず常に対象にする。
+  // (2) 他の参加者については、反映ラグの影響を受けにくいよう、React
+  //     state(players)とローカルref(selfState、位置ループで毎フレーム
+  //     直接更新される)の両方を見て、どちらかがconferenceゾーンを示して
+  //     いれば対象にする。
+  const isZoneConference = useCallback((zoneId: string | null | undefined) => {
+    if (!zoneId) return false;
+    return (
+      meetingZonesRef.current.find((z) => z.id === zoneId)?.kind ===
+      "conference"
+    );
+  }, []);
   const sameConferenceRoomAsRecorder =
-    !!selfZoneId &&
-    meetingZonesRef.current.find((z) => z.id === selfZoneId)?.kind ===
-      "conference";
+    recordingOwnerId === selfId.current ||
+    isZoneConference(players[selfId.current]?.meetingZoneId) ||
+    isZoneConference(selfState.current?.meetingZoneId);
   const sameConferenceRoomAsRecorderRef = useRef(false);
   useEffect(() => {
     sameConferenceRoomAsRecorderRef.current = sameConferenceRoomAsRecorder;
