@@ -7024,10 +7024,21 @@ export default function AvatarSpace({
   ]);
 
   // 録画が終わった(誰も録画していない状態に戻った)ら、字幕バッファを
-  // 空にする。録画開始者自身はsaveCaptionsLocally呼び出し後に明示的に
-  // 空にしているが、他の参加者はこのeffect経由でまとめて片付く。
+  // 空にする。録画開始者自身はrecorder.onstop内でsaveCaptionsLocally
+  // 呼び出し後に明示的に空にしているが、他の参加者はこのeffect経由で
+  // まとめて片付く。
+  // 2026-10報告のバグ修正: 録画停止の猶予期間(stopRecording)では、
+  // 2段階目に入った時点(=実際に動画を確定・保存する数秒前)で
+  // recordingOn=falseにしてrecordingOwnerIdをnullにしている。この
+  // effectは依存配列がrecordingOwnerIdだけだったため、録画開始者自身の
+  // 画面でもこの時点で即座に字幕バッファが空にされてしまい、その後
+  // recorder.onstop内で実行されるsaveCaptionsLocally()が「0件」を
+  // 保存しようとして何も保存されない(=動画は保存されるのにテキストが
+  // 保存されない)不具合になっていた。録画停止処理中(isStoppingRecording)
+  // の間はこのeffectでの自動クリアを見送り、onstop側の保存後のクリアに
+  // 委ねるようにする。
   useEffect(() => {
-    if (recordingOwnerId === null) {
+    if (recordingOwnerId === null && !isStoppingRecordingRef.current) {
       setCaptionLines([]);
     }
   }, [recordingOwnerId]);
