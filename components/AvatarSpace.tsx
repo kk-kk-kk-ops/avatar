@@ -667,7 +667,19 @@ export default function AvatarSpace({
             existing.text === line.text &&
             Math.abs(existing.at - line.at) < 5000,
         );
-      if (isDuplicate) return prev;
+      if (isDuplicate) {
+        // eslint-disable-next-line no-console
+        console.log("[speech-recognition] 重複として無視:", line.text);
+        return prev;
+      }
+      // eslint-disable-next-line no-console
+      console.log(
+        "[speech-recognition] 字幕追加:",
+        line.text,
+        "(累計",
+        prev.length + 1,
+        "件)",
+      );
       return [...prev, line];
     });
   }, []);
@@ -6827,11 +6839,21 @@ export default function AvatarSpace({
   }, []);
 
   const startSpeechRecognition = useCallback(() => {
-    if (speechRecognitionRef.current) return;
+    if (speechRecognitionRef.current) {
+      // eslint-disable-next-line no-console
+      console.log("[speech-recognition] start見送り(既に起動中)");
+      return;
+    }
     const SpeechRecognitionCtor =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionCtor) return;
+    if (!SpeechRecognitionCtor) {
+      // eslint-disable-next-line no-console
+      console.log("[speech-recognition] SpeechRecognition未対応のブラウザ");
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.log("[speech-recognition] 認識インスタンスを開始します");
     const recognition = new SpeechRecognitionCtor();
     recognition.lang = "ja-JP";
     recognition.continuous = true;
@@ -6841,6 +6863,16 @@ export default function AvatarSpace({
     lastEmittedResultIndexRef.current = -1;
     recognition.onresult = (event: any) => {
       const self = selfState.current;
+      // eslint-disable-next-line no-console
+      console.log(
+        "[speech-recognition] onresult発火",
+        "resultIndex=",
+        event.resultIndex,
+        "results件数=",
+        event.results?.length,
+        "最後がisFinal=",
+        event.results?.[event.results.length - 1]?.isFinal,
+      );
       if (!self) return;
       // event.resultIndexだけに頼らず、必ずlastEmittedResultIndexRef
       // より後ろの添字だけを見ることで、ブラウザがisFinal済みの結果を
@@ -6961,6 +6993,18 @@ export default function AvatarSpace({
   // 録画中かどうか/マイクONの組み合わせが変わるたびに認識の開始・停止を
   // 行う(録画していない・マイクOFF・会議室が違うのいずれかなら停止)。
   useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log(
+      "[speech-recognition] ゲーティング判定:",
+      "sameConferenceRoomAsRecorder=",
+      sameConferenceRoomAsRecorder,
+      "micEnabled=",
+      micEnabled,
+      "speechRecognitionAvailable=",
+      speechRecognitionAvailable,
+      "recordingOwnerId=",
+      recordingOwnerId,
+    );
     if (
       sameConferenceRoomAsRecorder &&
       micEnabled &&
@@ -6974,6 +7018,7 @@ export default function AvatarSpace({
     sameConferenceRoomAsRecorder,
     micEnabled,
     speechRecognitionAvailable,
+    recordingOwnerId,
     startSpeechRecognition,
     stopSpeechRecognition,
   ]);
@@ -6994,6 +7039,8 @@ export default function AvatarSpace({
     // おり、話した順と一致しない場合がある(2026-10報告)ため、保存前に
     // 発言時刻(at)で時系列順に並べ直す。
     const lines = captionLinesRef.current.slice().sort((a, b) => a.at - b.at);
+    // eslint-disable-next-line no-console
+    console.log("[speech-recognition] 保存を試みます。件数=", lines.length);
     if (lines.length === 0) return;
     const body = lines
       .map((l) => {
