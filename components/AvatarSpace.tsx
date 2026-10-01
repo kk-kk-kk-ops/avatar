@@ -621,6 +621,13 @@ export default function AvatarSpace({
     recordingOwnerIdRef.current = recordingOwnerId;
   }, [recordingOwnerId]);
   const [showRecordConfirm, setShowRecordConfirm] = useState(false);
+  // 録画停止処理中かどうか(2026-10追加)。交互に話す会話だと文字起こしが
+  // 追いつかないという報告を受け、停止操作をしてもすぐには確定・保存
+  // せず、猶予期間を置いてから保存するようにした。その間、録画ボタンは
+  // 「停止処理中」としてdisabledにし、二重に停止操作できないようにする
+  // (詳細はstopRecording参照)。
+  const [isStoppingRecording, setIsStoppingRecording] = useState(false);
+  const isStoppingRecordingRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingTracksRef = useRef<MediaStreamTrack[]>([]);
   const recordingAudioContextRef = useRef<AudioContext | null>(null);
@@ -7051,35 +7058,25 @@ export default function AvatarSpace({
         a.remove();
         URL.revokeObjectURL(url);
 
-        // 2. 文字起こしテキストもまとめてローカルへ保存
+        // 2. 文字起こしテキストもまとめてローカルへ保存。録画中フラグを
+        // 下ろす(=全員の音声認識を止める)のはstopRecording側で既に
+        // 猶予期間を置いた後に行っているため、ここに来る時点では自分・
+        // 他の参加者の最後の発言もできる限り届いている状態になっている
+        // (2026-10報告対応: 交互に話すと文字起こしが追いつかない問題)。
         saveCaptionsLocally();
         setCaptionLines([]);
 
         cleanupRecordingResources();
-        // 録画中フラグをpresence(players)から下ろす。会議室の施錠解除と
-        // 同じ仕組み(self.xxx書き換え+track)で、ルーム内全員(録画中に
-        // 入室してきた人も含む)に伝わる。
-        const self = selfState.current;
-        if (self) {
-          self.recordingOn = false;
-          channelRef.current?.track(self);
-          setPlayers((prev) => {
-            const current = prev[self.id];
-            if (!current) return prev;
-            return { ...prev, [self.id]: { ...current, recordingOn: false } };
-          });
-        }
+        isStoppingRecordingRef.current = false;
+        setIsStoppingRecording(false);
       };
 
       // ブラウザ標準の「共有を停止」ボタンが押された場合にも終了処理を
-      // 行う(画面共有機能の既存実装と同じ考え方)。
+      // 行う(画面共有機能の既存実装と同じ考え方)。stopRecording()経由に
+      // することで、ここも他の停止経路と同じく文字起こしの猶予期間を
+      // 経てから保存されるようにする。
       displayStream.getVideoTracks()[0]?.addEventListener("ended", () => {
-        if (
-          mediaRecorderRef.current &&
-          mediaRecorderRef.current.state !== "inactive"
-        ) {
-          mediaRecorderRef.current.stop();
-        }
+        stopRecording();
       });
 
       mediaRecorderRef.current = recorder;
@@ -7106,12 +7103,47 @@ export default function AvatarSpace({
     }
   }, [saveCaptionsLocally, cleanupRecordingResources]);
 
+  // 録画停止の猶予期間(2026-10追加)。交互に話したりすると、Web Speech
+  // APIの文字起こしが追いつかず、停止操作の直後だと直前の発言が確定・
+  // 配信される前に保存されてしまうという報告への対応。
+  // 1段階目(RECORDING_STOP_GRACE_MS): まだ全員の音声認識・録画中フラグは
+  //   そのままにしておき、会話が自然に途切れて各自の発言が確定される
+  //   時間を与える。
+  // 2段階目(RECORDING_STOP_FLUSH_MS): 録画中フラグを下ろして全員の音声
+  //   認識にも終了を伝え(stopSpeechRecognition経由)、その停止信号と
+  //   最後の確定結果がbroadcastで届くまでの時間を追加で待つ。
+  // この後にようやく動画を確定し、字幕をまとめて保存する。
+  const RECORDING_STOP_GRACE_MS = 5000;
+  const RECORDING_STOP_FLUSH_MS = 2000;
   const stopRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      // 保存・後片付け・broadcastはrecorder.onstop内でまとめて行う。
-      recorder.stop();
-    }
+    if (isStoppingRecordingRef.current) return;
+    isStoppingRecordingRef.current = true;
+    setIsStoppingRecording(true);
+
+    window.setTimeout(() => {
+      const self = selfState.current;
+      if (self) {
+        self.recordingOn = false;
+        channelRef.current?.track(self);
+        setPlayers((prev) => {
+          const current = prev[self.id];
+          if (!current) return prev;
+          return { ...prev, [self.id]: { ...current, recordingOn: false } };
+        });
+      }
+
+      window.setTimeout(() => {
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== "inactive") {
+          // 動画の確定・字幕の保存・後片付けはrecorder.onstop内で行う。
+          recorder.stop();
+        } else {
+          // 録画自体が既に止まっていた場合でも停止処理中フラグは戻す。
+          isStoppingRecordingRef.current = false;
+          setIsStoppingRecording(false);
+        }
+      }, RECORDING_STOP_FLUSH_MS);
+    }, RECORDING_STOP_GRACE_MS);
   }, []);
 
   const handleRecordButtonClick = useCallback(() => {
@@ -8658,19 +8690,22 @@ export default function AvatarSpace({
                       表示する。録画中は自分以外のボタンをdisabledにする
                       (会議室の鍵と同じ、開始した本人以外は操作不可の考え方)。 */}
                   <RecordButton
-                    recording={recordingOwnerId !== null}
+                    recording={recordingOwnerId !== null || isStoppingRecording}
                     onClick={handleRecordButtonClick}
                     disabled={
                       !isScreenRecordingSupported() ||
+                      isStoppingRecording ||
                       (recordingOwnerId !== null &&
                         recordingOwnerId !== selfId.current)
                     }
                     disabledReason={
                       !isScreenRecordingSupported()
                         ? "このブラウザでは画面録画を利用できません"
-                        : recordingOwnerName
-                          ? `${recordingOwnerName}さんが録画中です`
-                          : undefined
+                        : isStoppingRecording
+                          ? "停止処理中です(文字起こしの完了を待っています)"
+                          : recordingOwnerName
+                            ? `${recordingOwnerName}さんが録画中です`
+                            : undefined
                     }
                   />
                 </div>
@@ -8931,19 +8966,24 @@ export default function AvatarSpace({
                             常時表示プレビュー行と同じボタンをここにも
                             設置する(2026-10報告)。 */}
                         <RecordButton
-                          recording={recordingOwnerId !== null}
+                          recording={
+                            recordingOwnerId !== null || isStoppingRecording
+                          }
                           onClick={handleRecordButtonClick}
                           disabled={
                             !isScreenRecordingSupported() ||
+                            isStoppingRecording ||
                             (recordingOwnerId !== null &&
                               recordingOwnerId !== selfId.current)
                           }
                           disabledReason={
                             !isScreenRecordingSupported()
                               ? "このブラウザでは画面録画を利用できません"
-                              : recordingOwnerName
-                                ? `${recordingOwnerName}さんが録画中です`
-                                : undefined
+                              : isStoppingRecording
+                                ? "停止処理中です(文字起こしの完了を待っています)"
+                                : recordingOwnerName
+                                  ? `${recordingOwnerName}さんが録画中です`
+                                  : undefined
                           }
                         />
                       </div>
@@ -9071,19 +9111,24 @@ export default function AvatarSpace({
                           グリッド表示でも録画ボタンが消えないように設置
                           する(2026-10報告)。 */}
                       <RecordButton
-                        recording={recordingOwnerId !== null}
+                        recording={
+                          recordingOwnerId !== null || isStoppingRecording
+                        }
                         onClick={handleRecordButtonClick}
                         disabled={
                           !isScreenRecordingSupported() ||
+                          isStoppingRecording ||
                           (recordingOwnerId !== null &&
                             recordingOwnerId !== selfId.current)
                         }
                         disabledReason={
                           !isScreenRecordingSupported()
                             ? "このブラウザでは画面録画を利用できません"
-                            : recordingOwnerName
-                              ? `${recordingOwnerName}さんが録画中です`
-                              : undefined
+                            : isStoppingRecording
+                              ? "停止処理中です(文字起こしの完了を待っています)"
+                              : recordingOwnerName
+                                ? `${recordingOwnerName}さんが録画中です`
+                                : undefined
                         }
                       />
                     </div>
