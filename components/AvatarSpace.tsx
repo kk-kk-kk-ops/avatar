@@ -602,12 +602,20 @@ export default function AvatarSpace({
   // 自動的に文字起こしされ配信される(個別のON/OFFトグルは廃止)。
   // recordingOwnerIdは録画を開始した参加者のid(selfId)で、会議室の鍵と
   // 同じ考え方で「開始した本人以外はボタンを押せない」制御に使う。
-  const [recordingOwnerId, setRecordingOwnerId] = useState<string | null>(
-    null,
+  //
+  // 2026-10報告のバグ修正: 以前はbroadcast(recording-start/stop)だけで
+  // 他の参加者へ伝えていたが、broadcastは「その時点で接続済みの相手」
+  // にしか届かず、録画開始後に入室してきた参加者には一切伝わらない
+  // ため、後から入ってきた人が録画中でも自分の録画を開始できてしまって
+  // いた。lockedMeetingZoneId(会議室の施錠)と同じく、players
+  // (presence)側のrecordingOnフィールドから導出することで、入室時の
+  // presence同期で誰が録画中かが必ず伝わるようにする。
+  const recordingOwner = useMemo(
+    () => Object.values(players).find((p) => p.recordingOn) ?? null,
+    [players],
   );
-  const [recordingOwnerName, setRecordingOwnerName] = useState<string | null>(
-    null,
-  );
+  const recordingOwnerId = recordingOwner?.id ?? null;
+  const recordingOwnerName = recordingOwner?.name ?? null;
   const recordingOwnerIdRef = useRef<string | null>(null);
   useEffect(() => {
     recordingOwnerIdRef.current = recordingOwnerId;
@@ -638,6 +646,14 @@ export default function AvatarSpace({
   // 認識インスタンスごとに「どこまで処理済みか」を記録し、同じ添字を
   // 二度と処理しないことで確実に重複を防ぐ。
   const lastEmittedResultIndexRef = useRef(-1);
+  // 2026-10報告: 上のresultIndex対策だけでは重複を防ぎきれなかった
+  // (ブラウザが前回とは別の添字で同じ確定結果を再び渡してくるケースが
+  // あった)ため、念のため「直前に発信した自分の発言と全く同じ文章が
+  // 短時間(5秒以内)に再度来た場合は無視する」という内容ベースの重複
+  // 排除も加える(保険の二重化)。
+  const lastEmittedTextRef = useRef<{ text: string; at: number } | null>(
+    null,
+  );
   // 音声通話の「今日の残り利用可能時間(秒)」。画面共有・ビデオ通話と全く
   // 同じ考え方(null = 未取得中 or プランが無制限)。daily_usageテーブルの
   // kind='voice_call'を使う。
@@ -4956,6 +4972,7 @@ export default function AvatarSpace({
                 current.carVisible !== p.carVisible ||
                 current.micOn !== p.micOn ||
                 current.announcementOn !== p.announcementOn ||
+                current.recordingOn !== p.recordingOn ||
                 current.sharingScreen !== p.sharingScreen ||
                 current.inCall !== p.inCall ||
                 current.status !== p.status ||
@@ -4973,6 +4990,7 @@ export default function AvatarSpace({
                   carVisible: p.carVisible,
                   micOn: p.micOn,
                   announcementOn: p.announcementOn,
+                  recordingOn: p.recordingOn,
                   sharingScreen: p.sharingScreen,
                   inCall: p.inCall,
                   status: p.status,
@@ -5039,14 +5057,12 @@ export default function AvatarSpace({
               delete copy[key];
               return copy;
             });
-            // 録画開始者が異常切断した場合の保険(2026-10追加)。
-            // 「recording-stop」を送らないまま退室/切断すると、他の全員の
-            // ボタンが録画中扱いのまま押せなくなってしまうため、その参加者が
-            // 本当にいなくなったタイミングでロックも解除する(会議室の鍵が
-            // 異常切断時にpresenceのleave検知で自動解錠されるのと同じ考え方)。
+            // 録画開始者が異常切断した場合の保険(2026-10追加)。録画中
+            // かどうかはplayers(presence)側のrecordingOnフィールドから
+            // 導出しているため、上でその参加者がplayersから消えた時点で
+            // recordingOwnerIdは自動的にnullへ戻る(会議室の施錠と同じ
+            // 考え方)。ここでは字幕バッファだけ明示的に片付ける。
             if (recordingOwnerIdRef.current === key) {
-              setRecordingOwnerId(null);
-              setRecordingOwnerName(null);
               setCaptionLines([]);
             }
           }, LEAVE_GRACE_MS);
@@ -5100,6 +5116,7 @@ export default function AvatarSpace({
               current.carVisible !== p.carVisible ||
               current.micOn !== p.micOn ||
               current.announcementOn !== p.announcementOn ||
+              current.recordingOn !== p.recordingOn ||
               current.sharingScreen !== p.sharingScreen ||
               current.inCall !== p.inCall ||
               current.meetingZoneId !== p.meetingZoneId ||
@@ -5533,22 +5550,6 @@ export default function AvatarSpace({
           // 冒頭の発言が欠落してしまっていた。録画中は全件保持し、画面
           // 下部のオーバーレイ表示側だけ直近3件に絞る(JSX側のslice(-3))。
           setCaptionLines((prev) => [...prev, msg]);
-        })
-        .on("broadcast", { event: "recording-start" }, ({ payload }) => {
-          // 誰かが録画を開始したことを配信で知らせる(会議室の鍵と同じ
-          // broadcastの仕組み)。開始した本人は既にローカルで反映済みの
-          // ため、自分以外からの通知だけを反映する。
-          const msg = payload as { by: string; byName: string };
-          if (msg.by === selfId.current) return;
-          setRecordingOwnerId(msg.by);
-          setRecordingOwnerName(msg.byName);
-        })
-        .on("broadcast", { event: "recording-stop" }, ({ payload }) => {
-          const msg = payload as { by: string };
-          if (msg.by === selfId.current) return;
-          setRecordingOwnerId(null);
-          setRecordingOwnerName(null);
-          setCaptionLines([]);
         })
         .on("broadcast", { event: "force-leave" }, ({ payload }) => {
           const { reason, targetId } = payload as {
@@ -6814,11 +6815,24 @@ export default function AvatarSpace({
         lastEmittedResultIndexRef.current = i;
         const text = (result[0]?.transcript ?? "").trim();
         if (!text) continue;
+        // 内容ベースの重複排除(保険): 直前に発信したのと全く同じ文章が
+        // 5秒以内に再度来た場合は、別の原因(認識インスタンスの再起動
+        // タイミング等)による二重発火とみなして無視する。
+        const now = Date.now();
+        const lastEmitted = lastEmittedTextRef.current;
+        if (
+          lastEmitted &&
+          lastEmitted.text === text &&
+          now - lastEmitted.at < 5000
+        ) {
+          continue;
+        }
+        lastEmittedTextRef.current = { text, at: now };
         const line = {
-          id: `${self.id}-${Date.now()}-${i}`,
+          id: `${self.id}-${now}-${i}`,
           senderName: self.name,
           text,
-          at: Date.now(),
+          at: now,
         };
         // Supabase Realtimeのbroadcastは送信者自身には返ってこないため、
         // 自分の発言分はここでローカルに直接反映する(画面共有プレビュー
@@ -6869,6 +6883,15 @@ export default function AvatarSpace({
     startSpeechRecognition,
     stopSpeechRecognition,
   ]);
+
+  // 録画が終わった(誰も録画していない状態に戻った)ら、字幕バッファを
+  // 空にする。録画開始者自身はsaveCaptionsLocally呼び出し後に明示的に
+  // 空にしているが、他の参加者はこのeffect経由でまとめて片付く。
+  useEffect(() => {
+    if (recordingOwnerId === null) {
+      setCaptionLines([]);
+    }
+  }, [recordingOwnerId]);
 
   // 字幕テキストをローカルのテキストファイルとして保存する(ダウンロード
   // フォルダへ。サーバー・DBには一切送らない)。
@@ -7003,11 +7026,19 @@ export default function AvatarSpace({
         setCaptionLines([]);
 
         cleanupRecordingResources();
-        channelRef.current?.httpSend("recording-stop", {
-          by: selfId.current,
-        });
-        setRecordingOwnerId(null);
-        setRecordingOwnerName(null);
+        // 録画中フラグをpresence(players)から下ろす。会議室の施錠解除と
+        // 同じ仕組み(self.xxx書き換え+track)で、ルーム内全員(録画中に
+        // 入室してきた人も含む)に伝わる。
+        const self = selfState.current;
+        if (self) {
+          self.recordingOn = false;
+          channelRef.current?.track(self);
+          setPlayers((prev) => {
+            const current = prev[self.id];
+            if (!current) return prev;
+            return { ...prev, [self.id]: { ...current, recordingOn: false } };
+          });
+        }
       };
 
       // ブラウザ標準の「共有を停止」ボタンが押された場合にも終了処理を
@@ -7024,12 +7055,21 @@ export default function AvatarSpace({
       mediaRecorderRef.current = recorder;
       recorder.start();
 
-      setRecordingOwnerId(selfId.current);
-      setRecordingOwnerName(selfState.current?.name ?? null);
-      channelRef.current?.httpSend("recording-start", {
-        by: selfId.current,
-        byName: selfState.current?.name ?? "",
-      });
+      // 録画中フラグをpresence(players)に立てる。会議室の施錠と同じ
+      // 仕組みのため、既に接続中の参加者にはpresence同期で即座に、
+      // この後入室してくる参加者にも入室時のpresence同期で確実に伝わる
+      // (2026-10報告: 以前はbroadcastのみだったため後から入った人には
+      // 伝わらず、録画中でも録画ボタンを押せてしまっていた)。
+      const self = selfState.current;
+      if (self) {
+        self.recordingOn = true;
+        channelRef.current?.track(self);
+        setPlayers((prev) => {
+          const current = prev[self.id];
+          if (!current) return prev;
+          return { ...prev, [self.id]: { ...current, recordingOn: true } };
+        });
+      }
     } catch {
       // 共有ダイアログをキャンセルした場合などはここに来る。既存の画面
       // 共有開始処理と同じくエラー扱いにはしない。
@@ -10954,7 +10994,7 @@ export default function AvatarSpace({
           ルーム内全員に音声が届く操作のため、誤操作防止に確認を挟む。 */}
       {showAnnouncementConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+          <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
               全体アナウンス機能をオンにしますか?
               <br />
@@ -10987,7 +11027,7 @@ export default function AvatarSpace({
           する(2026-10報告)。 */}
       {showRecordConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
+          <div className="max-w-2xl rounded-xl bg-white p-6 text-left shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
               画面録画を開始しますか?
               <br />

@@ -30,6 +30,12 @@ export type PlayerState = {
   // ONの間は、物理的に全体アナウンスエリアにいるのと同じ扱いで、
   // マイクもONであれば距離・エリアに関わらずルーム内全員に音声が届く。
   announcementOn?: boolean;
+  // 画面録画中かどうか(2026-10追加、相手にも表示する)。presence上に
+  // 持たせることで、録画開始後に入室してきた参加者にも「現在録画中」が
+  // 即座に伝わり(broadcastは入室前のイベントを後から受け取れないため)、
+  // 録画開始者が異常切断した場合もlockedMeetingZoneIdと同じくpresenceの
+  // leave検知で自動的に解除扱いになる。
+  recordingOn?: boolean;
   sharingScreen?: boolean; // 画面共有中かどうか(相手にも表示する)
   // 画面共有開始時点の静止画プレビュー(dataURL)。broadcastは後から入室
   // した人には届かないため、presence経由でも渡せるようここに乗せる。
