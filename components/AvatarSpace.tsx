@@ -632,6 +632,12 @@ export default function AvatarSpace({
   }, [captionLines]);
   // SpeechRecognitionインスタンス(ブラウザ標準、型定義が無いためany)。
   const speechRecognitionRef = useRef<any>(null);
+  // 2026-10報告のバグ修正: ブラウザによってはonresultが同じ確定済み
+  // (isFinal)結果を含むevent.resultsを複数回発火することがあり、
+  // event.resultIndexだけを信用すると同じ発言が重複して保存されていた。
+  // 認識インスタンスごとに「どこまで処理済みか」を記録し、同じ添字を
+  // 二度と処理しないことで確実に重複を防ぐ。
+  const lastEmittedResultIndexRef = useRef(-1);
   // 音声通話の「今日の残り利用可能時間(秒)」。画面共有・ビデオ通話と全く
   // 同じ考え方(null = 未取得中 or プランが無制限)。daily_usageテーブルの
   // kind='voice_call'を使う。
@@ -5522,7 +5528,11 @@ export default function AvatarSpace({
             text: string;
             at: number;
           };
-          setCaptionLines((prev) => [...prev, msg].slice(-50));
+          // 2026-10報告のバグ修正: 以前はslice(-50)で古い発言を切り捨てて
+          // いたため、録画開始者が最後にテキスト保存した際、長めの会議だと
+          // 冒頭の発言が欠落してしまっていた。録画中は全件保持し、画面
+          // 下部のオーバーレイ表示側だけ直近3件に絞る(JSX側のslice(-3))。
+          setCaptionLines((prev) => [...prev, msg]);
         })
         .on("broadcast", { event: "recording-start" }, ({ payload }) => {
           // 誰かが録画を開始したことを配信で知らせる(会議室の鍵と同じ
@@ -6221,6 +6231,16 @@ export default function AvatarSpace({
             // disabledにするが、入室直前にONだった場合の保険として)。
             setAnnouncementFlag(false);
           }
+          // 2026-10追加: 録画を開始した本人が会議室から出た(別のゾーンへ
+          // 移動した・ゾーン外に出た)場合は、録画を自動的に停止しローカルへ
+          // 保存する。work/announcementの分岐とは独立に、常にこのタイミングで
+          // 判定する。
+          if (
+            recordingOwnerIdRef.current === self.id &&
+            enteredZone?.kind !== "conference"
+          ) {
+            stopRecording();
+          }
         }
 
         // 自分のアバターの見た目の位置は、Reactのstateを介さずDOM操作で
@@ -6775,12 +6795,23 @@ export default function AvatarSpace({
     recognition.lang = "ja-JP";
     recognition.continuous = true;
     recognition.interimResults = false;
+    // このインスタンス(event.resultsのindexは0始まりでこのインスタンス
+    // 専用)での処理済み添字をリセットする。
+    lastEmittedResultIndexRef.current = -1;
     recognition.onresult = (event: any) => {
       const self = selfState.current;
       if (!self) return;
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      // event.resultIndexだけに頼らず、必ずlastEmittedResultIndexRef
+      // より後ろの添字だけを見ることで、ブラウザがisFinal済みの結果を
+      // 含むevent.resultsを再度渡してきても重複して処理しない。
+      const start = Math.max(
+        event.resultIndex,
+        lastEmittedResultIndexRef.current + 1,
+      );
+      for (let i = start; i < event.results.length; i++) {
         const result = event.results[i];
         if (!result.isFinal) continue;
+        lastEmittedResultIndexRef.current = i;
         const text = (result[0]?.transcript ?? "").trim();
         if (!text) continue;
         const line = {
@@ -6791,8 +6822,9 @@ export default function AvatarSpace({
         };
         // Supabase Realtimeのbroadcastは送信者自身には返ってこないため、
         // 自分の発言分はここでローカルに直接反映する(画面共有プレビュー
-        // 配信と同じ理由・同じ対処)。
-        setCaptionLines((prev) => [...prev, line].slice(-50));
+        // 配信と同じ理由・同じ対処)。録画終了時の保存に全件必要なため、
+        // 受信側と同じ理由でslice(-50)の切り捨ては行わない。
+        setCaptionLines((prev) => [...prev, line]);
         channelRef.current?.httpSend("caption", {
           id: line.id,
           senderName: line.senderName,
@@ -6841,7 +6873,10 @@ export default function AvatarSpace({
   // 字幕テキストをローカルのテキストファイルとして保存する(ダウンロード
   // フォルダへ。サーバー・DBには一切送らない)。
   const saveCaptionsLocally = useCallback(() => {
-    const lines = captionLinesRef.current;
+    // 自分・相手それぞれの発言はネットワーク到着順にバッファへ積まれて
+    // おり、話した順と一致しない場合がある(2026-10報告)ため、保存前に
+    // 発言時刻(at)で時系列順に並べ直す。
+    const lines = captionLinesRef.current.slice().sort((a, b) => a.at - b.at);
     if (lines.length === 0) return;
     const body = lines
       .map((l) => {
@@ -8811,15 +8846,37 @@ export default function AvatarSpace({
                         枠の左側に置く(2026-09報告により、専用の行に
                         分けていたのをやめて位置を揃えた)。 */}
                     {selfConferenceZone && (
-                      <button
-                        type="button"
-                        onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                        aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                        title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                      >
-                        {selfConferenceZoneLocker ? "🔒" : "🔓"}
-                      </button>
+                      <div className="flex shrink-0 flex-col items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                          aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                          title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                        >
+                          {selfConferenceZoneLocker ? "🔒" : "🔓"}
+                        </button>
+                        {/* 画面録画ボタン(2026-10追加)。「会議モード」
+                            モーダルを開いていても録画ボタンが消えないよう、
+                            常時表示プレビュー行と同じボタンをここにも
+                            設置する(2026-10報告)。 */}
+                        <RecordButton
+                          recording={recordingOwnerId !== null}
+                          onClick={handleRecordButtonClick}
+                          disabled={
+                            !isScreenRecordingSupported() ||
+                            (recordingOwnerId !== null &&
+                              recordingOwnerId !== selfId.current)
+                          }
+                          disabledReason={
+                            !isScreenRecordingSupported()
+                              ? "このブラウザでは画面録画を利用できません"
+                              : recordingOwnerName
+                                ? `${recordingOwnerName}さんが録画中です`
+                                : undefined
+                          }
+                        />
+                      </div>
                     )}
                     <VideoTile
                       name="あなた"
@@ -8930,15 +8987,36 @@ export default function AvatarSpace({
                       表示プレビュー行と同じく、一番左のプレビュー枠の
                       左側に置く。 */}
                   {selfConferenceZone && (
-                    <button
-                      type="button"
-                      onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                      aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                      title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                    >
-                      {selfConferenceZoneLocker ? "🔒" : "🔓"}
-                    </button>
+                    <div className="flex shrink-0 flex-col items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                        aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                        title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                      >
+                        {selfConferenceZoneLocker ? "🔒" : "🔓"}
+                      </button>
+                      {/* 画面録画ボタン(2026-10追加)。「会議モード」の
+                          グリッド表示でも録画ボタンが消えないように設置
+                          する(2026-10報告)。 */}
+                      <RecordButton
+                        recording={recordingOwnerId !== null}
+                        onClick={handleRecordButtonClick}
+                        disabled={
+                          !isScreenRecordingSupported() ||
+                          (recordingOwnerId !== null &&
+                            recordingOwnerId !== selfId.current)
+                        }
+                        disabledReason={
+                          !isScreenRecordingSupported()
+                            ? "このブラウザでは画面録画を利用できません"
+                            : recordingOwnerName
+                              ? `${recordingOwnerName}さんが録画中です`
+                              : undefined
+                        }
+                      />
+                    </div>
                   )}
                   <div
                     ref={meetingGridCallbackRef}
@@ -10904,10 +10982,12 @@ export default function AvatarSpace({
         </div>
       )}
 
-      {/* 画面録画を開始する際の確認ポップアップ(2026-10追加)。 */}
+      {/* 画面録画を開始する際の確認ポップアップ(2026-10追加)。注意書きが
+          長いため、他の確認ポップアップ(text-center)とは異なり左寄せに
+          する(2026-10報告)。 */}
       {showRecordConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+          <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
               画面録画を開始しますか?
               <br />
