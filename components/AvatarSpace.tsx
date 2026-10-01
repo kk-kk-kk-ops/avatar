@@ -60,7 +60,7 @@ import CarPicker from "./CarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
 import AnnouncementButton from "./AnnouncementButton";
-import CaptionButton from "./CaptionButton";
+import RecordButton from "./RecordButton";
 import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import VideoTile from "./VideoTile";
@@ -264,6 +264,20 @@ function isSpeechRecognitionSupported(): boolean {
   const isChrome = /Chrome\//.test(ua) && !/OPR\//.test(ua) && !/Edg\//.test(ua);
   const isEdge = /Edg\//.test(ua);
   return isChrome || isEdge;
+}
+
+// 画面録画機能の対応判定(2026-10追加)。getDisplayMedia・MediaRecorderは
+// Web Speech APIよりも対応ブラウザが広い(Firefox等でも使える)ため、
+// こちらは単純な機能検出のみで判定する(UA判定は行わない)。
+function isScreenRecordingSupported(): boolean {
+  if (typeof navigator === "undefined" || typeof window === "undefined") {
+    return false;
+  }
+  return (
+    !!navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getDisplayMedia === "function" &&
+    typeof (window as any).MediaRecorder !== "undefined"
+  );
 }
 
 // グループチャット・DMの@メンション表示用。テキスト中の「@全員」「@<相手
@@ -583,15 +597,28 @@ export default function AvatarSpace({
   useEffect(() => {
     setSpeechRecognitionAvailable(isSpeechRecognitionSupported());
   }, []);
-  // 字幕機能のON/OFF(自分の画面に字幕を表示するか、かつマイクON中は
-  // 自分の発言を認識して配信するか)。
-  const [captionsOn, setCaptionsOn] = useState(false);
-  const captionsOnRef = useRef(false);
+  // 録画中かどうか(2026-10、文字起こし単体のトグルから画面録画機能に
+  // 変更)。録画している間だけ、マイクONのChrome/Edge参加者全員の発言が
+  // 自動的に文字起こしされ配信される(個別のON/OFFトグルは廃止)。
+  // recordingOwnerIdは録画を開始した参加者のid(selfId)で、会議室の鍵と
+  // 同じ考え方で「開始した本人以外はボタンを押せない」制御に使う。
+  const [recordingOwnerId, setRecordingOwnerId] = useState<string | null>(
+    null,
+  );
+  const [recordingOwnerName, setRecordingOwnerName] = useState<string | null>(
+    null,
+  );
+  const recordingOwnerIdRef = useRef<string | null>(null);
   useEffect(() => {
-    captionsOnRef.current = captionsOn;
-  }, [captionsOn]);
-  // 受信済み字幕(自分の発言も含む。画面下部に字幕として表示し、OFFに
-  // した時点でまとめてローカルへテキスト保存する)。
+    recordingOwnerIdRef.current = recordingOwnerId;
+  }, [recordingOwnerId]);
+  const [showRecordConfirm, setShowRecordConfirm] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingTracksRef = useRef<MediaStreamTrack[]>([]);
+  const recordingAudioContextRef = useRef<AudioContext | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  // 受信済み字幕(自分の発言も含む。録画中のみ画面下部に字幕として表示し、
+  // 録画停止時にまとめてローカルへテキスト保存する)。
   type CaptionLine = {
     id: string;
     senderName: string;
@@ -4246,11 +4273,14 @@ export default function AvatarSpace({
     setSelectedScreenSharerId(null);
     setScreenAreaZoom(1);
     setFullscreenZoom(1);
-    // 字幕機能(2026-10追加)も同じ理由でリセットする。ONのまま退出した
-    // 場合に備え、溜まっている字幕があれば先にローカル保存してから消す。
+    // 録画・字幕機能(2026-10追加)も同じ理由でリセットする。自分が録画
+    // していた場合は、動画・文字起こしテキストの保存とロック解除までまと
+    // めて行うstopRecordingを呼ぶ。録画中でなければ単にローカルの字幕
+    // バッファと認識インスタンスだけを片付ける。
+    if (recordingOwnerIdRef.current === selfId.current) {
+      stopRecording();
+    }
     stopSpeechRecognition();
-    saveCaptionsLocally();
-    setCaptionsOn(false);
     setCaptionLines([]);
   }, []);
 
@@ -5003,6 +5033,16 @@ export default function AvatarSpace({
               delete copy[key];
               return copy;
             });
+            // 録画開始者が異常切断した場合の保険(2026-10追加)。
+            // 「recording-stop」を送らないまま退室/切断すると、他の全員の
+            // ボタンが録画中扱いのまま押せなくなってしまうため、その参加者が
+            // 本当にいなくなったタイミングでロックも解除する(会議室の鍵が
+            // 異常切断時にpresenceのleave検知で自動解錠されるのと同じ考え方)。
+            if (recordingOwnerIdRef.current === key) {
+              setRecordingOwnerId(null);
+              setRecordingOwnerName(null);
+              setCaptionLines([]);
+            }
           }, LEAVE_GRACE_MS);
           pendingLeaveTimersRef.current.set(key, timer);
         })
@@ -5471,11 +5511,11 @@ export default function AvatarSpace({
           setMentionsRefreshTrigger((n) => n + 1);
         })
         .on("broadcast", { event: "caption" }, ({ payload }) => {
-          // 字幕(文字起こし結果)の受信。自分が字幕ONにしている間だけ
-          // 画面に貯めて表示する(OFFの人は収集しない)。送信者自身の分は
-          // startSpeechRecognition側でローカルに直接反映済みのため、ここ
-          // では受信しても重複しない(broadcastは送信者自身には返らない)。
-          if (!captionsOnRef.current) return;
+          // 字幕(文字起こし結果)の受信。誰かが録画中の間だけ画面に貯めて
+          // 表示する。送信者自身の分はstartSpeechRecognition側でローカルに
+          // 直接反映済みのため、ここでは受信しても重複しない(broadcastは
+          // 送信者自身には返らない)。
+          if (recordingOwnerIdRef.current === null) return;
           const msg = payload as {
             id: string;
             senderName: string;
@@ -5483,6 +5523,22 @@ export default function AvatarSpace({
             at: number;
           };
           setCaptionLines((prev) => [...prev, msg].slice(-50));
+        })
+        .on("broadcast", { event: "recording-start" }, ({ payload }) => {
+          // 誰かが録画を開始したことを配信で知らせる(会議室の鍵と同じ
+          // broadcastの仕組み)。開始した本人は既にローカルで反映済みの
+          // ため、自分以外からの通知だけを反映する。
+          const msg = payload as { by: string; byName: string };
+          if (msg.by === selfId.current) return;
+          setRecordingOwnerId(msg.by);
+          setRecordingOwnerName(msg.byName);
+        })
+        .on("broadcast", { event: "recording-stop" }, ({ payload }) => {
+          const msg = payload as { by: string };
+          if (msg.by === selfId.current) return;
+          setRecordingOwnerId(null);
+          setRecordingOwnerName(null);
+          setCaptionLines([]);
         })
         .on("broadcast", { event: "force-leave" }, ({ payload }) => {
           const { reason, targetId } = payload as {
@@ -6687,12 +6743,12 @@ export default function AvatarSpace({
     setShowAnnouncementConfirm(false);
   }, []);
 
-  // ---- 文字起こし(字幕)機能のON/OFF切り替え(2026-10追加) ----
-  // 挙動: 字幕ONの間、マイクもONであれば自分の発言をWeb Speech APIで
-  // 認識し、結果をルーム内全員へ配信する(チャットのメンション通知と
-  // 同じbroadcastの仕組みを再利用)。受信した字幕(自分の発言分も含む)は
-  // 画面下部に一時的に表示し、OFFにした時点でまとめてテキストファイルと
-  // してローカルへ保存する(サーバー・DBには一切送らない)。
+  // ---- 文字起こし(字幕)・画面録画機能(2026-10追加) ----
+  // 挙動: 誰かが録画を開始している間、マイクもONのChrome/Edge参加者全員の
+  // 発言をWeb Speech APIで認識し、結果をルーム内全員へ配信する(チャットの
+  // メンション通知と同じbroadcastの仕組みを再利用)。受信した字幕(自分の
+  // 発言分も含む)は画面下部に一時的に表示し、録画停止時に録画開始者の
+  // ローカルへテキストファイルとして保存する(サーバー・DBには一切送らない)。
   const stopSpeechRecognition = useCallback(() => {
     const recognition = speechRecognitionRef.current;
     if (recognition) {
@@ -6751,9 +6807,9 @@ export default function AvatarSpace({
     };
     recognition.onend = () => {
       speechRecognitionRef.current = null;
-      // 字幕ON・マイクONの状態が続いている間は、ブラウザ側の都合
+      // 録画中・マイクONの状態が続いている間は、ブラウザ側の都合
       // (無音タイムアウト等)で止まった認識を自動的に再開する。
-      if (captionsOnRef.current && micEnabledRef.current) {
+      if (recordingOwnerIdRef.current !== null && micEnabledRef.current) {
         startSpeechRecognition();
       }
     };
@@ -6766,14 +6822,21 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 字幕ON/マイクONの組み合わせが変わるたびに認識の開始・停止を行う。
+  // 録画中かどうか/マイクONの組み合わせが変わるたびに認識の開始・停止を
+  // 行う(録画していない・マイクOFFのいずれかなら停止)。
   useEffect(() => {
-    if (captionsOn && micEnabled) {
+    if (recordingOwnerId !== null && micEnabled && speechRecognitionAvailable) {
       startSpeechRecognition();
     } else {
       stopSpeechRecognition();
     }
-  }, [captionsOn, micEnabled, startSpeechRecognition, stopSpeechRecognition]);
+  }, [
+    recordingOwnerId,
+    micEnabled,
+    speechRecognitionAvailable,
+    startSpeechRecognition,
+    stopSpeechRecognition,
+  ]);
 
   // 字幕テキストをローカルのテキストファイルとして保存する(ダウンロード
   // フォルダへ。サーバー・DBには一切送らない)。
@@ -6802,19 +6865,167 @@ export default function AvatarSpace({
     URL.revokeObjectURL(url);
   }, []);
 
-  const toggleCaptions = useCallback(() => {
-    if (!speechRecognitionAvailable) return;
-    setCaptionsOn((prev) => {
-      const next = !prev;
-      if (!next) {
-        // OFFにする瞬間、それまでの字幕をローカルへ保存してからバッファを
-        // 空にする(次回ONにした際に前回分と混在しないように)。
+  // ---- 画面録画の開始/停止(2026-10追加) ----
+  // 開始時はgetDisplayMedia(画面・タブ・ウィンドウを選択)の映像トラックと、
+  // その音声(共有時に「音声を共有」を選んだ場合)+自分のマイクをWeb Audio
+  // APIで1本にミックスした音声トラックを合成し、MediaRecorderで録画する。
+  // 停止時に動画ファイル→文字起こしテキストの順でローカル保存し、ルーム
+  // 全員へ録画終了を配信してロックを解除する。
+  const cleanupRecordingResources = useCallback(() => {
+    recordingTracksRef.current.forEach((t) => {
+      try {
+        t.stop();
+      } catch {
+        // 既に停止済みの場合などは無視
+      }
+    });
+    recordingTracksRef.current = [];
+    const audioContext = recordingAudioContextRef.current;
+    if (audioContext) {
+      audioContext.close().catch(() => {});
+      recordingAudioContextRef.current = null;
+    }
+    mediaRecorderRef.current = null;
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+      let micStream: MediaStream | null = null;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+      } catch {
+        // マイクの権限が無い/拒否された場合でも、画面(+共有した音声)の
+        // 録画自体は続行する。
+        micStream = null;
+      }
+
+      const audioContext = new AudioContext();
+      const destination = audioContext.createMediaStreamDestination();
+      if (displayStream.getAudioTracks().length > 0) {
+        audioContext
+          .createMediaStreamSource(
+            new MediaStream(displayStream.getAudioTracks()),
+          )
+          .connect(destination);
+      }
+      if (micStream && micStream.getAudioTracks().length > 0) {
+        audioContext.createMediaStreamSource(micStream).connect(destination);
+      }
+      recordingAudioContextRef.current = audioContext;
+      recordingTracksRef.current = [
+        ...displayStream.getTracks(),
+        ...(micStream?.getTracks() ?? []),
+      ];
+
+      const combinedStream = new MediaStream([
+        ...displayStream.getVideoTracks(),
+        ...destination.stream.getAudioTracks(),
+      ]);
+
+      const candidateMimeTypes = [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+      ];
+      const mimeType = candidateMimeTypes.find((t) =>
+        (window as any).MediaRecorder?.isTypeSupported?.(t),
+      );
+      const recorder = new MediaRecorder(
+        combinedStream,
+        mimeType ? { mimeType } : undefined,
+      );
+      recordedChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+        }
+      };
+      recorder.onstop = () => {
+        // 1. 動画データをローカルへ保存
+        const blob = new Blob(recordedChunksRef.current, {
+          type: "video/webm",
+        });
+        recordedChunksRef.current = [];
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const now = new Date();
+        const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+        a.href = url;
+        a.download = `recording-${stamp}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+
+        // 2. 文字起こしテキストもまとめてローカルへ保存
         saveCaptionsLocally();
         setCaptionLines([]);
-      }
-      return next;
-    });
-  }, [speechRecognitionAvailable, saveCaptionsLocally]);
+
+        cleanupRecordingResources();
+        channelRef.current?.httpSend("recording-stop", {
+          by: selfId.current,
+        });
+        setRecordingOwnerId(null);
+        setRecordingOwnerName(null);
+      };
+
+      // ブラウザ標準の「共有を停止」ボタンが押された場合にも終了処理を
+      // 行う(画面共有機能の既存実装と同じ考え方)。
+      displayStream.getVideoTracks()[0]?.addEventListener("ended", () => {
+        if (
+          mediaRecorderRef.current &&
+          mediaRecorderRef.current.state !== "inactive"
+        ) {
+          mediaRecorderRef.current.stop();
+        }
+      });
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+
+      setRecordingOwnerId(selfId.current);
+      setRecordingOwnerName(selfState.current?.name ?? null);
+      channelRef.current?.httpSend("recording-start", {
+        by: selfId.current,
+        byName: selfState.current?.name ?? "",
+      });
+    } catch {
+      // 共有ダイアログをキャンセルした場合などはここに来る。既存の画面
+      // 共有開始処理と同じくエラー扱いにはしない。
+    }
+  }, [saveCaptionsLocally, cleanupRecordingResources]);
+
+  const stopRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      // 保存・後片付け・broadcastはrecorder.onstop内でまとめて行う。
+      recorder.stop();
+    }
+  }, []);
+
+  const handleRecordButtonClick = useCallback(() => {
+    if (recordingOwnerIdRef.current === selfId.current) {
+      stopRecording();
+      return;
+    }
+    if (recordingOwnerIdRef.current !== null) return;
+    setShowRecordConfirm(true);
+  }, [stopRecording]);
+
+  const confirmStartRecording = useCallback(() => {
+    setShowRecordConfirm(false);
+    startRecording();
+  }, [startRecording]);
+
+  const declineStartRecording = useCallback(() => {
+    setShowRecordConfirm(false);
+  }, []);
 
   // 音声通話の残り時間が尽きた際に、マイクを強制的にオフにする(画面共有・
   // ビデオ通話の強制終了と同じ考え方)。次にオンにしようとしてもtoggleMic側
@@ -8168,18 +8379,6 @@ export default function AvatarSpace({
               )}
             </div>
             <div className="flex shrink-0 flex-col items-center">
-              <CaptionButton
-                enabled={captionsOn}
-                onClick={toggleCaptions}
-                disabled={selfInWorkZone || !speechRecognitionAvailable}
-                disabledReason={
-                  !speechRecognitionAvailable
-                    ? "文字起こしはPC版のChrome・Edgeでのみ利用できます"
-                    : undefined
-                }
-              />
-            </div>
-            <div className="flex shrink-0 flex-col items-center">
               <ScreenShareButton
                 enabled={screenSharing}
                 onClick={toggleScreenShare}
@@ -8282,11 +8481,11 @@ export default function AvatarSpace({
             </div>
           )}
 
-          {/* 文字起こし(字幕)オーバーレイ(2026-10追加)。字幕ONの間だけ、
-              画面下部に直近の発言を字幕として表示する。サーバーには保存
-              せず、OFFにした時点でローカルのテキストファイルへ保存する
-              (toggleCaptions/saveCaptionsLocally参照)。 */}
-          {captionsOn && captionLines.length > 0 && (
+          {/* 文字起こし(字幕)オーバーレイ(2026-10追加)。誰かが録画中の
+              間だけ、画面下部に直近の発言を字幕として表示する。サーバーには
+              保存せず、録画停止時に録画開始者のローカルへテキストファイル
+              として保存する(startRecording/saveCaptionsLocally参照)。 */}
+          {recordingOwnerId !== null && captionLines.length > 0 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex flex-col items-center gap-1 px-4">
               {captionLines.slice(-3).map((line) => (
                 <div
@@ -8339,15 +8538,37 @@ export default function AvatarSpace({
                   このプレビュー行専用の余白を確保して置く。地図上のものと
                   全く同じhandleLockIconClick/判定を使い挙動を揃える。 */}
               {selfConferenceZone && (
-                <button
-                  type="button"
-                  onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                  aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                  title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                >
-                  {selfConferenceZoneLocker ? "🔒" : "🔓"}
-                </button>
+                <div className="flex shrink-0 flex-col items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleLockIconClick(selfConferenceZone.id)}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                    aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                    title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                  >
+                    {selfConferenceZoneLocker ? "🔒" : "🔓"}
+                  </button>
+                  {/* 画面録画ボタン(2026-10追加、旧・文字起こしボタンを
+                      変更)。鍵アイコンの真下に配置し、会議室内でのみ
+                      表示する。録画中は自分以外のボタンをdisabledにする
+                      (会議室の鍵と同じ、開始した本人以外は操作不可の考え方)。 */}
+                  <RecordButton
+                    recording={recordingOwnerId !== null}
+                    onClick={handleRecordButtonClick}
+                    disabled={
+                      !isScreenRecordingSupported() ||
+                      (recordingOwnerId !== null &&
+                        recordingOwnerId !== selfId.current)
+                    }
+                    disabledReason={
+                      !isScreenRecordingSupported()
+                        ? "このブラウザでは画面録画を利用できません"
+                        : recordingOwnerName
+                          ? `${recordingOwnerName}さんが録画中です`
+                          : undefined
+                    }
+                  />
+                </div>
               )}
               {/* 画面共有中の人のプレビュー(自分・他人問わず、常に一番左。
                   2026-09報告により順序変更。排他制御により会議室内では
@@ -10675,6 +10896,41 @@ export default function AvatarSpace({
                 type="button"
                 onClick={confirmAnnouncementOn}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              >
+                はい
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 画面録画を開始する際の確認ポップアップ(2026-10追加)。 */}
+      {showRecordConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              画面録画を開始しますか?
+              <br />
+              <span className="text-xs font-normal text-slate-500">
+                ※停止後、録画開始者のローカルに【動画データ】と【文字起こし
+                テキスト】が保存されます
+                <br />
+                (文字起こしテキストは参加者がPC版Chrome・Edgeの方の音声のみ
+                変換されます)
+              </span>
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={declineStartRecording}
+                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                いいえ
+              </button>
+              <button
+                type="button"
+                onClick={confirmStartRecording}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
               >
                 はい
               </button>
