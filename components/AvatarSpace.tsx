@@ -539,9 +539,13 @@ export default function AvatarSpace({
   const [showParticipants, setShowParticipants] = useState(false); // スマホ用:参加者一覧の開閉
 
   // ---- サイドバーの幅可変(PC版のみ)。リロードで既定幅に戻るシンプルな
-  // 実装(永続化はしない)。下限は既存の固定幅、上限は画面幅の50%。 ----
-  const SIDEBAR_MIN_WIDTH = 374; // 既存のPC版固定幅(274px)+100px
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_MIN_WIDTH);
+  // 実装(永続化はしない)。既定幅はこれまで通り374px、下限はさらに狭く
+  // できるよう274px(可変幅導入前の固定幅)、上限は画面幅の50%。
+  // (2026-10報告: 以前はSIDEBAR_MIN_WIDTHを既定幅と兼用していたため、
+  // 既定より狭くドラッグできなかった。既定幅と下限を分離した。) ----
+  const SIDEBAR_DEFAULT_WIDTH = 374; // 既存のPC版固定幅(274px)+100px
+  const SIDEBAR_MIN_WIDTH = 274; // 可変幅導入前の固定幅まで狭められるようにする
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(
     null,
   );
@@ -8618,25 +8622,10 @@ export default function AvatarSpace({
             </div>
           )}
 
-          {/* 文字起こし(字幕)オーバーレイ(2026-10追加)。誰かが録画中の
-              間だけ、画面下部に直近の発言を字幕として表示する。サーバーには
-              保存せず、録画停止時に録画開始者のローカルへテキストファイル
-              として保存する(startRecording/saveCaptionsLocally参照)。 */}
-          {recordingOwnerId !== null && captionLines.length > 0 && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex flex-col items-center gap-1 px-4">
-              {captionLines.slice(-3).map((line) => (
-                <div
-                  key={line.id}
-                  className="max-w-[80%] rounded-md bg-black/70 px-3 py-1 text-center text-xs text-white shadow-lg"
-                >
-                  <span className="font-semibold text-emerald-300">
-                    {line.senderName}:
-                  </span>{" "}
-                  {line.text}
-                </div>
-              ))}
-            </div>
-          )}
+          {/* 2026-10報告により、画面下部へのリアルタイム字幕(テロップ)
+              表示は廃止した。文字起こし自体(録画中の収集・録画停止時の
+              テキストファイル保存)は変更なく継続する(captionLines/
+              saveCaptionsLocally参照)。 */}
 
           {/* 「会議モード」ボタン(旧「会議画面」。2026-09報告により
               ヘッダーからアバター空間エリアの上部中央へ移動し、名称も
