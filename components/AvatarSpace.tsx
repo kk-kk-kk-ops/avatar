@@ -60,6 +60,7 @@ import CarPicker from "./CarPicker";
 import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
 import AnnouncementButton from "./AnnouncementButton";
+import CaptionButton from "./CaptionButton";
 import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import VideoTile from "./VideoTile";
@@ -242,6 +243,27 @@ function extractDmMention(text: string, peerName: string | null): boolean {
   if (!text || !peerName) return false;
   const escaped = peerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`@${escaped}(?=\\s|$)`).test(text);
+}
+
+// 文字起こし機能(Web Speech API)の対応判定(2026-10追加)。
+// SpeechRecognitionはPC版Chrome・Edge(どちらもChromiumエンジン)でのみ
+// 安定動作し、Safari・Firefoxは非対応、iPhone/iPad(iOS)は「Chrome」と
+// 名乗るアプリでもAppleの規約でWebKitエンジンを使う義務があるため同様に
+// 非対応。実際にAPI自体が存在するか(機能検出)に加え、UAでChromium系
+// デスクトップブラウザかどうかも見て二重に判定する(SafariがAPIだけ
+// 部分的に実装している場合の誤検出を防ぐため)。
+function isSpeechRecognitionSupported(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+  const hasApi =
+    "SpeechRecognition" in window || "webkitSpeechRecognition" in window;
+  if (!hasApi) return false;
+  const ua = navigator.userAgent;
+  if (/iPad|iPhone|iPod/.test(ua)) return false;
+  const isChrome = /Chrome\//.test(ua) && !/OPR\//.test(ua) && !/Edg\//.test(ua);
+  const isEdge = /Edg\//.test(ua);
+  return isChrome || isEdge;
 }
 
 // グループチャット・DMの@メンション表示用。テキスト中の「@全員」「@<相手
@@ -549,6 +571,40 @@ export default function AvatarSpace({
   useEffect(() => {
     micEnabledRef.current = micEnabled;
   }, [micEnabled]);
+
+  // ---- 文字起こし(字幕)機能(2026-10追加) ----
+  // Web Speech APIはChrome・Edge(Chromiumエンジン)のPC版でのみ安定動作する
+  // ため、それ以外のブラウザではボタン自体を押せなくする。useStateで持つと
+  // SSR/CSRでの初回レンダー不一致(hydration mismatch)が起きうるため、
+  // マウント後のuseEffectでuseState初期値から確定させる(他のブラウザ
+  // 依存の判定と同じ扱い)。
+  const [speechRecognitionAvailable, setSpeechRecognitionAvailable] =
+    useState(false);
+  useEffect(() => {
+    setSpeechRecognitionAvailable(isSpeechRecognitionSupported());
+  }, []);
+  // 字幕機能のON/OFF(自分の画面に字幕を表示するか、かつマイクON中は
+  // 自分の発言を認識して配信するか)。
+  const [captionsOn, setCaptionsOn] = useState(false);
+  const captionsOnRef = useRef(false);
+  useEffect(() => {
+    captionsOnRef.current = captionsOn;
+  }, [captionsOn]);
+  // 受信済み字幕(自分の発言も含む。画面下部に字幕として表示し、OFFに
+  // した時点でまとめてローカルへテキスト保存する)。
+  type CaptionLine = {
+    id: string;
+    senderName: string;
+    text: string;
+    at: number;
+  };
+  const [captionLines, setCaptionLines] = useState<CaptionLine[]>([]);
+  const captionLinesRef = useRef<CaptionLine[]>([]);
+  useEffect(() => {
+    captionLinesRef.current = captionLines;
+  }, [captionLines]);
+  // SpeechRecognitionインスタンス(ブラウザ標準、型定義が無いためany)。
+  const speechRecognitionRef = useRef<any>(null);
   // 音声通話の「今日の残り利用可能時間(秒)」。画面共有・ビデオ通話と全く
   // 同じ考え方(null = 未取得中 or プランが無制限)。daily_usageテーブルの
   // kind='voice_call'を使う。
@@ -4190,6 +4246,12 @@ export default function AvatarSpace({
     setSelectedScreenSharerId(null);
     setScreenAreaZoom(1);
     setFullscreenZoom(1);
+    // 字幕機能(2026-10追加)も同じ理由でリセットする。ONのまま退出した
+    // 場合に備え、溜まっている字幕があれば先にローカル保存してから消す。
+    stopSpeechRecognition();
+    saveCaptionsLocally();
+    setCaptionsOn(false);
+    setCaptionLines([]);
   }, []);
 
   // ---- 入室処理 ----
@@ -5408,6 +5470,20 @@ export default function AvatarSpace({
           // ためRPC/クエリの負荷は無視できる)。
           setMentionsRefreshTrigger((n) => n + 1);
         })
+        .on("broadcast", { event: "caption" }, ({ payload }) => {
+          // 字幕(文字起こし結果)の受信。自分が字幕ONにしている間だけ
+          // 画面に貯めて表示する(OFFの人は収集しない)。送信者自身の分は
+          // startSpeechRecognition側でローカルに直接反映済みのため、ここ
+          // では受信しても重複しない(broadcastは送信者自身には返らない)。
+          if (!captionsOnRef.current) return;
+          const msg = payload as {
+            id: string;
+            senderName: string;
+            text: string;
+            at: number;
+          };
+          setCaptionLines((prev) => [...prev, msg].slice(-50));
+        })
         .on("broadcast", { event: "force-leave" }, ({ payload }) => {
           const { reason, targetId } = payload as {
             reason?: string;
@@ -6610,6 +6686,135 @@ export default function AvatarSpace({
   const declineAnnouncementOn = useCallback(() => {
     setShowAnnouncementConfirm(false);
   }, []);
+
+  // ---- 文字起こし(字幕)機能のON/OFF切り替え(2026-10追加) ----
+  // 挙動: 字幕ONの間、マイクもONであれば自分の発言をWeb Speech APIで
+  // 認識し、結果をルーム内全員へ配信する(チャットのメンション通知と
+  // 同じbroadcastの仕組みを再利用)。受信した字幕(自分の発言分も含む)は
+  // 画面下部に一時的に表示し、OFFにした時点でまとめてテキストファイルと
+  // してローカルへ保存する(サーバー・DBには一切送らない)。
+  const stopSpeechRecognition = useCallback(() => {
+    const recognition = speechRecognitionRef.current;
+    if (recognition) {
+      // 自動再起動(onend)を止めるため、先にハンドラを外してからstopする。
+      recognition.onend = null;
+      recognition.onerror = null;
+      recognition.onresult = null;
+      try {
+        recognition.stop();
+      } catch {
+        // 既に停止している場合などは無視
+      }
+      speechRecognitionRef.current = null;
+    }
+  }, []);
+
+  const startSpeechRecognition = useCallback(() => {
+    if (speechRecognitionRef.current) return;
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) return;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (event: any) => {
+      const self = selfState.current;
+      if (!self) return;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (!result.isFinal) continue;
+        const text = (result[0]?.transcript ?? "").trim();
+        if (!text) continue;
+        const line = {
+          id: `${self.id}-${Date.now()}-${i}`,
+          senderName: self.name,
+          text,
+          at: Date.now(),
+        };
+        // Supabase Realtimeのbroadcastは送信者自身には返ってこないため、
+        // 自分の発言分はここでローカルに直接反映する(画面共有プレビュー
+        // 配信と同じ理由・同じ対処)。
+        setCaptionLines((prev) => [...prev, line].slice(-50));
+        channelRef.current?.httpSend("caption", {
+          id: line.id,
+          senderName: line.senderName,
+          text: line.text,
+          at: line.at,
+        });
+      }
+    };
+    recognition.onerror = () => {
+      // 無音が続いた場合などもerrorになりうるが、字幕ON・マイクONが
+      // 続く限りonendから自動再起動されるため、ここでは何もしない。
+    };
+    recognition.onend = () => {
+      speechRecognitionRef.current = null;
+      // 字幕ON・マイクONの状態が続いている間は、ブラウザ側の都合
+      // (無音タイムアウト等)で止まった認識を自動的に再開する。
+      if (captionsOnRef.current && micEnabledRef.current) {
+        startSpeechRecognition();
+      }
+    };
+    speechRecognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      speechRecognitionRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 字幕ON/マイクONの組み合わせが変わるたびに認識の開始・停止を行う。
+  useEffect(() => {
+    if (captionsOn && micEnabled) {
+      startSpeechRecognition();
+    } else {
+      stopSpeechRecognition();
+    }
+  }, [captionsOn, micEnabled, startSpeechRecognition, stopSpeechRecognition]);
+
+  // 字幕テキストをローカルのテキストファイルとして保存する(ダウンロード
+  // フォルダへ。サーバー・DBには一切送らない)。
+  const saveCaptionsLocally = useCallback(() => {
+    const lines = captionLinesRef.current;
+    if (lines.length === 0) return;
+    const body = lines
+      .map((l) => {
+        const d = new Date(l.at);
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        const ss = String(d.getSeconds()).padStart(2, "0");
+        return `[${hh}:${mm}:${ss}] ${l.senderName}: ${l.text}`;
+      })
+      .join("\n");
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const now = new Date();
+    const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+    a.href = url;
+    a.download = `transcript-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const toggleCaptions = useCallback(() => {
+    if (!speechRecognitionAvailable) return;
+    setCaptionsOn((prev) => {
+      const next = !prev;
+      if (!next) {
+        // OFFにする瞬間、それまでの字幕をローカルへ保存してからバッファを
+        // 空にする(次回ONにした際に前回分と混在しないように)。
+        saveCaptionsLocally();
+        setCaptionLines([]);
+      }
+      return next;
+    });
+  }, [speechRecognitionAvailable, saveCaptionsLocally]);
 
   // 音声通話の残り時間が尽きた際に、マイクを強制的にオフにする(画面共有・
   // ビデオ通話の強制終了と同じ考え方)。次にオンにしようとしてもtoggleMic側
@@ -7963,6 +8168,18 @@ export default function AvatarSpace({
               )}
             </div>
             <div className="flex shrink-0 flex-col items-center">
+              <CaptionButton
+                enabled={captionsOn}
+                onClick={toggleCaptions}
+                disabled={selfInWorkZone || !speechRecognitionAvailable}
+                disabledReason={
+                  !speechRecognitionAvailable
+                    ? "文字起こしはPC版のChrome・Edgeでのみ利用できます"
+                    : undefined
+                }
+              />
+            </div>
+            <div className="flex shrink-0 flex-col items-center">
               <ScreenShareButton
                 enabled={screenSharing}
                 onClick={toggleScreenShare}
@@ -8062,6 +8279,26 @@ export default function AvatarSpace({
           {!templateLoaded && (
             <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-800">
               <p className="text-sm text-slate-300">読み込み中...</p>
+            </div>
+          )}
+
+          {/* 文字起こし(字幕)オーバーレイ(2026-10追加)。字幕ONの間だけ、
+              画面下部に直近の発言を字幕として表示する。サーバーには保存
+              せず、OFFにした時点でローカルのテキストファイルへ保存する
+              (toggleCaptions/saveCaptionsLocally参照)。 */}
+          {captionsOn && captionLines.length > 0 && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex flex-col items-center gap-1 px-4">
+              {captionLines.slice(-3).map((line) => (
+                <div
+                  key={line.id}
+                  className="max-w-[80%] rounded-md bg-black/70 px-3 py-1 text-center text-xs text-white shadow-lg"
+                >
+                  <span className="font-semibold text-emerald-300">
+                    {line.senderName}:
+                  </span>{" "}
+                  {line.text}
+                </div>
+              ))}
             </div>
           )}
 
