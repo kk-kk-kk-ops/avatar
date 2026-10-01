@@ -4297,13 +4297,20 @@ export default function AvatarSpace({
     setFullscreenZoom(1);
     // 録画・字幕機能(2026-10追加)も同じ理由でリセットする。自分が録画
     // していた場合は、動画・文字起こしテキストの保存とロック解除までまと
-    // めて行うstopRecordingを呼ぶ。録画中でなければ単にローカルの字幕
-    // バッファと認識インスタンスだけを片付ける。
+    // めて行うstopRecordingを呼ぶ。
+    // 2026-10報告のバグ修正: stopRecording()(recorder.stop())は非同期で、
+    // 実際の保存処理(saveCaptionsLocally)はMediaRecorderのonstopが発火
+    // してから少し後に実行される。以前はこの直後に無条件でsetCaptionLines
+    // ([])していたため、onstopが実行される前に字幕バッファが空になって
+    // しまい、動画は保存されるのに文字起こしテキストだけ保存されない
+    // (空のまま保存をスキップする)不具合があった。自分が録画中だった
+    // 場合はクリアせず、onstop側の保存完了後のクリアに任せる。
     if (recordingOwnerIdRef.current === selfId.current) {
       stopRecording();
+    } else {
+      setCaptionLines([]);
     }
     stopSpeechRecognition();
-    setCaptionLines([]);
   }, []);
 
   // ---- 入室処理 ----
