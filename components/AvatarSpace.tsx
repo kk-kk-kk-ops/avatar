@@ -6916,13 +6916,22 @@ export default function AvatarSpace({
   // 2026-10報告のバグ修正: 録画中かどうかだけで文字起こしの対象にして
   // いたため、会議室の外にいる人(マイクONで近接通話中の人など)の声まで
   // 拾って文字起こししてしまっていた。録画は会議室内でしか開始できない
-  // ため、「自分が録画開始者と同じ会議室(ゾーン)に今いるかどうか」も
-  // あわせて見るようにし、同じ会議室内にいる人だけを対象にする。
+  // ため、「自分が今会議室(conference)ゾーンにいるかどうか」もあわせて
+  // 見るようにし、会議室の外にいる人を対象から外す。
+  //
+  // 2026-10報告の追加修正: 一度は「録画開始者と全く同じゾーンIDか」まで
+  // 照合する実装にしていたが、録画開始者側のplayers上のmeetingZoneIdが
+  // 必ずしも即座に反映されるとは限らず、自分自身の発言まで対象から
+  // 外れて文字起こしが一切保存されなくなる回帰を起こした。self自身の
+  // ゾーンがconference種別かどうかだけを見るシンプルな判定に戻し、
+  // 同一ネットワーク越しの値同士を突き合わせる不安定さを無くした
+  // (この施設には会議室が1つのみのため、実用上は同じ会議室の判定として
+  // 機能する)。
   const selfZoneId = players[selfId.current]?.meetingZoneId ?? null;
   const sameConferenceRoomAsRecorder =
-    recordingOwner !== null &&
-    selfZoneId !== null &&
-    selfZoneId === recordingOwner.meetingZoneId;
+    !!selfZoneId &&
+    meetingZonesRef.current.find((z) => z.id === selfZoneId)?.kind ===
+      "conference";
   const sameConferenceRoomAsRecorderRef = useRef(false);
   useEffect(() => {
     sameConferenceRoomAsRecorderRef.current = sameConferenceRoomAsRecorder;
