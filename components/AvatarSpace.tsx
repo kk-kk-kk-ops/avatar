@@ -638,6 +638,28 @@ export default function AvatarSpace({
   useEffect(() => {
     captionLinesRef.current = captionLines;
   }, [captionLines]);
+  // 2026-10報告のバグ修正: 同じ人が複数のタブ/ウィンドウ(例: 通常ウィンドウ
+  // +別アカウントでログインしたプライベートウィンドウを同じPCで開いて
+  // いる等)でルームに参加していると、その人の発言が複数のタブで独立に
+  // 認識・配信され、送信元ごとのref(lastEmittedTextRef等)による重複排除
+  // では防げない(別タブ=別JSの実行環境のため)。ローカル生成・受信
+  // どちらも必ずこの関数を経由させ、実際に組み上がった字幕一覧(prev)
+  // そのものを見て「直近に同じ発言者・同じ内容が来ていないか」を確認
+  // することで、原因を問わず症状レベルで重複を防ぐ。
+  const addCaptionLine = useCallback((line: CaptionLine) => {
+    setCaptionLines((prev) => {
+      const isDuplicate = prev
+        .slice(-5)
+        .some(
+          (existing) =>
+            existing.senderName === line.senderName &&
+            existing.text === line.text &&
+            Math.abs(existing.at - line.at) < 5000,
+        );
+      if (isDuplicate) return prev;
+      return [...prev, line];
+    });
+  }, []);
   // SpeechRecognitionインスタンス(ブラウザ標準、型定義が無いためany)。
   const speechRecognitionRef = useRef<any>(null);
   // 2026-10報告のバグ修正: ブラウザによってはonresultが同じ確定済み
@@ -5556,7 +5578,7 @@ export default function AvatarSpace({
           // いたため、録画開始者が最後にテキスト保存した際、長めの会議だと
           // 冒頭の発言が欠落してしまっていた。録画中は全件保持し、画面
           // 下部のオーバーレイ表示側だけ直近3件に絞る(JSX側のslice(-3))。
-          setCaptionLines((prev) => [...prev, msg]);
+          addCaptionLine(msg);
         })
         .on("broadcast", { event: "force-leave" }, ({ payload }) => {
           const { reason, targetId } = payload as {
@@ -6844,8 +6866,9 @@ export default function AvatarSpace({
         // Supabase Realtimeのbroadcastは送信者自身には返ってこないため、
         // 自分の発言分はここでローカルに直接反映する(画面共有プレビュー
         // 配信と同じ理由・同じ対処)。録画終了時の保存に全件必要なため、
-        // 受信側と同じ理由でslice(-50)の切り捨ては行わない。
-        setCaptionLines((prev) => [...prev, line]);
+        // 受信側と同じ理由でslice(-50)の切り捨ては行わない。重複排除は
+        // addCaptionLine側でまとめて行う。
+        addCaptionLine(line);
         channelRef.current?.httpSend("caption", {
           id: line.id,
           senderName: line.senderName,
