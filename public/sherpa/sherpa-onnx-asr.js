@@ -2009,3 +2009,15 @@ if (typeof process == 'object' && typeof process.versions == 'object' &&
     OfflineRecognizer,
   };
 }
+
+// 2026-10追加: classの宣言は(functionの宣言と違って)クラシックscriptの
+// トップレベルにあってもwindowのプロパティにはならない。このファイルを
+// 動的に<script>タグで読み込んだ別のJS(Reactアプリ側のバンドル)から
+// `window.OfflineRecognizer`のように参照できるよう、明示的に代入して
+// おく。
+if (typeof window !== 'undefined') {
+  window.OfflineRecognizer = OfflineRecognizer;
+  window.OfflineStream = OfflineStream;
+  window.OnlineRecognizer = OnlineRecognizer;
+  window.OnlineStream = OnlineStream;
+}
