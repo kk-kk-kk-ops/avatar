@@ -37,32 +37,50 @@ export default function RecordButton({
   onClick,
   disabled,
   disabledReason,
+  warning,
+  warningReason,
 }: {
   recording: boolean;
   onClick: () => void;
   disabled?: boolean;
   disabledReason?: string;
+  // 文字起こし(Web Speech API)がネットワークエラー等で失敗している間
+  // trueにする(2026-10報告: 発言していても文字起こしが一切保存されない
+  // 不具合があり、録画自体は正常に見えるため気づきにくかった)。
+  warning?: boolean;
+  warningReason?: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={
-        disabled
-          ? (disabledReason ?? "現在この操作はできません")
-          : recording
-            ? "録画を停止する"
-            : "画面録画を開始する"
-      }
-      aria-label={recording ? "録画を停止する" : "画面録画を開始する"}
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-        recording
-          ? "bg-red-600 text-white hover:bg-red-500"
-          : "bg-black/60 text-white hover:bg-black/80"
-      } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-black/60`}
-    >
-      <RecordIcon recording={recording} />
-    </button>
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        title={
+          disabled
+            ? (disabledReason ?? "現在この操作はできません")
+            : recording
+              ? "録画を停止する"
+              : "画面録画を開始する"
+        }
+        aria-label={recording ? "録画を停止する" : "画面録画を開始する"}
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
+          recording
+            ? "bg-red-600 text-white hover:bg-red-500"
+            : "bg-black/60 text-white hover:bg-black/80"
+        } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-black/60`}
+      >
+        <RecordIcon recording={recording} />
+      </button>
+      {recording && warning && (
+        <span
+          title={warningReason ?? "文字起こしが一時的に失敗しています"}
+          aria-label={warningReason ?? "文字起こしが一時的に失敗しています"}
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-[10px] font-bold leading-none text-black ring-2 ring-slate-900"
+        >
+          !
+        </span>
+      )}
+    </div>
   );
 }
