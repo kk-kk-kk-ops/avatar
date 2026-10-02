@@ -411,10 +411,23 @@ async function downloadSherpaFileWithResume(
   };
 
   if (meta.complete) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[sherpa-onnx] downloadWithResume("${url}"): 既にキャッシュ済み(${meta.downloadedBytes}バイト)、readAllChunks開始`,
+    );
+    const blob = new Blob(await readAllChunks());
+    // eslint-disable-next-line no-console
+    console.log(
+      `[sherpa-onnx] downloadWithResume("${url}"): readAllChunks完了、Blobサイズ=${blob.size}`,
+    );
     onProgress?.(meta.downloadedBytes, meta.totalBytes);
-    return new Blob(await readAllChunks());
+    return blob;
   }
 
+  // eslint-disable-next-line no-console
+  console.log(
+    `[sherpa-onnx] downloadWithResume("${url}"): fetch開始(既存${meta.downloadedBytes}バイトから再開試行)`,
+  );
   const init: RequestInit & { priority?: "high" | "low" | "auto" } = {
     headers: meta.downloadedBytes > 0
       ? { Range: `bytes=${meta.downloadedBytes}-` }
@@ -424,12 +437,20 @@ async function downloadSherpaFileWithResume(
     priority: "low",
   };
   const response = await fetch(url, init);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[sherpa-onnx] downloadWithResume("${url}"): fetch応答 status=${response.status} content-length=${response.headers.get("content-length")} content-range=${response.headers.get("content-range")} accept-ranges=${response.headers.get("accept-ranges")}`,
+  );
   if (!response.ok && response.status !== 206) {
     throw new Error(`sherpa-onnx fetch failed: ${response.status}`);
   }
   if (meta.downloadedBytes > 0 && response.status !== 206) {
     // サーバーがRangeに対応しておらず先頭から200で返ってきた場合、保存済み
     // の断片を信用せずゼロから積み直す。
+    // eslint-disable-next-line no-console
+    console.log(
+      `[sherpa-onnx] downloadWithResume("${url}"): Range非対応応答のため先頭からやり直す`,
+    );
     meta = {
       downloadedBytes: 0,
       totalBytes: null,
@@ -458,6 +479,10 @@ async function downloadSherpaFileWithResume(
   };
 
   const reader = response.body?.getReader();
+  // eslint-disable-next-line no-console
+  console.log(
+    `[sherpa-onnx] downloadWithResume("${url}"): body reader ${reader ? "あり(ストリーミング)" : "なし(blob()フォールバック)"}、total=${total}`,
+  );
   if (!reader) {
     // ストリーミング非対応環境向けのフォールバック。
     const blob = await response.blob();
@@ -483,6 +508,10 @@ async function downloadSherpaFileWithResume(
       }
     }
     await flushPending(pending);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[sherpa-onnx] downloadWithResume("${url}"): 読み取りループ終了、downloadedBytes=${meta.downloadedBytes}`,
+    );
   }
 
   meta.totalBytes = total;
@@ -7106,6 +7135,8 @@ export default function AvatarSpace({
     };
     const promise = (async () => {
       for (const name of SHERPA_FILE_NAMES) {
+        // eslint-disable-next-line no-console
+        console.log(`[sherpa-onnx] prefetch: ${name} 開始`);
         await downloadSherpaFileWithResume(
           `${SHERPA_MODEL_BASE}/${name}`,
           (downloaded) => {
@@ -7113,11 +7144,15 @@ export default function AvatarSpace({
             reportProgress();
           },
         );
+        // eslint-disable-next-line no-console
+        console.log(`[sherpa-onnx] prefetch: ${name} 完了`);
       }
     })();
     sherpaPrefetchPromiseRef.current = promise;
     promise.then(
       () => {
+        // eslint-disable-next-line no-console
+        console.log("[sherpa-onnx] prefetch: 全ファイル完了");
         setSherpaStatus((prev) => (prev === "downloading" ? "idle" : prev));
       },
       (err) => {
@@ -7146,7 +7181,11 @@ export default function AvatarSpace({
         document.body.appendChild(el);
       });
     const promise = (async () => {
+      // eslint-disable-next-line no-console
+      console.log("[sherpa-onnx] init: prefetchSherpaBytes待機開始");
       await prefetchSherpaBytes();
+      // eslint-disable-next-line no-console
+      console.log("[sherpa-onnx] init: prefetchSherpaBytes完了、initializingへ");
       setSherpaStatus("initializing");
       setSherpaLoadPercent((prev) => Math.max(prev, 95));
 
@@ -7154,41 +7193,100 @@ export default function AvatarSpace({
       for (const name of SHERPA_FILE_NAMES) {
         // フェーズ1で既にIndexedDBに完全保存済みのため、ここはネット
         // ワークに触れずIndexedDBから読み出すだけで即座に終わる。
-        blobs[name] = await downloadSherpaFileWithResume(
+        // eslint-disable-next-line no-console
+        console.log(`[sherpa-onnx] init: ${name} をIndexedDBから読み出し開始`);
+        const blob = await downloadSherpaFileWithResume(
           `${SHERPA_MODEL_BASE}/${name}`,
         );
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-onnx] init: ${name} 読み出し完了 (${blob.size}バイト)`,
+        );
+        blobs[name] = blob;
       }
+      // IndexedDBの断片から組み立てた時点のBlobにはtype(MIME)が付いて
+      // いないため、fetchした側が正しいContent-Typeを見られるよう明示的に
+      // 付け直す(.wasmはWebAssembly.instantiateStreamingがcontent-type
+      // をapplication/wasmで厳密にチェックするため、これが無いと非streaming
+      // 経路にフォールバックする実装がある)。
       const wasmBlobUrl = URL.createObjectURL(
-        blobs["sherpa-onnx-wasm-main-vad-asr.wasm"],
+        new Blob([blobs["sherpa-onnx-wasm-main-vad-asr.wasm"]], {
+          type: "application/wasm",
+        }),
       );
       const dataBlobUrl = URL.createObjectURL(
-        blobs["sherpa-onnx-wasm-main-vad-asr.data"],
+        new Blob([blobs["sherpa-onnx-wasm-main-vad-asr.data"]], {
+          type: "application/octet-stream",
+        }),
       );
       const mainJsBlobUrl = URL.createObjectURL(
-        blobs["sherpa-onnx-wasm-main-vad-asr.js"],
+        new Blob([blobs["sherpa-onnx-wasm-main-vad-asr.js"]], {
+          type: "text/javascript",
+        }),
       );
+      // eslint-disable-next-line no-console
+      console.log("[sherpa-onnx] init: blob URL作成完了", {
+        wasmBlobUrl,
+        dataBlobUrl,
+        mainJsBlobUrl,
+        wasmSize: blobs["sherpa-onnx-wasm-main-vad-asr.wasm"].size,
+        dataSize: blobs["sherpa-onnx-wasm-main-vad-asr.data"].size,
+      });
 
       await loadScript("/sherpa/sherpa-onnx-asr.js");
+      // eslint-disable-next-line no-console
+      console.log("[sherpa-onnx] init: sherpa-onnx-asr.js 読み込み完了");
       await loadScript("/sherpa/sherpa-onnx-vad.js");
+      // eslint-disable-next-line no-console
+      console.log("[sherpa-onnx] init: sherpa-onnx-vad.js 読み込み完了");
       await new Promise<void>((resolve, reject) => {
         (window as any).Module = {
           // .wasm/.dataはフェーズ1でダウンロード済みのBlobをそのまま使う
           // (ここでネットワークへアクセスすることはない)。
           locateFile: (path: string) => {
-            if (path.endsWith(".wasm")) return wasmBlobUrl;
-            if (path.endsWith(".data")) return dataBlobUrl;
-            return path;
+            const resolved = path.endsWith(".wasm")
+              ? wasmBlobUrl
+              : path.endsWith(".data")
+                ? dataBlobUrl
+                : path;
+            // eslint-disable-next-line no-console
+            console.log(`[sherpa-onnx] Module.locateFile("${path}") -> ${resolved}`);
+            return resolved;
           },
-          setStatus: () => {},
+          setStatus: (status: string) => {
+            // eslint-disable-next-line no-console
+            console.log(`[sherpa-onnx] Module.setStatus: "${status}"`);
+          },
+          onAbort: (reason: unknown) => {
+            // eslint-disable-next-line no-console
+            console.warn("[sherpa-onnx] Module.onAbort", reason);
+            reject(
+              reason instanceof Error ? reason : new Error(String(reason)),
+            );
+          },
+          print: (text: string) => {
+            // eslint-disable-next-line no-console
+            console.log("[sherpa-onnx] Module stdout:", text);
+          },
+          printErr: (text: string) => {
+            // eslint-disable-next-line no-console
+            console.warn("[sherpa-onnx] Module stderr:", text);
+          },
           onRuntimeInitialized: () => {
+            // eslint-disable-next-line no-console
+            console.log("[sherpa-onnx] Module.onRuntimeInitialized 発火");
             try {
               const Module = (window as any).Module;
               sherpaModuleRef.current = Module;
               sherpaVadRef.current = (window as any).createVad(Module);
+              // eslint-disable-next-line no-console
+              console.log("[sherpa-onnx] init: VAD生成完了");
               sherpaBufferRef.current = new (window as any).CircularBuffer(
                 30 * 16000,
                 Module,
               );
+              // eslint-disable-next-line no-console
+              console.log("[sherpa-onnx] init: CircularBuffer生成完了");
               sherpaRecognizerRef.current = new (
                 window as any
               ).OfflineRecognizer(
@@ -7206,19 +7304,40 @@ export default function AvatarSpace({
                 },
                 Module,
               );
+              // eslint-disable-next-line no-console
+              console.log("[sherpa-onnx] init: OfflineRecognizer生成完了");
               resolve();
             } catch (err) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                "[sherpa-onnx] onRuntimeInitialized内でエラー",
+                err,
+              );
               reject(err instanceof Error ? err : new Error(String(err)));
             }
           },
         };
-        loadScript(mainJsBlobUrl).catch(reject);
+        // eslint-disable-next-line no-console
+        console.log("[sherpa-onnx] init: メインJS(グルー)読み込み開始");
+        loadScript(mainJsBlobUrl)
+          .then(() => {
+            // eslint-disable-next-line no-console
+            console.log(
+              "[sherpa-onnx] init: メインJS(グルー)のscriptタグ実行完了" +
+                "(onRuntimeInitializedはまだ先に別途発火する想定)",
+            );
+          })
+          .catch(reject);
       });
       setSherpaLoadPercent(100);
     })();
     sherpaLoadPromiseRef.current = promise;
     promise.then(
-      () => setSherpaStatus("ready"),
+      () => {
+        // eslint-disable-next-line no-console
+        console.log("[sherpa-onnx] init: 完了、ready");
+        setSherpaStatus("ready");
+      },
       (err) => {
         // eslint-disable-next-line no-console
         console.warn("[sherpa-onnx] モデル初期化に失敗", err);
