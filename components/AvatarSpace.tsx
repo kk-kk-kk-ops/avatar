@@ -972,9 +972,18 @@ export default function AvatarSpace({
   // メインスレッド側はダウンサンプリングした音声サンプルをWorkerへ
   // postMessageで渡すだけにする(sherpa-worker.js参照)。
   const sherpaWorkerRef = useRef<Worker | null>(null);
-  // マイク音声を認識モデルに流すためのWeb Audio Graph。通話用のマイクON/
-  // OFF(toggleMic)とは独立に、LiveKitのローカルマイクトラックを横取り
-  // して自分たちで繋ぎ直す。
+  // マイク音声を認識モデルに流すためのWeb Audio Graph。
+  // 2026-10報告の不具合対応: 以前はLiveKitの公開中トラック(publication.
+  // track.mediaStreamTrack)を横取りする形にしていたが、これは実際には
+  // ノイズ抑制フィルター(DeepFilterNet3、applyNoiseFilterProcessor参照)
+  // がAudioWorkletで加工した後の「生成済みトラック」であり、そこに
+  // さらに別のサンプルレート(16kHz)でAudioContextを繋ぐと、通話送信側
+  // の処理と競合して相手に聞こえる声が途切れる不具合が起きていた
+  // (Worker化しても解消しなかったことから判明)。通話用のパイプラインと
+  // 完全に分離するため、文字起こし専用に`getUserMedia`で独立したマイク
+  // ストリームを別途取得する(マイク権限は既に許可済みのため、ユーザー
+  // への許可ダイアログが再度出ることはない)。
+  const sherpaMicStreamRef = useRef<MediaStream | null>(null);
   const sherpaAudioContextRef = useRef<AudioContext | null>(null);
   const sherpaProcessorNodeRef = useRef<ScriptProcessorNode | null>(null);
   const sherpaSourceNodeRef =
@@ -7498,6 +7507,17 @@ export default function AvatarSpace({
     if (audioCtx) {
       audioCtx.close().catch(() => {});
     }
+    // 文字起こし専用に取得した独立マイクストリームを解放する(2026-10
+    // 追加。LiveKitの公開トラックとは別物のため、こちらで明示的に止めな
+    // いとマイクが使用中のままになってしまう)。
+    sherpaMicStreamRef.current?.getTracks().forEach((t) => {
+      try {
+        t.stop();
+      } catch {
+        // 既に停止済みの場合などは無視
+      }
+    });
+    sherpaMicStreamRef.current = null;
     sherpaProcessorNodeRef.current = null;
     sherpaSourceNodeRef.current = null;
     sherpaAudioContextRef.current = null;
@@ -7541,20 +7561,37 @@ export default function AvatarSpace({
     if (!sameConferenceRoomAsRecorderRef.current || !micEnabledRef.current) {
       return;
     }
-    const room = livekitRoomRef.current;
-    const micTrack =
-      room?.localParticipant.getTrackPublication(Track.Source.Microphone)
-        ?.track?.mediaStreamTrack ?? null;
-    if (!micTrack) return;
-
     const worker = sherpaWorkerRef.current;
     if (!worker) return;
 
+    // 2026-10報告の不具合対応: LiveKitの公開中トラックを横取りするのを
+    // やめ、文字起こし専用に独立したgetUserMediaストリームを取得する
+    // (通話送信側のノイズ抑制処理と完全に分離するため)。マイク権限は
+    // 既に許可済みのはずなので、許可ダイアログが再度表示されることは
+    // ない。
+    let micStream: MediaStream;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[sherpa-onnx] 文字起こし用マイクの取得に失敗", err);
+      return;
+    }
+    // 取得待ちの間に状況が変わっている場合は、取得したトラックを即座に
+    // 解放して終了する。
+    if (!sameConferenceRoomAsRecorderRef.current || !micEnabledRef.current) {
+      micStream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
+    // AudioContextのsampleRateは指定せず、デバイス・ブラウザの既定値の
+    // ままにする(通話側のAudioContextと異なるサンプルレートを強制する
+    // と、同じマイクデバイスへの同時アクセスでハードウェア・ドライバー
+    // レベルの競合が起きやすいため)。16kHzへの変換は既存のdownsample
+    // Buffer(純JS)で行う。
     const expectedSampleRate = 16000;
-    const audioCtx = new AudioContext({ sampleRate: expectedSampleRate });
-    const mediaStreamSource = audioCtx.createMediaStreamSource(
-      new MediaStream([micTrack]),
-    );
+    const audioCtx = new AudioContext();
+    const mediaStreamSource = audioCtx.createMediaStreamSource(micStream);
     const processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
     // 2026-10報告のバグ修正: 以前はここでVAD・認識(重いWASM呼び出し)を
@@ -7583,6 +7620,7 @@ export default function AvatarSpace({
     mediaStreamSource.connect(processor);
     processor.connect(audioCtx.destination);
 
+    sherpaMicStreamRef.current = micStream;
     sherpaAudioContextRef.current = audioCtx;
     sherpaSourceNodeRef.current = mediaStreamSource;
     sherpaProcessorNodeRef.current = processor;
