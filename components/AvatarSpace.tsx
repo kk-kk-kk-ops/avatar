@@ -7985,6 +7985,24 @@ export default function AvatarSpace({
     }, RECORDING_STOP_GRACE_MS);
   }, []);
 
+  // 2026-10報告: 録画停止〜実際の保存(動画・文字起こしテキストの
+  // ダウンロード)までの猶予期間(最大7秒)は、会議室ゾーンから出ても
+  // 処理自体は止まらない設計になっている(setTimeoutはReactの状態とは
+  // 独立に動くため)。ただし、この間にブラウザのタブを閉じたりページを
+  // リロードされてしまうと、その時点でJSの実行自体が止まるため、
+  // いかなる実装でも保存を続けることはできない。唯一対策できるのは
+  // ここで、この猶予期間中だけブラウザ標準の「このページを離れますか」
+  // 確認を出し、誤ってタブを閉じてしまうのを防ぐことである。
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isStoppingRecordingRef.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
   const handleRecordButtonClick = useCallback(() => {
     if (recordingOwnerIdRef.current === selfId.current) {
       stopRecording();
