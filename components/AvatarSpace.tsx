@@ -245,25 +245,52 @@ function extractDmMention(text: string, peerName: string | null): boolean {
   return new RegExp(`@${escaped}(?=\\s|$)`).test(text);
 }
 
-// 文字起こし機能(Web Speech API)の対応判定(2026-10追加)。
-// SpeechRecognitionはPC版Chrome・Edge(どちらもChromiumエンジン)でのみ
-// 安定動作し、Safari・Firefoxは非対応、iPhone/iPad(iOS)は「Chrome」と
-// 名乗るアプリでもAppleの規約でWebKitエンジンを使う義務があるため同様に
-// 非対応。実際にAPI自体が存在するか(機能検出)に加え、UAでChromium系
-// デスクトップブラウザかどうかも見て二重に判定する(SafariがAPIだけ
-// 部分的に実装している場合の誤検出を防ぐため)。
+// 文字起こし機能(sherpa-onnx、ローカルWASM音声認識)の対応判定(2026-10)。
+// 以前はWeb Speech API(webkitSpeechRecognition)に依存していたため
+// Chrome・Edgeのみに絞っていたが、ブラウザ内蔵のクラウド音声認識が
+// network エラーで機能しなくなる事例が発生し(2026-10報告)、モデルを
+// 自前でWebAssembly上で動かす方式に置き換えた。これはWeb Speech APIの
+// ようなブラウザ・エンジン依存が無く、WebAssembly+マイク入力さえ使えれば
+// 動くため、UAでのブラウザ限定は不要になった。
 function isSpeechRecognitionSupported(): boolean {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
     return false;
   }
-  const hasApi =
-    "SpeechRecognition" in window || "webkitSpeechRecognition" in window;
-  if (!hasApi) return false;
-  const ua = navigator.userAgent;
-  if (/iPad|iPhone|iPod/.test(ua)) return false;
-  const isChrome = /Chrome\//.test(ua) && !/OPR\//.test(ua) && !/Edg\//.test(ua);
-  const isEdge = /Edg\//.test(ua);
-  return isChrome || isEdge;
+  return (
+    typeof (window as any).WebAssembly === "object" &&
+    !!navigator.mediaDevices
+  );
+}
+
+// sherpa-onnxのVAD+オフライン認識モデルは16kHz固定のため、マイクの実際の
+// サンプルレートがそれと異なる場合に単純な間引き平均でダウンサンプリング
+// する(sherpa-onnx公式のWASMデモと同じ実装)。
+function downsampleBuffer(
+  buffer: Float32Array,
+  inputSampleRate: number,
+  outputSampleRate: number,
+): Float32Array {
+  if (inputSampleRate === outputSampleRate) {
+    return buffer;
+  }
+  const ratio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
 }
 
 // 画面録画機能の対応判定(2026-10追加)。getDisplayMedia・MediaRecorderは
@@ -590,17 +617,6 @@ export default function AvatarSpace({
     micEnabledRef.current = micEnabled;
   }, [micEnabled]);
 
-  // ---- 文字起こし(字幕)機能(2026-10追加) ----
-  // Web Speech APIはChrome・Edge(Chromiumエンジン)のPC版でのみ安定動作する
-  // ため、それ以外のブラウザではボタン自体を押せなくする。useStateで持つと
-  // SSR/CSRでの初回レンダー不一致(hydration mismatch)が起きうるため、
-  // マウント後のuseEffectでuseState初期値から確定させる(他のブラウザ
-  // 依存の判定と同じ扱い)。
-  const [speechRecognitionAvailable, setSpeechRecognitionAvailable] =
-    useState(false);
-  useEffect(() => {
-    setSpeechRecognitionAvailable(isSpeechRecognitionSupported());
-  }, []);
   // 録画中かどうか(2026-10、文字起こし単体のトグルから画面録画機能に
   // 変更)。録画している間だけ、マイクONのChrome/Edge参加者全員の発言が
   // 自動的に文字起こしされ配信される(個別のON/OFFトグルは廃止)。
@@ -671,39 +687,39 @@ export default function AvatarSpace({
       return [...prev, line];
     });
   }, []);
-  // SpeechRecognitionインスタンス(ブラウザ標準、型定義が無いためany)。
-  const speechRecognitionRef = useRef<any>(null);
-  // 2026-10報告のバグ修正: ブラウザによってはonresultが同じ確定済み
-  // (isFinal)結果を含むevent.resultsを複数回発火することがあり、
-  // event.resultIndexだけを信用すると同じ発言が重複して保存されていた。
-  // 認識インスタンスごとに「どこまで処理済みか」を記録し、同じ添字を
-  // 二度と処理しないことで確実に重複を防ぐ。
-  const lastEmittedResultIndexRef = useRef(-1);
-  // 2026-10報告: 上のresultIndex対策だけでは重複を防ぎきれなかった
-  // (ブラウザが前回とは別の添字で同じ確定結果を再び渡してくるケースが
-  // あった)ため、念のため「直前に発信した自分の発言と全く同じ文章が
-  // 短時間(5秒以内)に再度来た場合は無視する」という内容ベースの重複
-  // 排除も加える(保険の二重化)。
+  // ---- sherpa-onnx(ローカルWASM音声認識)のロード状態 ----
+  // モデル本体(ReazonSpeechの日本語Zipformerモデル+Silero VAD、約175MB)
+  // はVercelのデプロイに含めず、Hugging Face上の自分たちのミラー
+  // リポジトリ(コミットID固定、2026-10作成)から読み込む。コミットIDを
+  // 固定しているため、元リポジトリ(k2-fsa/sherpa-onnx)や自分たちの
+  // リポジトリへの今後の変更・削除の影響を受けない。
+  const SHERPA_MODEL_BASE =
+    "https://huggingface.co/kksjdijabfsr/globy-sherpa-onnx-ja-reazonspeech/resolve/a79dbca570834840a01e4049a4dfc5eb164650d7";
+  type SherpaStatus = "idle" | "loading" | "ready" | "error";
+  const [sherpaStatus, setSherpaStatus] = useState<SherpaStatus>("idle");
+  const [sherpaLoadPercent, setSherpaLoadPercent] = useState(0);
+  // ロード処理のPromiseを1つだけ保持し、会議室入室時の先読みと録画開始時
+  // の読み込みが重なっても、スクリプト・モデルを二重に読み込まないように
+  // する。
+  const sherpaLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const sherpaModuleRef = useRef<any>(null);
+  const sherpaRecognizerRef = useRef<any>(null);
+  const sherpaVadRef = useRef<any>(null);
+  const sherpaBufferRef = useRef<any>(null);
+  // マイク音声を認識モデルに流すためのWeb Audio Graph。通話用のマイクON/
+  // OFF(toggleMic)とは独立に、LiveKitのローカルマイクトラックを横取り
+  // して自分たちで繋ぎ直す。
+  const sherpaAudioContextRef = useRef<AudioContext | null>(null);
+  const sherpaProcessorNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const sherpaSourceNodeRef =
+    useRef<MediaStreamAudioSourceNode | null>(null);
+  const sherpaRunningRef = useRef(false);
+  // 内容ベースの重複排除(保険)。VADで発言ごとに自然に区切られるため
+  // Web Speech API版にあったresultIndexの重複対策は不要になったが、
+  // 何らかの理由で同一区間が2回処理された場合に備えて残す。
   const lastEmittedTextRef = useRef<{ text: string; at: number } | null>(
     null,
   );
-  // 2026-10報告: 「network」エラー(Web Speech APIがGoogleのサーバーへの
-  // 通信に失敗)が続くと、発言していても一切認識結果が返らず文字起こしが
-  // 保存されない事例が発生した。onendで即座に再起動すると失敗中は
-  // 無停止でstart/network error/endを繰り返すだけになり状況を悪化させ
-  // うるため、networkエラー発生時だけ指数バックオフ(2秒→4秒→…上限16秒)
-  // で再起動間隔を空ける。成功(isFinalな認識結果を受信)したら即リセット
-  // する。network以外のエラー(無音タイムアウト等、頻繁に起きる正常な
-  // 動作)は従来通り即時再起動する。
-  const lastSpeechRecognitionErrorRef = useRef<string | null>(null);
-  const speechRecognitionBackoffMsRef = useRef(0);
-  const speechRecognitionRetryTimerRef = useRef<ReturnType<
-    typeof setTimeout
-  > | null>(null);
-  // 画面に「文字起こしが失敗しています」の警告を出すためのフラグ。
-  // networkエラーが発生したらtrue、認識結果を受信できたらfalseに戻す。
-  const [speechRecognitionFailing, setSpeechRecognitionFailing] =
-    useState(false);
   // 音声通話の「今日の残り利用可能時間(秒)」。画面共有・ビデオ通話と全く
   // 同じ考え方(null = 未取得中 or プランが無制限)。daily_usageテーブルの
   // kind='voice_call'を使う。
@@ -4360,7 +4376,7 @@ export default function AvatarSpace({
     } else {
       setCaptionLines([]);
     }
-    stopSpeechRecognition();
+    stopLocalSpeechPipeline();
   }, []);
 
   // ---- 入室処理 ----
@@ -6821,174 +6837,250 @@ export default function AvatarSpace({
     setShowAnnouncementConfirm(false);
   }, []);
 
-  // ---- 文字起こし(字幕)・画面録画機能(2026-10追加) ----
-  // 挙動: 誰かが録画を開始している間、マイクもONのChrome/Edge参加者全員の
-  // 発言をWeb Speech APIで認識し、結果をルーム内全員へ配信する(チャットの
+  // ---- 文字起こし(字幕)・画面録画機能(2026-10追加、音声認識は同月中に
+  // sherpa-onnxへ置き換え) ----
+  // 挙動: 誰かが録画を開始している間、マイクONの参加者全員の発言を
+  // sherpa-onnx(ReazonSpeechの日本語モデル+Silero VAD、WebAssembly)で
+  // 各自のブラウザ内だけで認識し、結果をルーム内全員へ配信する(チャットの
   // メンション通知と同じbroadcastの仕組みを再利用)。受信した字幕(自分の
   // 発言分も含む)は画面下部に一時的に表示し、録画停止時に録画開始者の
   // ローカルへテキストファイルとして保存する(サーバー・DBには一切送らない)。
-  const stopSpeechRecognition = useCallback(() => {
-    // networkエラー後のバックオフ待ち中にstop(マイクOFF・会議室退出等)
-    // された場合、待機後に勝手に再起動してしまわないよう予約済みの
-    // タイマーも止める。
-    if (speechRecognitionRetryTimerRef.current !== null) {
-      clearTimeout(speechRecognitionRetryTimerRef.current);
-      speechRecognitionRetryTimerRef.current = null;
-    }
-    speechRecognitionBackoffMsRef.current = 0;
-    lastSpeechRecognitionErrorRef.current = null;
-    setSpeechRecognitionFailing(false);
-    const recognition = speechRecognitionRef.current;
-    if (recognition) {
-      // 自動再起動(onend)を止めるため、先にハンドラを外してからstopする。
-      recognition.onend = null;
-      recognition.onerror = null;
-      recognition.onresult = null;
-      try {
-        recognition.stop();
-      } catch {
-        // 既に停止している場合などは無視
-      }
-      speechRecognitionRef.current = null;
-    }
+  //
+  // 2026-10報告: 元々はWeb Speech API(webkitSpeechRecognition)で
+  // Chrome・Edge標準の音声認識機能を使っていたが、ある時点からGoogleの
+  // 音声認識サーバーへの通信が全く成立しなくなり(networkエラー)、
+  // 拡張機能・ネットワークを変えても再現し、最終的にブラウザ単体の
+  // 検証でも無応答になることを確認した。ブラウザ内蔵のクラウドAPIに
+  // 依存する以上、こちら側のコードでは直せない問題と判断し、sherpa-onnx
+  // をWebAssemblyでブラウザ内に持ち込み、クラウド通信なしで完結する方式
+  // に置き換えた。モデル本体(約175MB)はVercelのデプロイに含めず、
+  // Hugging Face上の自分たちのミラーリポジトリ(コミットID固定)から
+  // 読み込む(詳細はSHERPA_MODEL_BASE参照)。
+  const loadSherpaOnnx = useCallback((): Promise<void> => {
+    if (sherpaLoadPromiseRef.current) return sherpaLoadPromiseRef.current;
+    setSherpaStatus("loading");
+    setSherpaLoadPercent(0);
+    const loadScript = (src: string) =>
+      new Promise<void>((resolve, reject) => {
+        const el = document.createElement("script");
+        el.src = src;
+        el.async = true;
+        el.onload = () => resolve();
+        el.onerror = () => reject(new Error(`script load failed: ${src}`));
+        document.body.appendChild(el);
+      });
+    const promise = (async () => {
+      await loadScript("/sherpa/sherpa-onnx-asr.js");
+      await loadScript("/sherpa/sherpa-onnx-vad.js");
+      await new Promise<void>((resolve, reject) => {
+        let lastPercent = -1;
+        (window as any).Module = {
+          // .wasm/.dataはメインのグルーJSと同じHugging FaceのコミットID
+          // 固定URLから読み込む(tokens.txtやonnxモデル自体は.data内に
+          // あらかじめ埋め込まれているため、ここでの解決対象にはならず
+          // 別途fetchされることはない)。
+          locateFile: (path: string) => `${SHERPA_MODEL_BASE}/${path}`,
+          setStatus: (status: string) => {
+            const m = /Downloading data\.\.\. \((\d+)\/(\d+)\)/.exec(status);
+            if (!m) return;
+            const downloaded = Number(m[1]);
+            const total = Number(m[2]);
+            const percent =
+              total > 0 ? Math.floor((downloaded / total) * 100) : 0;
+            if (percent !== lastPercent) {
+              lastPercent = percent;
+              setSherpaLoadPercent(percent);
+            }
+          },
+          onRuntimeInitialized: () => {
+            try {
+              const Module = (window as any).Module;
+              sherpaModuleRef.current = Module;
+              sherpaVadRef.current = (window as any).createVad(Module);
+              sherpaBufferRef.current = new (window as any).CircularBuffer(
+                30 * 16000,
+                Module,
+              );
+              sherpaRecognizerRef.current = new (
+                window as any
+              ).OfflineRecognizer(
+                {
+                  modelConfig: {
+                    debug: 0,
+                    tokens: "./tokens.txt",
+                    transducer: {
+                      encoder: "./transducer-encoder.onnx",
+                      decoder: "./transducer-decoder.onnx",
+                      joiner: "./transducer-joiner.onnx",
+                    },
+                    modelType: "transducer",
+                  },
+                },
+                Module,
+              );
+              resolve();
+            } catch (err) {
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          },
+        };
+        loadScript(
+          `${SHERPA_MODEL_BASE}/sherpa-onnx-wasm-main-vad-asr.js`,
+        ).catch(reject);
+      });
+    })();
+    sherpaLoadPromiseRef.current = promise;
+    promise.then(
+      () => setSherpaStatus("ready"),
+      (err) => {
+        // eslint-disable-next-line no-console
+        console.warn("[sherpa-onnx] モデル読み込み失敗", err);
+        setSherpaStatus("error");
+        // 失敗した場合は次に呼ばれた時に再試行できるようにリセットする。
+        sherpaLoadPromiseRef.current = null;
+      },
+    );
+    return promise;
   }, []);
 
-  const startSpeechRecognition = useCallback(() => {
-    if (speechRecognitionRef.current) return;
-    const SpeechRecognitionCtor =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionCtor) return;
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "ja-JP";
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    // このインスタンス(event.resultsのindexは0始まりでこのインスタンス
-    // 専用)での処理済み添字をリセットする。
-    lastEmittedResultIndexRef.current = -1;
-    recognition.onresult = (event: any) => {
-      const self = selfState.current;
-      if (!self) return;
-      // event.resultIndexだけに頼らず、必ずlastEmittedResultIndexRef
-      // より後ろの添字だけを見ることで、ブラウザがisFinal済みの結果を
-      // 含むevent.resultsを再度渡してきても重複して処理しない。
-      const start = Math.max(
-        event.resultIndex,
-        lastEmittedResultIndexRef.current + 1,
-      );
-      for (let i = start; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (!result.isFinal) continue;
-        lastEmittedResultIndexRef.current = i;
-        const text = (result[0]?.transcript ?? "").trim();
-        if (!text) continue;
-        // 内容ベースの重複排除(保険): 直前に発信したのと全く同じ文章が
-        // 5秒以内に再度来た場合は、別の原因(認識インスタンスの再起動
-        // タイミング等)による二重発火とみなして無視する。
-        const now = Date.now();
-        const lastEmitted = lastEmittedTextRef.current;
-        if (
-          lastEmitted &&
-          lastEmitted.text === text &&
-          now - lastEmitted.at < 5000
-        ) {
-          continue;
-        }
-        lastEmittedTextRef.current = { text, at: now };
-        // 認識結果を受信できた=復旧したとみなし、networkエラー用の
-        // バックオフ・警告表示をリセットする。
-        speechRecognitionBackoffMsRef.current = 0;
-        lastSpeechRecognitionErrorRef.current = null;
-        setSpeechRecognitionFailing(false);
-        const line = {
-          id: `${self.id}-${now}-${i}`,
-          senderName: self.name,
-          text,
-          at: now,
-        };
-        // Supabase Realtimeのbroadcastは送信者自身には返ってこないため、
-        // 自分の発言分はここでローカルに直接反映する(画面共有プレビュー
-        // 配信と同じ理由・同じ対処)。録画終了時の保存に全件必要なため、
-        // 受信側と同じ理由でslice(-50)の切り捨ては行わない。重複排除は
-        // addCaptionLine側でまとめて行う。
-        addCaptionLine(line);
-        channelRef.current?.httpSend("caption", {
-          id: line.id,
-          senderName: line.senderName,
-          text: line.text,
-          at: line.at,
-        });
+  const stopLocalSpeechPipeline = useCallback(() => {
+    if (!sherpaRunningRef.current) return;
+    sherpaRunningRef.current = false;
+    const processor = sherpaProcessorNodeRef.current;
+    const source = sherpaSourceNodeRef.current;
+    const audioCtx = sherpaAudioContextRef.current;
+    if (processor) {
+      processor.onaudioprocess = null;
+      try {
+        processor.disconnect();
+      } catch {
+        // 既に切断済みの場合などは無視
       }
-    };
-    recognition.onerror = (event: any) => {
-      // 無音が続いた場合などもerrorになりうるが、録画中・マイクONが
-      // 続く限りonendから自動再起動されるため、ここでは何もしない
-      // (ただし原因究明のためコンソールには残す。2026-10報告: 繰り返し
-      // 録画のテストをすると文字起こしが保存されなくなる事例があり、
-      // 発生時の手がかりにする)。
-      // eslint-disable-next-line no-console
-      console.warn("[speech-recognition] error", event?.error);
-      lastSpeechRecognitionErrorRef.current = event?.error ?? null;
-      // networkエラー(Googleの音声認識サーバーへの通信失敗)は、発言
-      // していても一切認識結果が返らないまま録画が終わり、文字起こしが
-      // 保存されない不具合につながった(2026-10報告)。発生中は画面に
-      // 警告を出す。
-      if (event?.error === "network") {
-        setSpeechRecognitionFailing(true);
-      }
-    };
-    recognition.onend = () => {
-      speechRecognitionRef.current = null;
-      // 録画中・マイクONかつ同じ会議室内にいる状態が続いている間は、
-      // ブラウザ側の都合(無音タイムアウト等)で止まった認識を自動的に
-      // 再開する。会議室の外に出ていたら再開しない(2026-10報告対応)。
-      if (
-        !sameConferenceRoomAsRecorderRef.current ||
-        !micEnabledRef.current
-      ) {
-        return;
-      }
-      if (lastSpeechRecognitionErrorRef.current === "network") {
-        // networkエラーが続いている間は即時再起動せず、指数バックオフ
-        // (2秒→4秒→8秒→上限16秒)で間隔を空けて再試行する。即時再起動
-        // だと失敗中はstart/network error/endを無停止で繰り返すだけに
-        // なり、Google側のレート制限等があった場合に悪化させうるため
-        // (2026-10報告)。
-        const next = Math.min(
-          speechRecognitionBackoffMsRef.current === 0
-            ? 2000
-            : speechRecognitionBackoffMsRef.current * 2,
-          16000,
-        );
-        speechRecognitionBackoffMsRef.current = next;
-        if (speechRecognitionRetryTimerRef.current !== null) {
-          clearTimeout(speechRecognitionRetryTimerRef.current);
-        }
-        speechRecognitionRetryTimerRef.current = setTimeout(() => {
-          speechRecognitionRetryTimerRef.current = null;
-          if (
-            sameConferenceRoomAsRecorderRef.current &&
-            micEnabledRef.current
-          ) {
-            startSpeechRecognition();
-          }
-        }, next);
-        return;
-      }
-      // network以外(無音タイムアウト等、頻繁に起きる正常な動作)は従来
-      // 通り即時再開する。
-      startSpeechRecognition();
-    };
-    speechRecognitionRef.current = recognition;
-    try {
-      recognition.start();
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("[speech-recognition] start失敗", err);
-      speechRecognitionRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (source) {
+      try {
+        source.disconnect();
+      } catch {
+        // 既に切断済みの場合などは無視
+      }
+    }
+    if (audioCtx) {
+      audioCtx.close().catch(() => {});
+    }
+    sherpaProcessorNodeRef.current = null;
+    sherpaSourceNodeRef.current = null;
+    sherpaAudioContextRef.current = null;
+    sherpaVadRef.current?.reset();
+    sherpaBufferRef.current?.reset();
   }, []);
+
+  const startLocalSpeechPipeline = useCallback(async () => {
+    if (sherpaRunningRef.current) return;
+    if (!isSpeechRecognitionSupported()) return;
+    try {
+      await loadSherpaOnnx();
+    } catch {
+      // 失敗時の表示はloadSherpaOnnx内のsherpaStatus更新に任せる。
+      return;
+    }
+    // ロード完了を待っている間に状況が変わっている(マイクOFF・会議室
+    // 退出等)場合は開始しない。
+    if (!sameConferenceRoomAsRecorderRef.current || !micEnabledRef.current) {
+      return;
+    }
+    const room = livekitRoomRef.current;
+    const micTrack =
+      room?.localParticipant.getTrackPublication(Track.Source.Microphone)
+        ?.track?.mediaStreamTrack ?? null;
+    if (!micTrack) return;
+
+    const vad = sherpaVadRef.current;
+    const buffer = sherpaBufferRef.current;
+    const recognizer = sherpaRecognizerRef.current;
+    if (!vad || !buffer || !recognizer) return;
+
+    const expectedSampleRate = 16000;
+    const audioCtx = new AudioContext({ sampleRate: expectedSampleRate });
+    const mediaStreamSource = audioCtx.createMediaStreamSource(
+      new MediaStream([micTrack]),
+    );
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = (e) => {
+      let samples: Float32Array = new Float32Array(
+        e.inputBuffer.getChannelData(0),
+      );
+      samples = downsampleBuffer(
+        samples,
+        audioCtx.sampleRate,
+        expectedSampleRate,
+      );
+      buffer.push(samples);
+      while (buffer.size() > vad.config.sileroVad.windowSize) {
+        const windowSamples = buffer.get(
+          buffer.head(),
+          vad.config.sileroVad.windowSize,
+        );
+        vad.acceptWaveform(windowSamples);
+        buffer.pop(vad.config.sileroVad.windowSize);
+
+        while (!vad.isEmpty()) {
+          const segment = vad.front();
+          vad.pop();
+          const self = selfState.current;
+          if (!self) continue;
+
+          const stream = recognizer.createStream();
+          stream.acceptWaveform(expectedSampleRate, segment.samples);
+          recognizer.decode(stream);
+          const result = recognizer.getResult(stream);
+          stream.free();
+          const text = (result?.text ?? "").trim();
+          if (!text) continue;
+
+          // 内容ベースの重複排除(保険)。VADで発言ごとに区切られるため
+          // 通常は重複しないが、念のため直前と全く同じ文章が短時間
+          // (5秒以内)に再度来た場合は無視する。
+          const now = Date.now();
+          const lastEmitted = lastEmittedTextRef.current;
+          if (
+            lastEmitted &&
+            lastEmitted.text === text &&
+            now - lastEmitted.at < 5000
+          ) {
+            continue;
+          }
+          lastEmittedTextRef.current = { text, at: now };
+          const line = {
+            id: `${self.id}-${now}`,
+            senderName: self.name,
+            text,
+            at: now,
+          };
+          // Supabase Realtimeのbroadcastは送信者自身には返ってこないため、
+          // 自分の発言分はここでローカルに直接反映する(画面共有プレビュー
+          // 配信と同じ理由・同じ対処)。録画終了時の保存に全件必要なため、
+          // 受信側と同じ理由でslice(-50)の切り捨ては行わない。重複排除は
+          // addCaptionLine側でまとめて行う。
+          addCaptionLine(line);
+          channelRef.current?.httpSend("caption", {
+            id: line.id,
+            senderName: line.senderName,
+            text: line.text,
+            at: line.at,
+          });
+        }
+      }
+    };
+
+    mediaStreamSource.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    sherpaAudioContextRef.current = audioCtx;
+    sherpaSourceNodeRef.current = mediaStreamSource;
+    sherpaProcessorNodeRef.current = processor;
+    sherpaRunningRef.current = true;
+  }, [loadSherpaOnnx, addCaptionLine]);
 
   // 2026-10報告のバグ修正: 録画中かどうかだけで文字起こしの対象にして
   // いたため、会議室の外にいる人(マイクONで近接通話中の人など)の声まで
@@ -7028,25 +7120,30 @@ export default function AvatarSpace({
     sameConferenceRoomAsRecorderRef.current = sameConferenceRoomAsRecorder;
   }, [sameConferenceRoomAsRecorder]);
 
+  // 会議室(conference)に入った時点で、モデル(約175MB)をこっそり裏で
+  // 先読みしておく。録画ボタンを押した瞬間に初回ダウンロードを待たせない
+  // ため。使われなければ無駄になるが、会議室に入る=録画を使う可能性が
+  // ある人に絞られているため、現実的な範囲だと判断している。
+  useEffect(() => {
+    if (!sameConferenceRoomAsRecorder) return;
+    if (!isSpeechRecognitionSupported()) return;
+    loadSherpaOnnx().catch(() => {});
+  }, [sameConferenceRoomAsRecorder, loadSherpaOnnx]);
+
   // 録画中かどうか/マイクONの組み合わせが変わるたびに認識の開始・停止を
   // 行う(録画していない・マイクOFF・会議室が違うのいずれかなら停止)。
   useEffect(() => {
-    if (
-      sameConferenceRoomAsRecorder &&
-      micEnabled &&
-      speechRecognitionAvailable
-    ) {
-      startSpeechRecognition();
+    if (sameConferenceRoomAsRecorder && micEnabled) {
+      void startLocalSpeechPipeline();
     } else {
-      stopSpeechRecognition();
+      stopLocalSpeechPipeline();
     }
   }, [
     sameConferenceRoomAsRecorder,
     micEnabled,
-    speechRecognitionAvailable,
     recordingOwnerId,
-    startSpeechRecognition,
-    stopSpeechRecognition,
+    startLocalSpeechPipeline,
+    stopLocalSpeechPipeline,
   ]);
 
   // 録画が終わった(誰も録画していない状態に戻った)ら、字幕バッファを
@@ -8831,8 +8928,14 @@ export default function AvatarSpace({
                             ? `${recordingOwnerName}さんが録画中です`
                             : undefined
                     }
-                    warning={speechRecognitionFailing}
-                    warningReason="文字起こしがネットワークエラーで一時的に失敗しています(発言が保存されない可能性があります)"
+                    warning={sherpaStatus === "loading" || sherpaStatus === "error"}
+                    warningReason={
+                      sherpaStatus === "loading"
+                        ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
+                        : sherpaStatus === "error"
+                          ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                          : undefined
+                    }
                   />
                 </div>
               )}
@@ -9111,8 +9214,14 @@ export default function AvatarSpace({
                                   ? `${recordingOwnerName}さんが録画中です`
                                   : undefined
                           }
-                          warning={speechRecognitionFailing}
-                          warningReason="文字起こしがネットワークエラーで一時的に失敗しています(発言が保存されない可能性があります)"
+                          warning={sherpaStatus === "loading" || sherpaStatus === "error"}
+                          warningReason={
+                            sherpaStatus === "loading"
+                              ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
+                              : sherpaStatus === "error"
+                                ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                                : undefined
+                          }
                         />
                       </div>
                     )}
@@ -9258,8 +9367,14 @@ export default function AvatarSpace({
                                 ? `${recordingOwnerName}さんが録画中です`
                                 : undefined
                         }
-                        warning={speechRecognitionFailing}
-                        warningReason="文字起こしがネットワークエラーで一時的に失敗しています(発言が保存されない可能性があります)"
+                        warning={sherpaStatus === "loading" || sherpaStatus === "error"}
+                        warningReason={
+                          sherpaStatus === "loading"
+                            ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
+                            : sherpaStatus === "error"
+                              ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                              : undefined
+                        }
                       />
                     </div>
                   )}
