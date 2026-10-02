@@ -12,6 +12,10 @@ type Props = {
   // マイクON中かどうか(相手にも見える)。会議中は誰がマイクONか映像
   // だけでは分からないため、枠の右下にアイコンで示す。
   micOn?: boolean;
+  // 文字起こしモデル(sherpa-onnx)のローカルでの準備状況(2026-10追加、
+  // 相手にも見える)。マイクアイコンと場所が被らないよう枠の左下に表示
+  // する。undefined/"idle"/"error"の場合は何も表示しない。
+  transcriptionStatus?: "downloading" | "initializing" | "ready";
 };
 
 // ビデオ通話の映像枠(常時表示プレビュー行・会議画面モーダルの両方で
@@ -23,6 +27,7 @@ export default function VideoTile({
   heightPx,
   isSelf,
   micOn,
+  transcriptionStatus,
 }: Props) {
   return (
     <div
@@ -44,6 +49,23 @@ export default function VideoTile({
       {micOn && (
         <span className="absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white shadow">
           <MicIcon enabled size={10} />
+        </span>
+      )}
+      {(transcriptionStatus === "downloading" ||
+        transcriptionStatus === "initializing") && (
+        <span
+          className="absolute bottom-1 left-1 flex h-4 w-4 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[9px] text-white shadow"
+          title="文字起こしを準備中です"
+        >
+          ⋯
+        </span>
+      )}
+      {transcriptionStatus === "ready" && (
+        <span
+          className="absolute bottom-1 left-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[9px] text-white shadow"
+          title="文字起こし準備完了"
+        >
+          ✓
         </span>
       )}
     </div>
