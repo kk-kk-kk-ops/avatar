@@ -984,6 +984,16 @@ export default function AvatarSpace({
   // ストリームを別途取得する(マイク権限は既に許可済みのため、ユーザー
   // への許可ダイアログが再度出ることはない)。
   const sherpaMicStreamRef = useRef<MediaStream | null>(null);
+  // 2026-10報告: マイク分離(独立getUserMedia化)でも通話音声の途切れが
+  // 直らなかったため、「文字起こしは10秒程度遅れてもよいので通話音声を
+  // 優先してほしい」との要望を受け、音声を細かく即時Workerへ送るのでは
+  // なく、約10秒分まとめてから送る方式に変更する。これにより、重い
+  // VAD・認識処理(Worker内のWASMスレッドプール)が継続的に動き続ける
+  // のではなく10秒ごとの短いバーストで済むようになり、CPU競合による
+  // 音声劣化を緩和できる可能性がある。録画停止時はこの関数を呼んで
+  // 即座に溜まっている分を送り、録画停止の猶予期間内に処理が終わる
+  // ようにする。
+  const sherpaFlushPendingRef = useRef<(() => void) | null>(null);
   const sherpaAudioContextRef = useRef<AudioContext | null>(null);
   const sherpaProcessorNodeRef = useRef<ScriptProcessorNode | null>(null);
   const sherpaSourceNodeRef =
@@ -7486,6 +7496,11 @@ export default function AvatarSpace({
     if (!sherpaRunningRef.current) return;
     activeTranscriptionEngineRef.current = "none";
     sherpaRunningRef.current = false;
+    // 10秒分まとめて送る方式(2026-10追加)のため、停止時にその時点で
+    // 溜まっている分を即座に送っておく(自然にたまるのを待つと最大10秒
+    // 分の発言が未処理のまま失われてしまうため)。
+    sherpaFlushPendingRef.current?.();
+    sherpaFlushPendingRef.current = null;
     const processor = sherpaProcessorNodeRef.current;
     const source = sherpaSourceNodeRef.current;
     const audioCtx = sherpaAudioContextRef.current;
@@ -7597,10 +7612,32 @@ export default function AvatarSpace({
     // 2026-10報告のバグ修正: 以前はここでVAD・認識(重いWASM呼び出し)を
     // メインスレッド上で直接行っており、1発言分の音声をまとめて認識する
     // decode()が重く、メインスレッドが固まって通話音声(LiveKitのWebRTC
-    // 送信)まで途切れる不具合があった。ここでの処理はダウンサンプリング
-    // (軽い純JS処理)だけにし、以降のVAD・認識は専用のWorkerへ丸ごと
-    // 委譲する(詳細はsherpa-worker.js、結果はloadSherpaOnnx内の
-    // worker.onmessageで受け取ってaddCaptionLine/httpSendする)。
+    // 送信)まで途切れる不具合があった。Worker分離・マイク独立取得でも
+    // 直らなかったため、「10秒程度遅れてもよい」という要望を踏まえ、
+    // ダウンサンプリングした音声をその都度すぐWorkerへ送るのではなく、
+    // 約10秒分バッファしてからまとめて送るようにする。これにより、重い
+    // WASM処理(Worker内のスレッドプール)が常時動き続けるのではなく
+    // 10秒ごとの短いバーストで済むようになり、CPU競合を減らす狙い。
+    const FLUSH_INTERVAL_SAMPLES = expectedSampleRate * 10; // 約10秒分
+    let pendingChunks: Float32Array[] = [];
+    let pendingSamples = 0;
+    const flushPendingAudio = () => {
+      if (pendingSamples === 0) return;
+      const merged = new Float32Array(pendingSamples);
+      let offset = 0;
+      for (const chunk of pendingChunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      pendingChunks = [];
+      pendingSamples = 0;
+      worker.postMessage(
+        { type: "audio", samples: merged.buffer, at: Date.now() },
+        [merged.buffer],
+      );
+    };
+    sherpaFlushPendingRef.current = flushPendingAudio;
+
     processor.onaudioprocess = (e) => {
       let samples: Float32Array = new Float32Array(
         e.inputBuffer.getChannelData(0),
@@ -7610,11 +7647,11 @@ export default function AvatarSpace({
         audioCtx.sampleRate,
         expectedSampleRate,
       );
-      // transferable(第2引数)でコピー無しにWorkerへ渡す。
-      worker.postMessage(
-        { type: "audio", samples: samples.buffer, at: Date.now() },
-        [samples.buffer],
-      );
+      pendingChunks.push(samples);
+      pendingSamples += samples.length;
+      if (pendingSamples >= FLUSH_INTERVAL_SAMPLES) {
+        flushPendingAudio();
+      }
     };
 
     mediaStreamSource.connect(processor);
@@ -7913,12 +7950,22 @@ export default function AvatarSpace({
   //   認識にも終了を伝え(stopSpeechRecognition経由)、その停止信号と
   //   最後の確定結果がbroadcastで届くまでの時間を追加で待つ。
   // この後にようやく動画を確定し、字幕をまとめて保存する。
-  const RECORDING_STOP_GRACE_MS = 5000;
+  // 2026-10報告対応: 文字起こしの音声をWorkerへ約10秒分まとめて送る方式
+  // に変更したため(通話音声の途切れ対策)、その分の猶予も必要になり
+  // 5秒→8秒に伸ばした(8秒+2秒=10秒。停止時に即座に未送信分を送る
+  // ようにしているため、実際はWorker側の処理時間分の余裕があれば足りる
+  // はずだが、安全に見ている)。
+  const RECORDING_STOP_GRACE_MS = 8000;
   const RECORDING_STOP_FLUSH_MS = 2000;
   const stopRecording = useCallback(() => {
     if (isStoppingRecordingRef.current) return;
     isStoppingRecordingRef.current = true;
     setIsStoppingRecording(true);
+    // 10秒分まとめて送る方式(2026-10追加)のため、停止操作があった時点で
+    // 即座に溜まっている分をWorkerへ送っておく(自然にたまるのを待つと
+    // 最大10秒分の発言の確定が遅れ、下の猶予期間内に終わらない恐れが
+    // あるため)。
+    sherpaFlushPendingRef.current?.();
 
     window.setTimeout(() => {
       const self = selfState.current;
