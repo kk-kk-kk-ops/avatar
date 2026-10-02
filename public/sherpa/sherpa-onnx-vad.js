@@ -329,3 +329,12 @@ if (typeof process == 'object' && typeof process.versions == 'object' &&
     CircularBuffer,
   };
 }
+
+// 2026-10追加: classの宣言は(functionの宣言と違って)クラシックscriptの
+// トップレベルにあってもwindowのプロパティにはならない。このファイルを
+// 動的に<script>タグで読み込んだ別のJS(Reactアプリ側のバンドル)から
+// `window.CircularBuffer`のように参照できるよう、明示的に代入しておく。
+if (typeof window !== 'undefined') {
+  window.Vad = Vad;
+  window.CircularBuffer = CircularBuffer;
+}
