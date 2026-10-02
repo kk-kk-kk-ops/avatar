@@ -293,6 +293,205 @@ function downsampleBuffer(
   return result;
 }
 
+// ---- sherpa-onnxモデルの先読みタイミング判定(2026-10追加) ----
+// ログイン直後の自動先読み(通信量が発生する)は、スマホ・データセーバー
+// ONの回線では行わない(利用者が意図していない通信量を消費しないため)。
+// 会議室に入った時・録画ボタンを押した時は、どちらも明確な利用意図がある
+// とみなし、この判定に関わらず常にダウンロード・初期化を行う。
+function isMobileLikeDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const uaData = (navigator as any).userAgentData;
+  if (uaData && typeof uaData.mobile === "boolean") return uaData.mobile;
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+function isSaveDataEnabled(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return !!(navigator as any).connection?.saveData;
+}
+function shouldAutoPrefetchSherpaOnLogin(): boolean {
+  return !isMobileLikeDevice() && !isSaveDataEnabled();
+}
+
+// ページの初期表示が落ち着いてから(load後、かつアイドルタイミングで)
+// コールバックを呼ぶ。画面表示を妨げないようにするため。
+// requestIdleCallback未対応環境(Safari等)ではsetTimeoutで代用する。
+function runSherpaPrefetchWhenIdle(callback: () => void) {
+  if (typeof window === "undefined") return;
+  const schedule = () => {
+    const ric = (window as any).requestIdleCallback;
+    if (typeof ric === "function") {
+      ric(() => callback(), { timeout: 5000 });
+    } else {
+      setTimeout(callback, 2000);
+    }
+  };
+  if (document.readyState === "complete") {
+    schedule();
+  } else {
+    window.addEventListener("load", schedule, { once: true });
+  }
+}
+
+// ---- sherpa-onnxモデルファイルのIndexedDBキャッシュ(2026-10追加) ----
+// 「既にダウンロード済みなら何もしない」「途中で中断されても続きから
+// 再開できる」を実現するため、通常のブラウザHTTPキャッシュに頼らず、
+// 自前でIndexedDBへ断片(4MBごと)保存しながらダウンロードする。完了後は
+// このIndexedDBの内容からBlobを組み立て、Module.locateFileにはこの
+// BlobのURL(URL.createObjectURL)を渡す(=Emscripten側のグルーJSが
+// ネットワークへ再度アクセスすることはない)。
+const SHERPA_DB_NAME = "globy-sherpa-onnx-cache";
+const SHERPA_DB_STORE = "kv";
+function openSherpaDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("indexedDB is unavailable"));
+      return;
+    }
+    const req = indexedDB.open(SHERPA_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(SHERPA_DB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function sherpaIdbGet<T>(db: IDBDatabase, key: string): Promise<T | undefined> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SHERPA_DB_STORE, "readonly");
+    const req = tx.objectStore(SHERPA_DB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result as T | undefined);
+    req.onerror = () => reject(req.error);
+  });
+}
+function sherpaIdbSet(
+  db: IDBDatabase,
+  key: string,
+  value: unknown,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SHERPA_DB_STORE, "readwrite");
+    tx.objectStore(SHERPA_DB_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+type SherpaFileMeta = {
+  downloadedBytes: number;
+  totalBytes: number | null;
+  complete: boolean;
+  chunkCount: number;
+};
+// 指定URLのファイルをIndexedDBへ断片保存しながらダウンロードする。既に
+// 完全にダウンロード済みなら保存済みの内容からBlobを組み立てて即座に
+// 返す(ネットワークには触れない)。途中までしか保存されていない場合は
+// Rangeリクエストでその続きから再開する(サーバーがRangeに対応していない
+// 場合は先頭からやり直す)。
+async function downloadSherpaFileWithResume(
+  url: string,
+  onProgress?: (downloadedBytes: number, totalBytes: number | null) => void,
+): Promise<Blob> {
+  const db = await openSherpaDb();
+  const metaKey = `${url}::meta`;
+  let meta =
+    (await sherpaIdbGet<SherpaFileMeta>(db, metaKey)) ??
+    ({
+      downloadedBytes: 0,
+      totalBytes: null,
+      complete: false,
+      chunkCount: 0,
+    } as SherpaFileMeta);
+
+  const readAllChunks = async (): Promise<Blob[]> => {
+    const blobs: Blob[] = [];
+    for (let i = 0; i < meta.chunkCount; i++) {
+      const b = await sherpaIdbGet<Blob>(db, `${url}::chunk:${i}`);
+      if (b) blobs.push(b);
+    }
+    return blobs;
+  };
+
+  if (meta.complete) {
+    onProgress?.(meta.downloadedBytes, meta.totalBytes);
+    return new Blob(await readAllChunks());
+  }
+
+  const init: RequestInit & { priority?: "high" | "low" | "auto" } = {
+    headers: meta.downloadedBytes > 0
+      ? { Range: `bytes=${meta.downloadedBytes}-` }
+      : {},
+    // Fetch Priority API。未対応ブラウザでは単に無視される。ログイン時の
+    // バックグラウンド先読みが画面表示を邪魔しないようにするため。
+    priority: "low",
+  };
+  const response = await fetch(url, init);
+  if (!response.ok && response.status !== 206) {
+    throw new Error(`sherpa-onnx fetch failed: ${response.status}`);
+  }
+  if (meta.downloadedBytes > 0 && response.status !== 206) {
+    // サーバーがRangeに対応しておらず先頭から200で返ってきた場合、保存済み
+    // の断片を信用せずゼロから積み直す。
+    meta = {
+      downloadedBytes: 0,
+      totalBytes: null,
+      complete: false,
+      chunkCount: 0,
+    };
+  }
+
+  const contentRange = response.headers.get("content-range");
+  const contentLength = response.headers.get("content-length");
+  let total = meta.totalBytes;
+  if (contentRange) {
+    const m = /\/(\d+)$/.exec(contentRange);
+    if (m) total = Number(m[1]);
+  } else if (contentLength) {
+    total = meta.downloadedBytes + Number(contentLength);
+  }
+
+  const flushPending = async (pending: Uint8Array[]) => {
+    if (pending.length === 0) return;
+    const blob = new Blob(pending as BlobPart[]);
+    await sherpaIdbSet(db, `${url}::chunk:${meta.chunkCount}`, blob);
+    meta.chunkCount += 1;
+    meta.totalBytes = total;
+    await sherpaIdbSet(db, metaKey, { ...meta, complete: false });
+  };
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    // ストリーミング非対応環境向けのフォールバック。
+    const blob = await response.blob();
+    meta.downloadedBytes += blob.size;
+    onProgress?.(meta.downloadedBytes, total);
+    await flushPending([new Uint8Array(await blob.arrayBuffer())]);
+  } else {
+    let pending: Uint8Array[] = [];
+    let pendingBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending.push(value);
+      pendingBytes += value.byteLength;
+      meta.downloadedBytes += value.byteLength;
+      onProgress?.(meta.downloadedBytes, total);
+      // 4MBごとにIndexedDBへ反映する(途中で閉じられても再開できるように
+      // するため。毎回保存すると重いのでここで間引く)。
+      if (pendingBytes > 4 * 1024 * 1024) {
+        await flushPending(pending);
+        pending = [];
+        pendingBytes = 0;
+      }
+    }
+    await flushPending(pending);
+  }
+
+  meta.totalBytes = total;
+  meta.complete = true;
+  await sherpaIdbSet(db, metaKey, meta);
+  onProgress?.(meta.downloadedBytes, total);
+  return new Blob(await readAllChunks());
+}
+
 // 画面録画機能の対応判定(2026-10追加)。getDisplayMedia・MediaRecorderは
 // Web Speech APIよりも対応ブラウザが広い(Firefox等でも使える)ため、
 // こちらは単純な機能検出のみで判定する(UA判定は行わない)。
@@ -695,12 +894,25 @@ export default function AvatarSpace({
   // リポジトリへの今後の変更・削除の影響を受けない。
   const SHERPA_MODEL_BASE =
     "https://huggingface.co/kksjdijabfsr/globy-sherpa-onnx-ja-reazonspeech/resolve/a79dbca570834840a01e4049a4dfc5eb164650d7";
-  type SherpaStatus = "idle" | "loading" | "ready" | "error";
+  // downloading: バイト列をダウンロード中(CPU/メモリはほぼ使わない)。
+  // initializing: ダウンロード済みのバイト列からWASMモジュールを起動し、
+  // VAD・認識器を生成中(CPU/メモリを使う。2026-10報告の要望により、使わ
+  // ない人のPCを重くしないため会議室に入るまでこの段階を遅らせる)。
+  type SherpaStatus =
+    | "idle"
+    | "downloading"
+    | "initializing"
+    | "ready"
+    | "error";
   const [sherpaStatus, setSherpaStatus] = useState<SherpaStatus>("idle");
   const [sherpaLoadPercent, setSherpaLoadPercent] = useState(0);
-  // ロード処理のPromiseを1つだけ保持し、会議室入室時の先読みと録画開始時
-  // の読み込みが重なっても、スクリプト・モデルを二重に読み込まないように
-  // する。
+  // ダウンロードのみ(Module初期化は行わない)フェーズのPromise。ログイン
+  // 直後の先読みと、会議室入室時・録画開始時の呼び出しが重なっても二重に
+  // ダウンロードしないようにする。
+  const sherpaPrefetchPromiseRef = useRef<Promise<void> | null>(null);
+  // ロード処理(ダウンロード+初期化)全体のPromiseを1つだけ保持し、会議室
+  // 入室時の呼び出しと録画開始時の呼び出しが重なっても、初期化を二重に
+  // 行わないようにする。
   const sherpaLoadPromiseRef = useRef<Promise<void> | null>(null);
   const sherpaModuleRef = useRef<any>(null);
   const sherpaRecognizerRef = useRef<any>(null);
@@ -6856,10 +7068,74 @@ export default function AvatarSpace({
   // に置き換えた。モデル本体(約175MB)はVercelのデプロイに含めず、
   // Hugging Face上の自分たちのミラーリポジトリ(コミットID固定)から
   // 読み込む(詳細はSHERPA_MODEL_BASE参照)。
+  const SHERPA_FILE_NAMES = [
+    "sherpa-onnx-wasm-main-vad-asr.wasm",
+    "sherpa-onnx-wasm-main-vad-asr.data",
+    "sherpa-onnx-wasm-main-vad-asr.js",
+  ] as const;
+  // おおよそのファイルサイズ(2026-10時点で実測)。複数ファイルの進捗を
+  // まとめて1つの%にするための重み付けに使うだけなので、多少のズレは
+  // 問題ない。
+  const SHERPA_APPROX_SIZES: Record<string, number> = {
+    "sherpa-onnx-wasm-main-vad-asr.wasm": 12_898_602,
+    "sherpa-onnx-wasm-main-vad-asr.data": 169_824_553,
+    "sherpa-onnx-wasm-main-vad-asr.js": 116_826,
+  };
+
+  // フェーズ1: バイト列のダウンロードのみ(Module初期化は行わない=CPU・
+  // メモリをほぼ使わない)。IndexedDBに断片保存するため、既に完全に
+  // ダウンロード済みならネットワークに一切触れずに即座に完了する。
+  // ログイン直後の先読みはこの関数だけを呼ぶ(初期化は会議室入室時まで
+  // 遅らせる)。
+  const prefetchSherpaBytes = useCallback((): Promise<void> => {
+    if (sherpaPrefetchPromiseRef.current) {
+      return sherpaPrefetchPromiseRef.current;
+    }
+    setSherpaStatus((prev) => (prev === "idle" ? "downloading" : prev));
+    const approxTotal = Object.values(SHERPA_APPROX_SIZES).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    const downloadedByFile: Record<string, number> = {};
+    const reportProgress = () => {
+      const sum = Object.values(downloadedByFile).reduce((a, b) => a + b, 0);
+      // ダウンロード自体は全体の0〜90%分とし、残りはModule初期化
+      // (sherpaStatus: "initializing")の分として確保する。
+      const percent = Math.min(90, Math.floor((sum / approxTotal) * 90));
+      setSherpaLoadPercent((prev) => Math.max(prev, percent));
+    };
+    const promise = (async () => {
+      for (const name of SHERPA_FILE_NAMES) {
+        await downloadSherpaFileWithResume(
+          `${SHERPA_MODEL_BASE}/${name}`,
+          (downloaded) => {
+            downloadedByFile[name] = downloaded;
+            reportProgress();
+          },
+        );
+      }
+    })();
+    sherpaPrefetchPromiseRef.current = promise;
+    promise.then(
+      () => {
+        setSherpaStatus((prev) => (prev === "downloading" ? "idle" : prev));
+      },
+      (err) => {
+        // eslint-disable-next-line no-console
+        console.warn("[sherpa-onnx] バイトのダウンロードに失敗", err);
+        setSherpaStatus((prev) => (prev === "downloading" ? "error" : prev));
+        sherpaPrefetchPromiseRef.current = null;
+      },
+    );
+    return promise;
+  }, []);
+
+  // フェーズ2: ダウンロード済みのバイト列(フェーズ1が未実行・未完了でも
+  // ここで待ってから進む)からWASMモジュールを起動し、VAD・認識器を生成
+  // する(CPU・メモリを使う重い処理)。会議室入室時・録画ボタンを押した
+  // 時にのみ呼ばれる。
   const loadSherpaOnnx = useCallback((): Promise<void> => {
     if (sherpaLoadPromiseRef.current) return sherpaLoadPromiseRef.current;
-    setSherpaStatus("loading");
-    setSherpaLoadPercent(0);
     const loadScript = (src: string) =>
       new Promise<void>((resolve, reject) => {
         const el = document.createElement("script");
@@ -6870,28 +7146,40 @@ export default function AvatarSpace({
         document.body.appendChild(el);
       });
     const promise = (async () => {
+      await prefetchSherpaBytes();
+      setSherpaStatus("initializing");
+      setSherpaLoadPercent((prev) => Math.max(prev, 95));
+
+      const blobs: Record<string, Blob> = {};
+      for (const name of SHERPA_FILE_NAMES) {
+        // フェーズ1で既にIndexedDBに完全保存済みのため、ここはネット
+        // ワークに触れずIndexedDBから読み出すだけで即座に終わる。
+        blobs[name] = await downloadSherpaFileWithResume(
+          `${SHERPA_MODEL_BASE}/${name}`,
+        );
+      }
+      const wasmBlobUrl = URL.createObjectURL(
+        blobs["sherpa-onnx-wasm-main-vad-asr.wasm"],
+      );
+      const dataBlobUrl = URL.createObjectURL(
+        blobs["sherpa-onnx-wasm-main-vad-asr.data"],
+      );
+      const mainJsBlobUrl = URL.createObjectURL(
+        blobs["sherpa-onnx-wasm-main-vad-asr.js"],
+      );
+
       await loadScript("/sherpa/sherpa-onnx-asr.js");
       await loadScript("/sherpa/sherpa-onnx-vad.js");
       await new Promise<void>((resolve, reject) => {
-        let lastPercent = -1;
         (window as any).Module = {
-          // .wasm/.dataはメインのグルーJSと同じHugging FaceのコミットID
-          // 固定URLから読み込む(tokens.txtやonnxモデル自体は.data内に
-          // あらかじめ埋め込まれているため、ここでの解決対象にはならず
-          // 別途fetchされることはない)。
-          locateFile: (path: string) => `${SHERPA_MODEL_BASE}/${path}`,
-          setStatus: (status: string) => {
-            const m = /Downloading data\.\.\. \((\d+)\/(\d+)\)/.exec(status);
-            if (!m) return;
-            const downloaded = Number(m[1]);
-            const total = Number(m[2]);
-            const percent =
-              total > 0 ? Math.floor((downloaded / total) * 100) : 0;
-            if (percent !== lastPercent) {
-              lastPercent = percent;
-              setSherpaLoadPercent(percent);
-            }
+          // .wasm/.dataはフェーズ1でダウンロード済みのBlobをそのまま使う
+          // (ここでネットワークへアクセスすることはない)。
+          locateFile: (path: string) => {
+            if (path.endsWith(".wasm")) return wasmBlobUrl;
+            if (path.endsWith(".data")) return dataBlobUrl;
+            return path;
           },
+          setStatus: () => {},
           onRuntimeInitialized: () => {
             try {
               const Module = (window as any).Module;
@@ -6924,24 +7212,23 @@ export default function AvatarSpace({
             }
           },
         };
-        loadScript(
-          `${SHERPA_MODEL_BASE}/sherpa-onnx-wasm-main-vad-asr.js`,
-        ).catch(reject);
+        loadScript(mainJsBlobUrl).catch(reject);
       });
+      setSherpaLoadPercent(100);
     })();
     sherpaLoadPromiseRef.current = promise;
     promise.then(
       () => setSherpaStatus("ready"),
       (err) => {
         // eslint-disable-next-line no-console
-        console.warn("[sherpa-onnx] モデル読み込み失敗", err);
+        console.warn("[sherpa-onnx] モデル初期化に失敗", err);
         setSherpaStatus("error");
         // 失敗した場合は次に呼ばれた時に再試行できるようにリセットする。
         sherpaLoadPromiseRef.current = null;
       },
     );
     return promise;
-  }, []);
+  }, [prefetchSherpaBytes]);
 
   const stopLocalSpeechPipeline = useCallback(() => {
     if (!sherpaRunningRef.current) return;
@@ -7120,10 +7407,28 @@ export default function AvatarSpace({
     sameConferenceRoomAsRecorderRef.current = sameConferenceRoomAsRecorder;
   }, [sameConferenceRoomAsRecorder]);
 
-  // 会議室(conference)に入った時点で、モデル(約175MB)をこっそり裏で
-  // 先読みしておく。録画ボタンを押した瞬間に初回ダウンロードを待たせない
-  // ため。使われなければ無駄になるが、会議室に入る=録画を使う可能性が
-  // ある人に絞られているため、現実的な範囲だと判断している。
+  // ログイン(入室)後、ページ表示が落ち着いたタイミングで、モデルの
+  // バイト列だけを低優先度で裏から先読みしておく(2026-10報告の要望)。
+  // WASMの起動・VAD・認識器の生成(CPUやメモリを使う処理)はまだ行わない
+  // ため、会議室を一度も使わない人のPCを重くすることはない。スマホ・
+  // データセーバーONの回線では、利用者が意図しない通信量を消費しない
+  // よう、この時点での先読みは行わない(会議室に入った時・録画ボタンを
+  // 押した時には、どちらの場合も行う)。
+  useEffect(() => {
+    if (!joined) return;
+    if (!isSpeechRecognitionSupported()) return;
+    if (!shouldAutoPrefetchSherpaOnLogin()) return;
+    runSherpaPrefetchWhenIdle(() => {
+      prefetchSherpaBytes().catch(() => {});
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined]);
+
+  // 会議室(conference)に入った時点で、モデルの初期化(WASM起動・VAD・
+  // 認識器の生成)まで行っておく。録画ボタンを押した瞬間に初期化を待たせ
+  // ないため。バイト列が上の先読みで既に揃っていれば、ここでのネット
+  // ワーク通信は発生しない。スマホ・データセーバーONの回線でも、会議室に
+  // 入った=利用意図があるとみなしここは常に行う。
   useEffect(() => {
     if (!sameConferenceRoomAsRecorder) return;
     if (!isSpeechRecognitionSupported()) return;
@@ -8928,9 +9233,14 @@ export default function AvatarSpace({
                             ? `${recordingOwnerName}さんが録画中です`
                             : undefined
                     }
-                    warning={sherpaStatus === "loading" || sherpaStatus === "error"}
+                    warning={
+                      sherpaStatus === "downloading" ||
+                      sherpaStatus === "initializing" ||
+                      sherpaStatus === "error"
+                    }
                     warningReason={
-                      sherpaStatus === "loading"
+                      sherpaStatus === "downloading" ||
+                      sherpaStatus === "initializing"
                         ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
                         : sherpaStatus === "error"
                           ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
@@ -9167,6 +9477,17 @@ export default function AvatarSpace({
               >
                 ✕
               </button>
+              {/* 文字起こしモデルの準備状況表示(2026-10追加)。会議室では
+                  録画・文字起こしをいつ使うか分からないため、ダウンロード
+                  中・初期化中である間だけ、画面を邪魔しない右下に小さく
+                  表示する。完了(ready)・未着手(idle)・失敗(error、録画
+                  ボタンの警告バッジ側で表示済み)の間は表示しない。 */}
+              {(sherpaStatus === "downloading" ||
+                sherpaStatus === "initializing") && (
+                <div className="absolute bottom-3 right-3 z-10 rounded-md bg-black/70 px-3 py-1.5 text-xs text-white">
+                  文字起こしの準備中…{sherpaLoadPercent}%
+                </div>
+              )}
               {activeSharerId ? (
                 // 画面共有中は上段に映像を1列(210×140、ビデオと同じ
                 // サイズ)、下段いっぱいに画面共有を展開する。
@@ -9214,9 +9535,14 @@ export default function AvatarSpace({
                                   ? `${recordingOwnerName}さんが録画中です`
                                   : undefined
                           }
-                          warning={sherpaStatus === "loading" || sherpaStatus === "error"}
+                          warning={
+                            sherpaStatus === "downloading" ||
+                            sherpaStatus === "initializing" ||
+                            sherpaStatus === "error"
+                          }
                           warningReason={
-                            sherpaStatus === "loading"
+                            sherpaStatus === "downloading" ||
+                            sherpaStatus === "initializing"
                               ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
                               : sherpaStatus === "error"
                                 ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
@@ -9367,9 +9693,14 @@ export default function AvatarSpace({
                                 ? `${recordingOwnerName}さんが録画中です`
                                 : undefined
                         }
-                        warning={sherpaStatus === "loading" || sherpaStatus === "error"}
+                        warning={
+                          sherpaStatus === "downloading" ||
+                          sherpaStatus === "initializing" ||
+                          sherpaStatus === "error"
+                        }
                         warningReason={
-                          sherpaStatus === "loading"
+                          sherpaStatus === "downloading" ||
+                          sherpaStatus === "initializing"
                             ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
                             : sherpaStatus === "error"
                               ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
