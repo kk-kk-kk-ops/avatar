@@ -7180,7 +7180,20 @@ export default function AvatarSpace({
         el.onerror = () => reject(new Error(`script load failed: ${src}`));
         document.body.appendChild(el);
       });
-    const promise = (async () => {
+    const innerPromise = (async () => {
+      // 2026-10報告の不具合: このWASMビルドはマルチスレッド版で、起動時に
+      // SharedArrayBufferをWorkerへpostMessageする。ページが「クロス
+      // オリジン分離」(COOP/COEPヘッダー)されていないとこれが
+      // DataCloneErrorで静かに失敗し、onRuntimeInitializedが永遠に
+      // 発火せず95%で止まったまま進まなくなる不具合があった。分離されて
+      // いないことが分かっている場合は、175MBのダウンロードすら行わず
+      // 即座に諦めてブラウザ標準の音声認識にフォールバックする。
+      if (
+        typeof window !== "undefined" &&
+        !(window as any).crossOriginIsolated
+      ) {
+        throw new Error("not-cross-origin-isolated");
+      }
       // eslint-disable-next-line no-console
       console.log("[sherpa-onnx] init: prefetchSherpaBytes待機開始");
       await prefetchSherpaBytes();
@@ -7331,6 +7344,19 @@ export default function AvatarSpace({
       });
       setSherpaLoadPercent(100);
     })();
+    // 2026-10報告の不具合対応: 何らかの理由でonRuntimeInitializedが
+    // 永遠に発火しない場合に備え、タイムアウトで必ず失敗扱いにする
+    // (95%で無限に止まったままにならないようにする)。
+    const SHERPA_INIT_TIMEOUT_MS = 25000;
+    const promise = Promise.race([
+      innerPromise,
+      new Promise<void>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("sherpa-onnx init timeout")),
+          SHERPA_INIT_TIMEOUT_MS,
+        );
+      }),
+    ]);
     sherpaLoadPromiseRef.current = promise;
     promise.then(
       () => {
@@ -7349,8 +7375,113 @@ export default function AvatarSpace({
     return promise;
   }, [prefetchSherpaBytes]);
 
+  // 2026-10報告の不具合対応: sherpa-onnxのローカル認識が使えない環境
+  // (クロスオリジン分離が無い等)では、以前使っていたブラウザ標準の
+  // 音声認識(webkitSpeechRecognition)に自動でフォールバックする。
+  // これが無ければ「文字起こしが一切動かない」状態になってしまうため、
+  // 最後の手段として残す。
+  const webSpeechRecognitionRef = useRef<any>(null);
+  // どちらのエンジンが今動いているか("none"=どちらも動いていない)。
+  const activeTranscriptionEngineRef = useRef<"sherpa" | "webspeech" | "none">(
+    "none",
+  );
+
+  const stopWebSpeechFallback = useCallback(() => {
+    const recognition = webSpeechRecognitionRef.current;
+    if (recognition) {
+      // 自動再起動(onend)を止めるため、先にハンドラを外してからstopする。
+      recognition.onend = null;
+      recognition.onerror = null;
+      recognition.onresult = null;
+      try {
+        recognition.stop();
+      } catch {
+        // 既に停止している場合などは無視
+      }
+      webSpeechRecognitionRef.current = null;
+    }
+  }, []);
+
+  const startWebSpeechFallback = useCallback((): boolean => {
+    if (webSpeechRecognitionRef.current) return true;
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) return false;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.onresult = (event: any) => {
+      const self = selfState.current;
+      if (!self) return;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (!result.isFinal) continue;
+        const text = (result[0]?.transcript ?? "").trim();
+        if (!text) continue;
+        const now = Date.now();
+        const lastEmitted = lastEmittedTextRef.current;
+        if (
+          lastEmitted &&
+          lastEmitted.text === text &&
+          now - lastEmitted.at < 5000
+        ) {
+          continue;
+        }
+        lastEmittedTextRef.current = { text, at: now };
+        const line = {
+          id: `${self.id}-${now}-${i}`,
+          senderName: self.name,
+          text,
+          at: now,
+        };
+        addCaptionLine(line);
+        channelRef.current?.httpSend("caption", {
+          id: line.id,
+          senderName: line.senderName,
+          text: line.text,
+          at: line.at,
+        });
+      }
+    };
+    recognition.onerror = (event: any) => {
+      // eslint-disable-next-line no-console
+      console.warn("[speech-fallback] error", event?.error);
+    };
+    recognition.onend = () => {
+      webSpeechRecognitionRef.current = null;
+      // 録画中・マイクONかつ同じ会議室内にいる状態が続いている間は
+      // 自動的に再開する(ブラウザ側の都合で無音タイムアウト等により
+      // 止まることがあるため)。
+      if (
+        activeTranscriptionEngineRef.current === "webspeech" &&
+        sameConferenceRoomAsRecorderRef.current &&
+        micEnabledRef.current
+      ) {
+        startWebSpeechFallback();
+      }
+    };
+    webSpeechRecognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[speech-fallback] start失敗", err);
+      webSpeechRecognitionRef.current = null;
+      return false;
+    }
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addCaptionLine]);
+
   const stopLocalSpeechPipeline = useCallback(() => {
+    if (activeTranscriptionEngineRef.current === "webspeech") {
+      activeTranscriptionEngineRef.current = "none";
+      stopWebSpeechFallback();
+    }
     if (!sherpaRunningRef.current) return;
+    activeTranscriptionEngineRef.current = "none";
     sherpaRunningRef.current = false;
     const processor = sherpaProcessorNodeRef.current;
     const source = sherpaSourceNodeRef.current;
@@ -7378,15 +7509,36 @@ export default function AvatarSpace({
     sherpaAudioContextRef.current = null;
     sherpaVadRef.current?.reset();
     sherpaBufferRef.current?.reset();
-  }, []);
+  }, [stopWebSpeechFallback]);
 
   const startLocalSpeechPipeline = useCallback(async () => {
-    if (sherpaRunningRef.current) return;
-    if (!isSpeechRecognitionSupported()) return;
+    if (
+      sherpaRunningRef.current ||
+      activeTranscriptionEngineRef.current !== "none"
+    ) {
+      return;
+    }
     try {
       await loadSherpaOnnx();
-    } catch {
-      // 失敗時の表示はloadSherpaOnnx内のsherpaStatus更新に任せる。
+    } catch (err) {
+      // sherpa-onnxが使えない場合(クロスオリジン分離が無い・タイムアウト・
+      // 初期化エラー等)は、ブラウザ標準の音声認識に自動フォールバックする
+      // (2026-10報告: これが無いと文字起こしが完全に止まってしまう)。
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[sherpa-onnx] ローカル認識が使えないためフォールバックします",
+        err,
+      );
+      if (!sameConferenceRoomAsRecorderRef.current || !micEnabledRef.current) {
+        return;
+      }
+      const started = startWebSpeechFallback();
+      if (started) {
+        activeTranscriptionEngineRef.current = "webspeech";
+        // sherpa-onnx側はエラー状態のままだが、フォールバックで実際には
+        // 動いているため、警告バッジを出し続けないようreadyに戻す。
+        setSherpaStatus("ready");
+      }
       return;
     }
     // ロード完了を待っている間に状況が変わっている(マイクOFF・会議室
@@ -7486,7 +7638,8 @@ export default function AvatarSpace({
     sherpaSourceNodeRef.current = mediaStreamSource;
     sherpaProcessorNodeRef.current = processor;
     sherpaRunningRef.current = true;
-  }, [loadSherpaOnnx, addCaptionLine]);
+    activeTranscriptionEngineRef.current = "sherpa";
+  }, [loadSherpaOnnx, addCaptionLine, startWebSpeechFallback]);
 
   // 2026-10報告のバグ修正: 録画中かどうかだけで文字起こしの対象にして
   // いたため、会議室の外にいる人(マイクONで近接通話中の人など)の声まで

@@ -38,6 +38,30 @@ const nextConfig = {
           },
         ],
       },
+      {
+        // 会議室の文字起こし機能(sherpa-onnx、マルチスレッドWASM)が
+        // SharedArrayBufferを使うために必要な「クロスオリジン分離」
+        // (2026-10追加)。このヘッダーが無いと、WASM側がWeb Workerへの
+        // メモリ受け渡しに失敗し、文字起こしの初期化が進捗表示のまま
+        // 無限に止まってしまう不具合があった。
+        //
+        // このアプリは管理画面・決済・認証フロー以外のほぼ全体(ログイン
+        // 画面〜ロビー〜会議室)が単一のページ(/)で構成されており、
+        // Next.jsのパス単位のheaders設定では「会議室の画面だけ」を厳密に
+        // 切り分けることができない。そのため、影響範囲を調べた上で
+        // (ポップアップでのログインは使っていない、iframeも使っていない)
+        // admin/billing/auth/master/plan/apiを除く全体に適用している。
+        // Cross-Origin-Embedder-Policyは厳格な"require-corp"ではなく
+        // "credentialless"を使うことで、既存のクロスオリジン画像
+        // (Supabase Storageの画像など、認証情報無しでアクセスできる
+        // 公開URL)への影響を避けている。
+        source:
+          "/((?!admin|billing|auth|master|plan|api|_next|favicon.ico|df3-assets).*)",
+        headers: [
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
+        ],
+      },
     ];
   },
 };
