@@ -965,10 +965,13 @@ export default function AvatarSpace({
   // 入室時の呼び出しと録画開始時の呼び出しが重なっても、初期化を二重に
   // 行わないようにする。
   const sherpaLoadPromiseRef = useRef<Promise<void> | null>(null);
-  const sherpaModuleRef = useRef<any>(null);
-  const sherpaRecognizerRef = useRef<any>(null);
-  const sherpaVadRef = useRef<any>(null);
-  const sherpaBufferRef = useRef<any>(null);
+  // 2026-10報告の不具合対応: VAD・認識器(重いWASM呼び出し)を専用の
+  // Web Worker内で動かす。以前はメインスレッド上で直接呼び出しており、
+  // 1発言分の音声をまとめて認識するdecode()が重く、メインスレッドが
+  // 固まって通話音声(LiveKitのWebRTC送信)まで途切れる不具合があった。
+  // メインスレッド側はダウンサンプリングした音声サンプルをWorkerへ
+  // postMessageで渡すだけにする(sherpa-worker.js参照)。
+  const sherpaWorkerRef = useRef<Worker | null>(null);
   // マイク音声を認識モデルに流すためのWeb Audio Graph。通話用のマイクON/
   // OFF(toggleMic)とは独立に、LiveKitのローカルマイクトラックを横取り
   // して自分たちで繋ぎ直す。
@@ -7197,15 +7200,6 @@ export default function AvatarSpace({
   // 時にのみ呼ばれる。
   const loadSherpaOnnx = useCallback((): Promise<void> => {
     if (sherpaLoadPromiseRef.current) return sherpaLoadPromiseRef.current;
-    const loadScript = (src: string) =>
-      new Promise<void>((resolve, reject) => {
-        const el = document.createElement("script");
-        el.src = src;
-        el.async = true;
-        el.onload = () => resolve();
-        el.onerror = () => reject(new Error(`script load failed: ${src}`));
-        document.body.appendChild(el);
-      });
     const innerPromise = (async () => {
       // 2026-10報告の不具合: このWASMビルドはマルチスレッド版で、起動時に
       // SharedArrayBufferをWorkerへpostMessageする。ページが「クロス
@@ -7272,101 +7266,75 @@ export default function AvatarSpace({
         dataSize: blobs["sherpa-onnx-wasm-main-vad-asr.data"].size,
       });
 
-      await loadScript("/sherpa/sherpa-onnx-asr.js");
-      // eslint-disable-next-line no-console
-      console.log("[sherpa-onnx] init: sherpa-onnx-asr.js 読み込み完了");
-      await loadScript("/sherpa/sherpa-onnx-vad.js");
-      // eslint-disable-next-line no-console
-      console.log("[sherpa-onnx] init: sherpa-onnx-vad.js 読み込み完了");
+      // 2026-10報告のバグ修正: VAD・認識器(重いWASM呼び出し)をメイン
+      // スレッドで直接動かしていたところ、1発言分の音声をまとめて認識
+      // するdecode()が重く、メインスレッドが固まって通話音声(LiveKitの
+      // WebRTC送信)まで途切れる不具合があった。専用のWeb Workerを立てて
+      // そちらでVAD・認識器の生成〜実行まで丸ごと行う(詳細はsherpa-worker.
+      // js参照)。ページがクロスオリジン分離されていれば、ここで生成する
+      // Workerも同じ分離状態を引き継ぐため、WASM側のpthreadワーカー
+      // プールもWorker内でそのまま動作する。
       await new Promise<void>((resolve, reject) => {
-        (window as any).Module = {
-          // .wasm/.dataはフェーズ1でダウンロード済みのBlobをそのまま使う
-          // (ここでネットワークへアクセスすることはない)。
-          locateFile: (path: string) => {
-            const resolved = path.endsWith(".wasm")
-              ? wasmBlobUrl
-              : path.endsWith(".data")
-                ? dataBlobUrl
-                : path;
+        const worker = new Worker("/sherpa/sherpa-worker.js");
+        worker.onmessage = (event) => {
+          const msg = event.data;
+          if (!msg || typeof msg !== "object") return;
+          if (msg.type === "ready") {
             // eslint-disable-next-line no-console
-            console.log(`[sherpa-onnx] Module.locateFile("${path}") -> ${resolved}`);
-            return resolved;
-          },
-          setStatus: (status: string) => {
+            console.log("[sherpa-onnx] worker: 初期化完了");
+            sherpaWorkerRef.current = worker;
+            resolve();
+            return;
+          }
+          if (msg.type === "error") {
             // eslint-disable-next-line no-console
-            console.log(`[sherpa-onnx] Module.setStatus: "${status}"`);
-          },
-          onAbort: (reason: unknown) => {
-            // eslint-disable-next-line no-console
-            console.warn("[sherpa-onnx] Module.onAbort", reason);
-            reject(
-              reason instanceof Error ? reason : new Error(String(reason)),
-            );
-          },
-          print: (text: string) => {
-            // eslint-disable-next-line no-console
-            console.log("[sherpa-onnx] Module stdout:", text);
-          },
-          printErr: (text: string) => {
-            // eslint-disable-next-line no-console
-            console.warn("[sherpa-onnx] Module stderr:", text);
-          },
-          onRuntimeInitialized: () => {
-            // eslint-disable-next-line no-console
-            console.log("[sherpa-onnx] Module.onRuntimeInitialized 発火");
-            try {
-              const Module = (window as any).Module;
-              sherpaModuleRef.current = Module;
-              sherpaVadRef.current = (window as any).createVad(Module);
-              // eslint-disable-next-line no-console
-              console.log("[sherpa-onnx] init: VAD生成完了");
-              sherpaBufferRef.current = new (window as any).CircularBuffer(
-                30 * 16000,
-                Module,
-              );
-              // eslint-disable-next-line no-console
-              console.log("[sherpa-onnx] init: CircularBuffer生成完了");
-              sherpaRecognizerRef.current = new (
-                window as any
-              ).OfflineRecognizer(
-                {
-                  modelConfig: {
-                    debug: 0,
-                    tokens: "./tokens.txt",
-                    transducer: {
-                      encoder: "./transducer-encoder.onnx",
-                      decoder: "./transducer-decoder.onnx",
-                      joiner: "./transducer-joiner.onnx",
-                    },
-                    modelType: "transducer",
-                  },
-                },
-                Module,
-              );
-              // eslint-disable-next-line no-console
-              console.log("[sherpa-onnx] init: OfflineRecognizer生成完了");
-              resolve();
-            } catch (err) {
-              // eslint-disable-next-line no-console
-              console.warn(
-                "[sherpa-onnx] onRuntimeInitialized内でエラー",
-                err,
-              );
-              reject(err instanceof Error ? err : new Error(String(err)));
+            console.warn("[sherpa-onnx] worker: 初期化エラー", msg.message);
+            reject(new Error(msg.message));
+            return;
+          }
+          if (msg.type === "result") {
+            const self = selfState.current;
+            if (!self) return;
+            const text = (msg.text ?? "").trim();
+            if (!text) return;
+            const now = typeof msg.at === "number" ? msg.at : Date.now();
+            const lastEmitted = lastEmittedTextRef.current;
+            if (
+              lastEmitted &&
+              lastEmitted.text === text &&
+              now - lastEmitted.at < 5000
+            ) {
+              return;
             }
-          },
+            lastEmittedTextRef.current = { text, at: now };
+            const line = {
+              id: `${self.id}-${now}`,
+              senderName: self.name,
+              text,
+              at: now,
+            };
+            addCaptionLine(line);
+            channelRef.current?.httpSend("caption", {
+              id: line.id,
+              senderName: line.senderName,
+              text: line.text,
+              at: line.at,
+            });
+          }
+        };
+        worker.onerror = (event) => {
+          // eslint-disable-next-line no-console
+          console.warn("[sherpa-onnx] worker: onerror", event);
+          reject(new Error(event.message || "sherpa worker error"));
         };
         // eslint-disable-next-line no-console
-        console.log("[sherpa-onnx] init: メインJS(グルー)読み込み開始");
-        loadScript(mainJsBlobUrl)
-          .then(() => {
-            // eslint-disable-next-line no-console
-            console.log(
-              "[sherpa-onnx] init: メインJS(グルー)のscriptタグ実行完了" +
-                "(onRuntimeInitializedはまだ先に別途発火する想定)",
-            );
-          })
-          .catch(reject);
+        console.log("[sherpa-onnx] worker: init送信");
+        worker.postMessage({
+          type: "init",
+          wasmUrl: wasmBlobUrl,
+          dataUrl: dataBlobUrl,
+          mainJsUrl: mainJsBlobUrl,
+        });
       });
       setSherpaLoadPercent(100);
     })();
@@ -7399,7 +7367,7 @@ export default function AvatarSpace({
       },
     );
     return promise;
-  }, [prefetchSherpaBytes]);
+  }, [prefetchSherpaBytes, addCaptionLine]);
 
   // 2026-10報告の不具合対応: sherpa-onnxのローカル認識が使えない環境
   // (クロスオリジン分離が無い等)では、以前使っていたブラウザ標準の
@@ -7533,8 +7501,9 @@ export default function AvatarSpace({
     sherpaProcessorNodeRef.current = null;
     sherpaSourceNodeRef.current = null;
     sherpaAudioContextRef.current = null;
-    sherpaVadRef.current?.reset();
-    sherpaBufferRef.current?.reset();
+    // Worker自体は破棄しない(次回の録画でも再利用し、重い再初期化を
+    // 繰り返さないため)。VAD・バッファの状態だけリセットする。
+    sherpaWorkerRef.current?.postMessage({ type: "stop" });
   }, [stopWebSpeechFallback]);
 
   const startLocalSpeechPipeline = useCallback(async () => {
@@ -7578,10 +7547,8 @@ export default function AvatarSpace({
         ?.track?.mediaStreamTrack ?? null;
     if (!micTrack) return;
 
-    const vad = sherpaVadRef.current;
-    const buffer = sherpaBufferRef.current;
-    const recognizer = sherpaRecognizerRef.current;
-    if (!vad || !buffer || !recognizer) return;
+    const worker = sherpaWorkerRef.current;
+    if (!worker) return;
 
     const expectedSampleRate = 16000;
     const audioCtx = new AudioContext({ sampleRate: expectedSampleRate });
@@ -7590,6 +7557,13 @@ export default function AvatarSpace({
     );
     const processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
+    // 2026-10報告のバグ修正: 以前はここでVAD・認識(重いWASM呼び出し)を
+    // メインスレッド上で直接行っており、1発言分の音声をまとめて認識する
+    // decode()が重く、メインスレッドが固まって通話音声(LiveKitのWebRTC
+    // 送信)まで途切れる不具合があった。ここでの処理はダウンサンプリング
+    // (軽い純JS処理)だけにし、以降のVAD・認識は専用のWorkerへ丸ごと
+    // 委譲する(詳細はsherpa-worker.js、結果はloadSherpaOnnx内の
+    // worker.onmessageで受け取ってaddCaptionLine/httpSendする)。
     processor.onaudioprocess = (e) => {
       let samples: Float32Array = new Float32Array(
         e.inputBuffer.getChannelData(0),
@@ -7599,62 +7573,11 @@ export default function AvatarSpace({
         audioCtx.sampleRate,
         expectedSampleRate,
       );
-      buffer.push(samples);
-      while (buffer.size() > vad.config.sileroVad.windowSize) {
-        const windowSamples = buffer.get(
-          buffer.head(),
-          vad.config.sileroVad.windowSize,
-        );
-        vad.acceptWaveform(windowSamples);
-        buffer.pop(vad.config.sileroVad.windowSize);
-
-        while (!vad.isEmpty()) {
-          const segment = vad.front();
-          vad.pop();
-          const self = selfState.current;
-          if (!self) continue;
-
-          const stream = recognizer.createStream();
-          stream.acceptWaveform(expectedSampleRate, segment.samples);
-          recognizer.decode(stream);
-          const result = recognizer.getResult(stream);
-          stream.free();
-          const text = (result?.text ?? "").trim();
-          if (!text) continue;
-
-          // 内容ベースの重複排除(保険)。VADで発言ごとに区切られるため
-          // 通常は重複しないが、念のため直前と全く同じ文章が短時間
-          // (5秒以内)に再度来た場合は無視する。
-          const now = Date.now();
-          const lastEmitted = lastEmittedTextRef.current;
-          if (
-            lastEmitted &&
-            lastEmitted.text === text &&
-            now - lastEmitted.at < 5000
-          ) {
-            continue;
-          }
-          lastEmittedTextRef.current = { text, at: now };
-          const line = {
-            id: `${self.id}-${now}`,
-            senderName: self.name,
-            text,
-            at: now,
-          };
-          // Supabase Realtimeのbroadcastは送信者自身には返ってこないため、
-          // 自分の発言分はここでローカルに直接反映する(画面共有プレビュー
-          // 配信と同じ理由・同じ対処)。録画終了時の保存に全件必要なため、
-          // 受信側と同じ理由でslice(-50)の切り捨ては行わない。重複排除は
-          // addCaptionLine側でまとめて行う。
-          addCaptionLine(line);
-          channelRef.current?.httpSend("caption", {
-            id: line.id,
-            senderName: line.senderName,
-            text: line.text,
-            at: line.at,
-          });
-        }
-      }
+      // transferable(第2引数)でコピー無しにWorkerへ渡す。
+      worker.postMessage(
+        { type: "audio", samples: samples.buffer, at: Date.now() },
+        [samples.buffer],
+      );
     };
 
     mediaStreamSource.connect(processor);
