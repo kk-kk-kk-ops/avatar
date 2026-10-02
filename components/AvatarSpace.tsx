@@ -687,6 +687,23 @@ export default function AvatarSpace({
   const lastEmittedTextRef = useRef<{ text: string; at: number } | null>(
     null,
   );
+  // 2026-10報告: 「network」エラー(Web Speech APIがGoogleのサーバーへの
+  // 通信に失敗)が続くと、発言していても一切認識結果が返らず文字起こしが
+  // 保存されない事例が発生した。onendで即座に再起動すると失敗中は
+  // 無停止でstart/network error/endを繰り返すだけになり状況を悪化させ
+  // うるため、networkエラー発生時だけ指数バックオフ(2秒→4秒→…上限16秒)
+  // で再起動間隔を空ける。成功(isFinalな認識結果を受信)したら即リセット
+  // する。network以外のエラー(無音タイムアウト等、頻繁に起きる正常な
+  // 動作)は従来通り即時再起動する。
+  const lastSpeechRecognitionErrorRef = useRef<string | null>(null);
+  const speechRecognitionBackoffMsRef = useRef(0);
+  const speechRecognitionRetryTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  // 画面に「文字起こしが失敗しています」の警告を出すためのフラグ。
+  // networkエラーが発生したらtrue、認識結果を受信できたらfalseに戻す。
+  const [speechRecognitionFailing, setSpeechRecognitionFailing] =
+    useState(false);
   // 音声通話の「今日の残り利用可能時間(秒)」。画面共有・ビデオ通話と全く
   // 同じ考え方(null = 未取得中 or プランが無制限)。daily_usageテーブルの
   // kind='voice_call'を使う。
@@ -6811,6 +6828,16 @@ export default function AvatarSpace({
   // 発言分も含む)は画面下部に一時的に表示し、録画停止時に録画開始者の
   // ローカルへテキストファイルとして保存する(サーバー・DBには一切送らない)。
   const stopSpeechRecognition = useCallback(() => {
+    // networkエラー後のバックオフ待ち中にstop(マイクOFF・会議室退出等)
+    // された場合、待機後に勝手に再起動してしまわないよう予約済みの
+    // タイマーも止める。
+    if (speechRecognitionRetryTimerRef.current !== null) {
+      clearTimeout(speechRecognitionRetryTimerRef.current);
+      speechRecognitionRetryTimerRef.current = null;
+    }
+    speechRecognitionBackoffMsRef.current = 0;
+    lastSpeechRecognitionErrorRef.current = null;
+    setSpeechRecognitionFailing(false);
     const recognition = speechRecognitionRef.current;
     if (recognition) {
       // 自動再起動(onend)を止めるため、先にハンドラを外してからstopする。
@@ -6868,6 +6895,11 @@ export default function AvatarSpace({
           continue;
         }
         lastEmittedTextRef.current = { text, at: now };
+        // 認識結果を受信できた=復旧したとみなし、networkエラー用の
+        // バックオフ・警告表示をリセットする。
+        speechRecognitionBackoffMsRef.current = 0;
+        lastSpeechRecognitionErrorRef.current = null;
+        setSpeechRecognitionFailing(false);
         const line = {
           id: `${self.id}-${now}-${i}`,
           senderName: self.name,
@@ -6896,6 +6928,14 @@ export default function AvatarSpace({
       // 発生時の手がかりにする)。
       // eslint-disable-next-line no-console
       console.warn("[speech-recognition] error", event?.error);
+      lastSpeechRecognitionErrorRef.current = event?.error ?? null;
+      // networkエラー(Googleの音声認識サーバーへの通信失敗)は、発言
+      // していても一切認識結果が返らないまま録画が終わり、文字起こしが
+      // 保存されない不具合につながった(2026-10報告)。発生中は画面に
+      // 警告を出す。
+      if (event?.error === "network") {
+        setSpeechRecognitionFailing(true);
+      }
     };
     recognition.onend = () => {
       speechRecognitionRef.current = null;
@@ -6903,11 +6943,41 @@ export default function AvatarSpace({
       // ブラウザ側の都合(無音タイムアウト等)で止まった認識を自動的に
       // 再開する。会議室の外に出ていたら再開しない(2026-10報告対応)。
       if (
-        sameConferenceRoomAsRecorderRef.current &&
-        micEnabledRef.current
+        !sameConferenceRoomAsRecorderRef.current ||
+        !micEnabledRef.current
       ) {
-        startSpeechRecognition();
+        return;
       }
+      if (lastSpeechRecognitionErrorRef.current === "network") {
+        // networkエラーが続いている間は即時再起動せず、指数バックオフ
+        // (2秒→4秒→8秒→上限16秒)で間隔を空けて再試行する。即時再起動
+        // だと失敗中はstart/network error/endを無停止で繰り返すだけに
+        // なり、Google側のレート制限等があった場合に悪化させうるため
+        // (2026-10報告)。
+        const next = Math.min(
+          speechRecognitionBackoffMsRef.current === 0
+            ? 2000
+            : speechRecognitionBackoffMsRef.current * 2,
+          16000,
+        );
+        speechRecognitionBackoffMsRef.current = next;
+        if (speechRecognitionRetryTimerRef.current !== null) {
+          clearTimeout(speechRecognitionRetryTimerRef.current);
+        }
+        speechRecognitionRetryTimerRef.current = setTimeout(() => {
+          speechRecognitionRetryTimerRef.current = null;
+          if (
+            sameConferenceRoomAsRecorderRef.current &&
+            micEnabledRef.current
+          ) {
+            startSpeechRecognition();
+          }
+        }, next);
+        return;
+      }
+      // network以外(無音タイムアウト等、頻繁に起きる正常な動作)は従来
+      // 通り即時再開する。
+      startSpeechRecognition();
     };
     speechRecognitionRef.current = recognition;
     try {
@@ -8761,6 +8831,8 @@ export default function AvatarSpace({
                             ? `${recordingOwnerName}さんが録画中です`
                             : undefined
                     }
+                    warning={speechRecognitionFailing}
+                    warningReason="文字起こしがネットワークエラーで一時的に失敗しています(発言が保存されない可能性があります)"
                   />
                 </div>
               )}
@@ -9039,6 +9111,8 @@ export default function AvatarSpace({
                                   ? `${recordingOwnerName}さんが録画中です`
                                   : undefined
                           }
+                          warning={speechRecognitionFailing}
+                          warningReason="文字起こしがネットワークエラーで一時的に失敗しています(発言が保存されない可能性があります)"
                         />
                       </div>
                     )}
@@ -9184,6 +9258,8 @@ export default function AvatarSpace({
                                 ? `${recordingOwnerName}さんが録画中です`
                                 : undefined
                         }
+                        warning={speechRecognitionFailing}
+                        warningReason="文字起こしがネットワークエラーで一時的に失敗しています(発言が保存されない可能性があります)"
                       />
                     </div>
                   )}
