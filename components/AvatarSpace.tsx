@@ -935,6 +935,28 @@ export default function AvatarSpace({
     | "error";
   const [sherpaStatus, setSherpaStatus] = useState<SherpaStatus>("idle");
   const [sherpaLoadPercent, setSherpaLoadPercent] = useState(0);
+  // 文字起こしの準備状況を他の参加者にも見えるようpresenceに乗せる
+  // (2026-10追加、recordingOn等と同じ考え方)。本人のビデオ枠の右下に
+  // バッジで表示する(VideoTile参照)。"idle"/"error"はバッジを出さない
+  // 仕様のため、その場合はフィールド自体を消す。
+  useEffect(() => {
+    const self = selfState.current;
+    if (!self) return;
+    const next =
+      sherpaStatus === "downloading" ||
+      sherpaStatus === "initializing" ||
+      sherpaStatus === "ready"
+        ? sherpaStatus
+        : undefined;
+    if (self.transcriptionStatus === next) return;
+    self.transcriptionStatus = next;
+    channelRef.current?.track(self);
+    setPlayers((prev) => {
+      const current = prev[self.id];
+      if (!current) return prev;
+      return { ...prev, [self.id]: { ...current, transcriptionStatus: next } };
+    });
+  }, [sherpaStatus]);
   // ダウンロードのみ(Module初期化は行わない)フェーズのPromise。ログイン
   // 直後の先読みと、会議室入室時・録画開始時の呼び出しが重なっても二重に
   // ダウンロードしないようにする。
@@ -5293,7 +5315,8 @@ export default function AvatarSpace({
                 current.message !== p.message ||
                 current.showMessage !== p.showMessage ||
                 current.lockedMeetingZoneId !== p.lockedMeetingZoneId ||
-                current.lockedMeetingZoneAt !== p.lockedMeetingZoneAt
+                current.lockedMeetingZoneAt !== p.lockedMeetingZoneAt ||
+                current.transcriptionStatus !== p.transcriptionStatus
               ) {
                 next[p.id] = {
                   ...current,
@@ -5318,6 +5341,8 @@ export default function AvatarSpace({
                   // 追加する)。
                   lockedMeetingZoneId: p.lockedMeetingZoneId,
                   lockedMeetingZoneAt: p.lockedMeetingZoneAt,
+                  // 文字起こしの準備状況(2026-10追加)。
+                  transcriptionStatus: p.transcriptionStatus,
                 };
                 changed = true;
               }
@@ -5437,7 +5462,8 @@ export default function AvatarSpace({
               current.message !== p.message ||
               current.showMessage !== p.showMessage ||
               current.dir !== p.dir ||
-              current.status !== p.status
+              current.status !== p.status ||
+              current.transcriptionStatus !== p.transcriptionStatus
             ) {
               return {
                 ...prev,
@@ -9247,6 +9273,14 @@ export default function AvatarSpace({
   const selfConferenceZoneLocker = selfConferenceZone
     ? getConferenceZoneLocker(selfConferenceZone.id, players)
     : undefined;
+  // VideoTileの文字起こし準備状況バッジ用(2026-10追加)。"idle"/"error"の
+  // 場合はバッジを出さないのでundefinedにする。
+  const selfTranscriptionStatus =
+    sherpaStatus === "downloading" ||
+    sherpaStatus === "initializing" ||
+    sherpaStatus === "ready"
+      ? sherpaStatus
+      : undefined;
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
   const effectiveViewportWidth = viewport.width / mapScale;
   const effectiveViewportHeight = viewport.height / mapScale;
@@ -9505,18 +9539,11 @@ export default function AvatarSpace({
                             ? `${recordingOwnerName}さんが録画中です`
                             : undefined
                     }
-                    warning={
-                      sherpaStatus === "downloading" ||
-                      sherpaStatus === "initializing" ||
-                      sherpaStatus === "error"
-                    }
+                    warning={sherpaStatus === "error"}
                     warningReason={
-                      sherpaStatus === "downloading" ||
-                      sherpaStatus === "initializing"
-                        ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
-                        : sherpaStatus === "error"
-                          ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
-                          : undefined
+                      sherpaStatus === "error"
+                        ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                        : undefined
                     }
                   />
                 </div>
@@ -9590,6 +9617,7 @@ export default function AvatarSpace({
                   heightPx={140}
                   isSelf
                   micOn={micEnabled}
+                  transcriptionStatus={selfTranscriptionStatus}
                 />
                 {inCall && (
                   <button
@@ -9612,6 +9640,7 @@ export default function AvatarSpace({
                   widthPx={210}
                   heightPx={140}
                   micOn={p.micOn === true}
+                  transcriptionStatus={p.transcriptionStatus}
                 />
               ))}
             </div>
@@ -9807,18 +9836,11 @@ export default function AvatarSpace({
                                   ? `${recordingOwnerName}さんが録画中です`
                                   : undefined
                           }
-                          warning={
-                            sherpaStatus === "downloading" ||
-                            sherpaStatus === "initializing" ||
-                            sherpaStatus === "error"
-                          }
+                          warning={sherpaStatus === "error"}
                           warningReason={
-                            sherpaStatus === "downloading" ||
-                            sherpaStatus === "initializing"
-                              ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
-                              : sherpaStatus === "error"
-                                ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
-                                : undefined
+                            sherpaStatus === "error"
+                              ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                              : undefined
                           }
                         />
                       </div>
@@ -9830,6 +9852,7 @@ export default function AvatarSpace({
                       heightPx={140}
                       isSelf
                       micOn={micEnabled}
+                      transcriptionStatus={selfTranscriptionStatus}
                     />
                     {otherPlayers.map((p) => (
                       <VideoTile
@@ -9839,6 +9862,7 @@ export default function AvatarSpace({
                         widthPx={210}
                         heightPx={140}
                         micOn={p.micOn === true}
+                        transcriptionStatus={p.transcriptionStatus}
                       />
                     ))}
                   </div>
@@ -9965,18 +9989,11 @@ export default function AvatarSpace({
                                 ? `${recordingOwnerName}さんが録画中です`
                                 : undefined
                         }
-                        warning={
-                          sherpaStatus === "downloading" ||
-                          sherpaStatus === "initializing" ||
-                          sherpaStatus === "error"
-                        }
+                        warning={sherpaStatus === "error"}
                         warningReason={
-                          sherpaStatus === "downloading" ||
-                          sherpaStatus === "initializing"
-                            ? `文字起こしを準備中です(${sherpaLoadPercent}%、初回のみ時間がかかります)`
-                            : sherpaStatus === "error"
-                              ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
-                              : undefined
+                          sherpaStatus === "error"
+                            ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                            : undefined
                         }
                       />
                     </div>
@@ -9998,6 +10015,7 @@ export default function AvatarSpace({
                         heightPx={meetingTileHeight}
                         isSelf
                         micOn={micEnabled}
+                        transcriptionStatus={selfTranscriptionStatus}
                       />
                       {otherPlayers.map((p) => (
                         <VideoTile
@@ -10007,6 +10025,7 @@ export default function AvatarSpace({
                           widthPx={meetingTileWidth}
                           heightPx={meetingTileHeight}
                           micOn={p.micOn === true}
+                          transcriptionStatus={p.transcriptionStatus}
                         />
                       ))}
                     </div>

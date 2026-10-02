@@ -46,6 +46,11 @@ export type PlayerState = {
   status?: PresenceStatus; // 在席ステータス(未設定時はavailable扱い)
   carImage?: string; // 選択した車画像のフォルダパス(例: /car/car1)
   carVisible?: boolean; // 「shift+x」で車に乗った状態を表示中かどうか(相手にも表示する)
+  // 文字起こしモデル(sherpa-onnx)のローカルでの準備状況(2026-10追加、
+  // 相手にも表示する)。本人のビデオ枠の右下に小さいバッジで表示する
+  // ("downloading"/"initializing"は準備中、"ready"は準備完了)。
+  // "idle"/"error"/未設定の場合はバッジを出さない。
+  transcriptionStatus?: "downloading" | "initializing" | "ready";
 };
 
 export const PRESENCE_STATUS_COLORS: Record<PresenceStatus, string> = {
