@@ -841,6 +841,18 @@ export default function AvatarSpace({
     recordingOwnerIdRef.current = recordingOwnerId;
   }, [recordingOwnerId]);
   const [showRecordConfirm, setShowRecordConfirm] = useState(false);
+  // 録画開始者が録画中に会議エリアから出ようとした時の確認(2026-10
+  // 追加)。以前は無条件で自動停止していたが、誤って外に出て録画が
+  // 止まってしまう事故を防ぐため、確認を挟むようにした。「いいえ」の
+  // 場合はアバターの位置はそのまま(ゾーン判定上は既に外に出た扱いだが)
+  // 録画自体は止めない(録画は画面共有ストリームに基づくため、ゾーン
+  // 判定とは独立して動き続けられる)。
+  const [showExitZoneWhileRecordingConfirm, setShowExitZoneWhileRecordingConfirm] =
+    useState(false);
+  // 録画開始者が「退室」ボタンを押した時の確認(2026-10追加)。録画開始者
+  // 以外が押した場合はこの確認を挟まず、従来通りそのまま退室する。
+  const [showLeaveRoomWhileRecordingConfirm, setShowLeaveRoomWhileRecordingConfirm] =
+    useState(false);
   // 録画停止処理中かどうか(2026-10追加)。交互に話す会話だと文字起こしが
   // 追いつかないという報告を受け、停止操作をしてもすぐには確定・保存
   // せず、猶予期間を置いてから保存するようにした。その間、録画ボタンは
@@ -6569,14 +6581,16 @@ export default function AvatarSpace({
             setAnnouncementFlag(false);
           }
           // 2026-10追加: 録画を開始した本人が会議室から出た(別のゾーンへ
-          // 移動した・ゾーン外に出た)場合は、録画を自動的に停止しローカルへ
-          // 保存する。work/announcementの分岐とは独立に、常にこのタイミングで
-          // 判定する。
+          // 移動した・ゾーン外に出た)場合、確認ポップアップを出す
+          // (以前は無条件で自動停止していたが、誤って外に出て録画が
+          // 止まってしまう事故を防ぐため)。work/announcementの分岐とは
+          // 独立に、常にこのタイミングで判定する。
           if (
             recordingOwnerIdRef.current === self.id &&
-            enteredZone?.kind !== "conference"
+            enteredZone?.kind !== "conference" &&
+            !isStoppingRecordingRef.current
           ) {
-            stopRecording();
+            setShowExitZoneWhileRecordingConfirm(true);
           }
         }
 
@@ -8015,6 +8029,34 @@ export default function AvatarSpace({
     setShowRecordConfirm(false);
   }, []);
 
+  // 録画中に会議エリアから出ようとした時の確認(2026-10追加)。
+  const confirmExitZoneWhileRecording = useCallback(() => {
+    setShowExitZoneWhileRecordingConfirm(false);
+    stopRecording();
+  }, [stopRecording]);
+  const declineExitZoneWhileRecording = useCallback(() => {
+    setShowExitZoneWhileRecordingConfirm(false);
+    // 録画は止めない(画面共有ストリームに基づくため、会議エリアの
+    // ゾーン判定とは独立して動き続けられる)。
+  }, []);
+
+  // 録画中に「退室」ボタンを押した時の確認(2026-10追加、録画開始者の
+  // 場合のみ)。
+  const handleLeaveRoomButtonClick = useCallback(() => {
+    if (recordingOwnerIdRef.current === selfId.current) {
+      setShowLeaveRoomWhileRecordingConfirm(true);
+      return;
+    }
+    handleLeaveRoom();
+  }, [handleLeaveRoom]);
+  const confirmLeaveRoomWhileRecording = useCallback(() => {
+    setShowLeaveRoomWhileRecordingConfirm(false);
+    handleLeaveRoom();
+  }, [handleLeaveRoom]);
+  const declineLeaveRoomWhileRecording = useCallback(() => {
+    setShowLeaveRoomWhileRecordingConfirm(false);
+  }, []);
+
   // 音声通話の残り時間が尽きた際に、マイクを強制的にオフにする(画面共有・
   // ビデオ通話の強制終了と同じ考え方)。次にオンにしようとしてもtoggleMic側
   // のガードで弾かれる。
@@ -9413,7 +9455,7 @@ export default function AvatarSpace({
               )}
             </div>
             <div className="shrink-0">
-              <LeaveRoomButton onClick={handleLeaveRoom} />
+              <LeaveRoomButton onClick={handleLeaveRoomButtonClick} />
             </div>
             {/* チャットは左サイドバーの参加者一覧に統合したため、ここには
                 アイコンを置かない(未読の有無はハンバーガーボタン側に
@@ -12007,6 +12049,69 @@ export default function AvatarSpace({
               <button
                 type="button"
                 onClick={confirmStartRecording}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
+              >
+                はい
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 録画中に会議エリアから出ようとした際の確認(2026-10追加)。 */}
+      {showExitZoneWhileRecordingConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              録画中ですが会議エリアから退出しますか?
+              <br />
+              <span className="text-xs font-normal text-slate-500">
+                (録画は停止しローカルに保存されます)
+              </span>
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={declineExitZoneWhileRecording}
+                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                いいえ
+              </button>
+              <button
+                type="button"
+                onClick={confirmExitZoneWhileRecording}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
+              >
+                はい
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 録画中に「退室」ボタンを押した際の確認(2026-10追加、録画開始者
+          の場合のみ)。 */}
+      {showLeaveRoomWhileRecordingConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              録画中ですが退室しますか?
+              <br />
+              <span className="text-xs font-normal text-slate-500">
+                (録画は停止しローカルに保存されます)
+              </span>
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={declineLeaveRoomWhileRecording}
+                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                いいえ
+              </button>
+              <button
+                type="button"
+                onClick={confirmLeaveRoomWhileRecording}
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
               >
                 はい
