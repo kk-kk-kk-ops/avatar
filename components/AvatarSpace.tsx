@@ -6367,6 +6367,24 @@ export default function AvatarSpace({
             const wasInside = insideConferenceZoneIdsRef.current.has(zone.id);
 
             if (wasInside) {
+              // 2026-10追加: 録画開始者は、誤って会議エリアの外に出て録画が
+              // 止まってしまう事故を防ぐため、出ようとする移動そのものを
+              // 障害物と同様にブロックする(壁沿いに滑る挙動は維持する
+              // ため、X/Y軸どちらかがまだ触れていれば止めない)。録画停止
+              // 処理中(isStoppingRecordingRef)は既に退室が確定している
+              // ため、ここではブロックしない。「退室」ボタンによる明示的な
+              // 退室は別途確認ポップアップで扱う(handleLeaveRoomButtonClick
+              // 参照、ワープ等で当たり判定を経由せず外に出た場合の保険として
+              // showExitZoneWhileRecordingConfirmもそのまま残している)。
+              if (
+                self.id === recordingOwnerIdRef.current &&
+                !touching &&
+                !isStoppingRecordingRef.current
+              ) {
+                if (!touchX) blockedX = true;
+                if (!touchY) blockedY = true;
+                return;
+              }
               // 入室済み:出る方向には一切制限をかけず、ポップアップも出さない。
               // 当たり判定が完全に外れた時点で退室確定とする。
               if (!touching) {
