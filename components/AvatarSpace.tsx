@@ -411,23 +411,11 @@ async function downloadSherpaFileWithResume(
   };
 
   if (meta.complete) {
-    // eslint-disable-next-line no-console
-    console.log(
-      `[sherpa-onnx] downloadWithResume("${url}"): 既にキャッシュ済み(${meta.downloadedBytes}バイト)、readAllChunks開始`,
-    );
     const blob = new Blob(await readAllChunks());
-    // eslint-disable-next-line no-console
-    console.log(
-      `[sherpa-onnx] downloadWithResume("${url}"): readAllChunks完了、Blobサイズ=${blob.size}`,
-    );
     onProgress?.(meta.downloadedBytes, meta.totalBytes);
     return blob;
   }
 
-  // eslint-disable-next-line no-console
-  console.log(
-    `[sherpa-onnx] downloadWithResume("${url}"): fetch開始(既存${meta.downloadedBytes}バイトから再開試行)`,
-  );
   const init: RequestInit & { priority?: "high" | "low" | "auto" } = {
     headers: meta.downloadedBytes > 0
       ? { Range: `bytes=${meta.downloadedBytes}-` }
@@ -437,20 +425,12 @@ async function downloadSherpaFileWithResume(
     priority: "low",
   };
   const response = await fetch(url, init);
-  // eslint-disable-next-line no-console
-  console.log(
-    `[sherpa-onnx] downloadWithResume("${url}"): fetch応答 status=${response.status} content-length=${response.headers.get("content-length")} content-range=${response.headers.get("content-range")} accept-ranges=${response.headers.get("accept-ranges")}`,
-  );
   if (!response.ok && response.status !== 206) {
     throw new Error(`sherpa-onnx fetch failed: ${response.status}`);
   }
   if (meta.downloadedBytes > 0 && response.status !== 206) {
     // サーバーがRangeに対応しておらず先頭から200で返ってきた場合、保存済み
     // の断片を信用せずゼロから積み直す。
-    // eslint-disable-next-line no-console
-    console.log(
-      `[sherpa-onnx] downloadWithResume("${url}"): Range非対応応答のため先頭からやり直す`,
-    );
     meta = {
       downloadedBytes: 0,
       totalBytes: null,
@@ -479,10 +459,6 @@ async function downloadSherpaFileWithResume(
   };
 
   const reader = response.body?.getReader();
-  // eslint-disable-next-line no-console
-  console.log(
-    `[sherpa-onnx] downloadWithResume("${url}"): body reader ${reader ? "あり(ストリーミング)" : "なし(blob()フォールバック)"}、total=${total}`,
-  );
   if (!reader) {
     // ストリーミング非対応環境向けのフォールバック。
     const blob = await response.blob();
@@ -508,10 +484,6 @@ async function downloadSherpaFileWithResume(
       }
     }
     await flushPending(pending);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[sherpa-onnx] downloadWithResume("${url}"): 読み取りループ終了、downloadedBytes=${meta.downloadedBytes}`,
-    );
   }
 
   meta.totalBytes = total;
@@ -7185,8 +7157,6 @@ export default function AvatarSpace({
     };
     const promise = (async () => {
       for (const name of SHERPA_FILE_NAMES) {
-        // eslint-disable-next-line no-console
-        console.log(`[sherpa-onnx] prefetch: ${name} 開始`);
         await downloadSherpaFileWithResume(
           `${SHERPA_MODEL_BASE}/${name}`,
           (downloaded) => {
@@ -7194,15 +7164,11 @@ export default function AvatarSpace({
             reportProgress();
           },
         );
-        // eslint-disable-next-line no-console
-        console.log(`[sherpa-onnx] prefetch: ${name} 完了`);
       }
     })();
     sherpaPrefetchPromiseRef.current = promise;
     promise.then(
       () => {
-        // eslint-disable-next-line no-console
-        console.log("[sherpa-onnx] prefetch: 全ファイル完了");
         setSherpaStatus((prev) => (prev === "downloading" ? "idle" : prev));
       },
       (err) => {
@@ -7235,11 +7201,7 @@ export default function AvatarSpace({
       ) {
         throw new Error("not-cross-origin-isolated");
       }
-      // eslint-disable-next-line no-console
-      console.log("[sherpa-onnx] init: prefetchSherpaBytes待機開始");
       await prefetchSherpaBytes();
-      // eslint-disable-next-line no-console
-      console.log("[sherpa-onnx] init: prefetchSherpaBytes完了、initializingへ");
       setSherpaStatus("initializing");
       setSherpaLoadPercent((prev) => Math.max(prev, 95));
 
@@ -7247,14 +7209,8 @@ export default function AvatarSpace({
       for (const name of SHERPA_FILE_NAMES) {
         // フェーズ1で既にIndexedDBに完全保存済みのため、ここはネット
         // ワークに触れずIndexedDBから読み出すだけで即座に終わる。
-        // eslint-disable-next-line no-console
-        console.log(`[sherpa-onnx] init: ${name} をIndexedDBから読み出し開始`);
         const blob = await downloadSherpaFileWithResume(
           `${SHERPA_MODEL_BASE}/${name}`,
-        );
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-onnx] init: ${name} 読み出し完了 (${blob.size}バイト)`,
         );
         blobs[name] = blob;
       }
@@ -7278,15 +7234,6 @@ export default function AvatarSpace({
           type: "text/javascript",
         }),
       );
-      // eslint-disable-next-line no-console
-      console.log("[sherpa-onnx] init: blob URL作成完了", {
-        wasmBlobUrl,
-        dataBlobUrl,
-        mainJsBlobUrl,
-        wasmSize: blobs["sherpa-onnx-wasm-main-vad-asr.wasm"].size,
-        dataSize: blobs["sherpa-onnx-wasm-main-vad-asr.data"].size,
-      });
-
       // 2026-10報告: 一度は専用のWeb Worker内でVAD・認識器を動かす構成
       // (sherpa-worker.js)に変更したが、実際にはこのWASMビルドが内部で
       // 使う「pthread用の子Worker」を、さらにWorkerの中から(入れ子で)
@@ -7351,8 +7298,6 @@ export default function AvatarSpace({
                   },
                   Module,
                 );
-                // eslint-disable-next-line no-console
-                console.log("[sherpa-onnx] init: メインスレッドで初期化完了");
                 resolve();
               } catch (err) {
                 reject(err instanceof Error ? err : new Error(String(err)));
@@ -7380,8 +7325,6 @@ export default function AvatarSpace({
     sherpaLoadPromiseRef.current = promise;
     promise.then(
       () => {
-        // eslint-disable-next-line no-console
-        console.log("[sherpa-onnx] init: 完了、ready");
         setSherpaStatus("ready");
       },
       (err) => {
@@ -7595,13 +7538,6 @@ export default function AvatarSpace({
     if (!micTrack) return;
     const micStream = new MediaStream([micTrack]);
 
-    // 調査用ログ(2026-10報告: 音声の途切れの原因調査)。
-    // eslint-disable-next-line no-console
-    console.log(
-      "[sherpa-onnx] 文字起こし用マイク(LiveKit共有)のtrack.getSettings():",
-      JSON.stringify(micTrack.getSettings() ?? {}),
-    );
-
     // AudioContextのsampleRateは指定せず、デバイス・ブラウザの既定値の
     // ままにする(通話側のAudioContextと異なるサンプルレートを強制する
     // と、同じマイクデバイスへの同時アクセスでハードウェア・ドライバー
@@ -7634,29 +7570,10 @@ export default function AvatarSpace({
       }
       pendingChunks = [];
       pendingSamples = 0;
-      // 調査用ログ(2026-10報告: 文字起こしに声がほぼ入らない不具合の
-      // 原因調査)。実際に送る音声のRMS(音量の目安)と長さを確認する。
-      // transferでmerged.bufferはこの後使えなくなるため、送信前に計算
-      // する。
-      let sumSquares = 0;
-      let peak = 0;
-      for (let i = 0; i < merged.length; i++) {
-        const v = merged[i];
-        sumSquares += v * v;
-        const abs = Math.abs(v);
-        if (abs > peak) peak = abs;
-      }
-      const rms = Math.sqrt(sumSquares / merged.length);
-      // eslint-disable-next-line no-console
-      console.log(
-        `[sherpa-onnx] flush: ${merged.length}サンプル(約${(merged.length / expectedSampleRate).toFixed(1)}秒) RMS=${rms.toFixed(4)} peak=${peak.toFixed(4)}`,
-      );
       // 2026-10報告: メインスレッドでの処理に戻したが、10秒分まとめて
       // 1回だけ処理することで、常時動き続ける場合に比べて頻度を大きく
       // 減らしている(通話音声の途切れ対策)。
-      const processStart = performance.now();
       buffer.push(merged);
-      let segmentCount = 0;
       while (buffer.size() > vad.config.sileroVad.windowSize) {
         const windowSamples = buffer.get(
           buffer.head(),
@@ -7668,7 +7585,6 @@ export default function AvatarSpace({
         while (!vad.isEmpty()) {
           const segment = vad.front();
           vad.pop();
-          segmentCount++;
           const self = selfState.current;
           if (!self) continue;
 
@@ -7678,13 +7594,6 @@ export default function AvatarSpace({
           const result = recognizer.getResult(stream);
           stream.free();
           const text = (result?.text ?? "").trim();
-          // 調査用ログ(2026-10報告: 文字起こしがあまりできていない不具合
-          // の原因調査)。各セグメントの長さと、実際に認識できたテキスト
-          // (空でも)をそのまま出す。
-          // eslint-disable-next-line no-console
-          console.log(
-            `[sherpa-onnx] segment ${segmentCount}: ${segment.samples.length}サンプル(約${(segment.samples.length / expectedSampleRate).toFixed(1)}秒) text="${text}"`,
-          );
           if (!text) continue;
 
           const now = Date.now();
@@ -7712,10 +7621,6 @@ export default function AvatarSpace({
           });
         }
       }
-      // eslint-disable-next-line no-console
-      console.log(
-        `[sherpa-onnx] flush処理完了: segment数=${segmentCount} 処理時間=${(performance.now() - processStart).toFixed(0)}ms`,
-      );
     };
     sherpaFlushPendingRef.current = flushPendingAudio;
 
