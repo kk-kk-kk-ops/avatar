@@ -7610,11 +7610,12 @@ export default function AvatarSpace({
 
     // 調査用ログ(2026-10報告: 音声の途切れ・文字起こしに声がほぼ入ら
     // ない不具合の原因調査)。独立取得したマイクトラックの実際の設定
-    // (サンプルレート・エコーキャンセル等)を確認する。
+    // (サンプルレート・エコーキャンセル等)を確認する。コンソールの
+    // コピー時に内容が見えるよう、JSON文字列として1行で出す。
     // eslint-disable-next-line no-console
     console.log(
       "[sherpa-onnx] 文字起こし用マイクのtrack.getSettings():",
-      micStream.getAudioTracks()[0]?.getSettings(),
+      JSON.stringify(micStream.getAudioTracks()[0]?.getSettings() ?? {}),
     );
 
     // AudioContextのsampleRateは指定せず、デバイス・ブラウザの既定値の
@@ -7693,6 +7694,13 @@ export default function AvatarSpace({
           const result = recognizer.getResult(stream);
           stream.free();
           const text = (result?.text ?? "").trim();
+          // 調査用ログ(2026-10報告: 文字起こしがあまりできていない不具合
+          // の原因調査)。各セグメントの長さと、実際に認識できたテキスト
+          // (空でも)をそのまま出す。
+          // eslint-disable-next-line no-console
+          console.log(
+            `[sherpa-onnx] segment ${segmentCount}: ${segment.samples.length}サンプル(約${(segment.samples.length / expectedSampleRate).toFixed(1)}秒) text="${text}"`,
+          );
           if (!text) continue;
 
           const now = Date.now();
