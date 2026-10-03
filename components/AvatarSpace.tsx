@@ -7300,7 +7300,12 @@ export default function AvatarSpace({
           if (!msg || typeof msg !== "object") return;
           if (msg.type === "ready") {
             // eslint-disable-next-line no-console
-            console.log("[sherpa-onnx] worker: 初期化完了");
+            console.log(
+              "[sherpa-onnx] worker: 初期化完了、hardwareConcurrency=",
+              typeof navigator !== "undefined"
+                ? navigator.hardwareConcurrency
+                : "unknown",
+            );
             sherpaWorkerRef.current = worker;
             resolve();
             return;
@@ -7599,6 +7604,15 @@ export default function AvatarSpace({
       return;
     }
 
+    // 調査用ログ(2026-10報告: 音声の途切れ・文字起こしに声がほぼ入ら
+    // ない不具合の原因調査)。独立取得したマイクトラックの実際の設定
+    // (サンプルレート・エコーキャンセル等)を確認する。
+    // eslint-disable-next-line no-console
+    console.log(
+      "[sherpa-onnx] 文字起こし用マイクのtrack.getSettings():",
+      micStream.getAudioTracks()[0]?.getSettings(),
+    );
+
     // AudioContextのsampleRateは指定せず、デバイス・ブラウザの既定値の
     // ままにする(通話側のAudioContextと異なるサンプルレートを強制する
     // と、同じマイクデバイスへの同時アクセスでハードウェア・ドライバー
@@ -7631,6 +7645,23 @@ export default function AvatarSpace({
       }
       pendingChunks = [];
       pendingSamples = 0;
+      // 調査用ログ(2026-10報告: 文字起こしに声がほぼ入らない不具合の
+      // 原因調査)。実際に送る音声のRMS(音量の目安)と長さを確認する。
+      // transferでmerged.bufferはこの後使えなくなるため、送信前に計算
+      // する。
+      let sumSquares = 0;
+      let peak = 0;
+      for (let i = 0; i < merged.length; i++) {
+        const v = merged[i];
+        sumSquares += v * v;
+        const abs = Math.abs(v);
+        if (abs > peak) peak = abs;
+      }
+      const rms = Math.sqrt(sumSquares / merged.length);
+      // eslint-disable-next-line no-console
+      console.log(
+        `[sherpa-onnx] flush: ${merged.length}サンプル(約${(merged.length / expectedSampleRate).toFixed(1)}秒) RMS=${rms.toFixed(4)} peak=${peak.toFixed(4)}`,
+      );
       worker.postMessage(
         { type: "audio", samples: merged.buffer, at: Date.now() },
         [merged.buffer],
