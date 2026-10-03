@@ -976,16 +976,15 @@ export default function AvatarSpace({
   const sherpaVadRef = useRef<any>(null);
   const sherpaBufferRef = useRef<any>(null);
   // マイク音声を認識モデルに流すためのWeb Audio Graph。
-  // 2026-10報告の不具合対応: 以前はLiveKitの公開中トラック(publication.
-  // track.mediaStreamTrack)を横取りする形にしていたが、これは実際には
-  // ノイズ抑制フィルター(DeepFilterNet3、applyNoiseFilterProcessor参照)
-  // がAudioWorkletで加工した後の「生成済みトラック」であり、そこに
-  // さらに別のサンプルレート(16kHz)でAudioContextを繋ぐと、通話送信側
-  // の処理と競合して相手に聞こえる声が途切れる不具合が起きていた
-  // (Worker化しても解消しなかったことから判明)。通話用のパイプラインと
-  // 完全に分離するため、文字起こし専用に`getUserMedia`で独立したマイク
-  // ストリームを別途取得する(マイク権限は既に許可済みのため、ユーザー
-  // への許可ダイアログが再度出ることはない)。
+  // 2026-10報告の経緯: 一度は文字起こし専用に`getUserMedia`で独立した
+  // マイクストリームを別途取得する方式に変更したが、時間が経つにつれて
+  // 録れる音量が明確に下がっていく現象が確認された(同じマイクデバイス
+  // への同時アクセスが2本になることによる、OS/ドライバーレベルでの
+  // 競合・自動減衰が疑われる)。LiveKitの公開中トラックを共有する
+  // (ネイティブなマイクキャプチャは1本のまま、Web Audio的にソフト
+  // ウェア上でタップするだけ)方式に戻した。AudioContextのサンプル
+  // レートを16kHzに強制していた点(これも通話側との競合要因だった)は
+  // 修正済みのまま維持している。
   const sherpaMicStreamRef = useRef<MediaStream | null>(null);
   // 2026-10報告: マイク分離(独立getUserMedia化)でも通話音声の途切れが
   // 直らなかったため、「文字起こしは10秒程度遅れてもよいので通話音声を
@@ -7530,16 +7529,9 @@ export default function AvatarSpace({
     if (audioCtx) {
       audioCtx.close().catch(() => {});
     }
-    // 文字起こし専用に取得した独立マイクストリームを解放する(2026-10
-    // 追加。LiveKitの公開トラックとは別物のため、こちらで明示的に止めな
-    // いとマイクが使用中のままになってしまう)。
-    sherpaMicStreamRef.current?.getTracks().forEach((t) => {
-      try {
-        t.stop();
-      } catch {
-        // 既に停止済みの場合などは無視
-      }
-    });
+    // 2026-10報告: micStreamはLiveKitの公開中トラックを共有しているだけ
+    // (このトラック自体の所有者はLiveKit側)なので、ここでtrack.stop()
+    // すると通話のマイクまで切れてしまう。参照を外すだけにする。
     sherpaMicStreamRef.current = null;
     sherpaProcessorNodeRef.current = null;
     sherpaSourceNodeRef.current = null;
@@ -7588,34 +7580,26 @@ export default function AvatarSpace({
     const recognizer = sherpaRecognizerRef.current;
     if (!vad || !buffer || !recognizer) return;
 
-    // 2026-10報告の不具合対応: LiveKitの公開中トラックを横取りするのを
-    // やめ、文字起こし専用に独立したgetUserMediaストリームを取得する
-    // (通話送信側のノイズ抑制処理と完全に分離するため)。マイク権限は
-    // 既に許可済みのはずなので、許可ダイアログが再度表示されることは
-    // ない。
-    let micStream: MediaStream;
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("[sherpa-onnx] 文字起こし用マイクの取得に失敗", err);
-      return;
-    }
-    // 取得待ちの間に状況が変わっている場合は、取得したトラックを即座に
-    // 解放して終了する。
-    if (!sameConferenceRoomAsRecorderRef.current || !micEnabledRef.current) {
-      micStream.getTracks().forEach((t) => t.stop());
-      return;
-    }
+    // 2026-10報告: 文字起こし用に独立したgetUserMediaストリームを別途
+    // 取得する方式を試したところ、時間が経つにつれて録れる音量が
+    // 明確に下がっていく現象が確認された(マイクデバイスへの同時アクセス
+    // が2本になることによる、OS/ドライバーレベルでの競合・自動減衰が
+    // 疑われる)。LiveKitの公開中トラックを共有する(ネイティブな
+    // マイクキャプチャは1本のまま、Web Audio的にソフトウェア上でタップ
+    // するだけ)方式に戻す。サンプルレートを16kHzに強制していた点は
+    // 既に修正済みなので、その修正だけを活かした状態で再検証する。
+    const room = livekitRoomRef.current;
+    const micTrack =
+      room?.localParticipant.getTrackPublication(Track.Source.Microphone)
+        ?.track?.mediaStreamTrack ?? null;
+    if (!micTrack) return;
+    const micStream = new MediaStream([micTrack]);
 
-    // 調査用ログ(2026-10報告: 音声の途切れ・文字起こしに声がほぼ入ら
-    // ない不具合の原因調査)。独立取得したマイクトラックの実際の設定
-    // (サンプルレート・エコーキャンセル等)を確認する。コンソールの
-    // コピー時に内容が見えるよう、JSON文字列として1行で出す。
+    // 調査用ログ(2026-10報告: 音声の途切れの原因調査)。
     // eslint-disable-next-line no-console
     console.log(
-      "[sherpa-onnx] 文字起こし用マイクのtrack.getSettings():",
-      JSON.stringify(micStream.getAudioTracks()[0]?.getSettings() ?? {}),
+      "[sherpa-onnx] 文字起こし用マイク(LiveKit共有)のtrack.getSettings():",
+      JSON.stringify(micTrack.getSettings() ?? {}),
     );
 
     // AudioContextのsampleRateは指定せず、デバイス・ブラウザの既定値の
