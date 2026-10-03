@@ -16,6 +16,9 @@ type Props = {
   // 相手にも見える)。マイクアイコンと場所が被らないよう枠の左下に表示
   // する。undefined/"idle"/"error"の場合は何も表示しない。
   transcriptionStatus?: "downloading" | "initializing" | "ready";
+  // 準備中の進捗(%)。自分自身の時だけ分かる値のため、相手のタイルには
+  // 渡さない(その場合はバッジのみ表示し、数字は出さない)。
+  transcriptionPercent?: number;
 };
 
 // ビデオ通話の映像枠(常時表示プレビュー行・会議画面モーダルの両方で
@@ -28,6 +31,7 @@ export default function VideoTile({
   isSelf,
   micOn,
   transcriptionStatus,
+  transcriptionPercent,
 }: Props) {
   return (
     <div
@@ -53,11 +57,18 @@ export default function VideoTile({
       )}
       {(transcriptionStatus === "downloading" ||
         transcriptionStatus === "initializing") && (
-        <span
-          className="absolute bottom-1 left-1 flex h-4 w-4 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[9px] text-white shadow"
-          title="文字起こしを準備中です"
-        >
-          ⋯
+        <span className="absolute bottom-1 left-1 flex items-center gap-1">
+          <span
+            className="flex h-4 w-4 shrink-0 animate-pulse items-center justify-center rounded-full bg-amber-500 text-[9px] text-white shadow"
+            title="文字起こしを準備中です"
+          >
+            ⋯
+          </span>
+          {typeof transcriptionPercent === "number" && (
+            <span className="rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white shadow">
+              文字起こし準備中:{transcriptionPercent}%
+            </span>
+          )}
         </span>
       )}
       {transcriptionStatus === "ready" && (
