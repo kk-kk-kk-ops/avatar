@@ -6538,6 +6538,7 @@ export default function AvatarSpace({
         const zoneId = stickyMeetingZone ? stickyMeetingZone.id : pointZoneId;
         self.meetingZoneId = zoneId;
         if (zoneId !== lastTrackedZoneId.current) {
+          const previousZoneId = lastTrackedZoneId.current;
           lastTrackedZoneId.current = zoneId;
           // 施錠中の会議室からの自動解錠は、当たり判定(矩形の重なり)基準の
           // 退室検知(上のconferenceゾーンのforEach内)で行っている。ここは
@@ -6603,11 +6604,43 @@ export default function AvatarSpace({
           // (以前は無条件で自動停止していたが、誤って外に出て録画が
           // 止まってしまう事故を防ぐため)。work/announcementの分岐とは
           // 独立に、常にこのタイミングで判定する。
+          //
+          // 2026-10報告のバグ修正: この判定は中心点ベースのため、当たり
+          // 判定(アバターの矩形)ベースの移動ブロック(上のconferenceゾーン
+          // のforEach内)より先に「外に出た」と判定してしまう(アバターの
+          // 当たり判定の半分の距離だけ、中心点の方が先に境界を越えられる
+          // ため)。ポップアップを出すのと同時に、直前にいた会議室の中心へ
+          // 強制的に押し戻すことで、見た目上も会議室の外に出た状態で
+          // ポップアップが表示され続けることが無いようにする。
           if (
             recordingOwnerIdRef.current === self.id &&
             enteredZone?.kind !== "conference" &&
             !isStoppingRecordingRef.current
           ) {
+            const previousZone = previousZoneId
+              ? meetingZonesRef.current.find((z) => z.id === previousZoneId)
+              : null;
+            if (previousZone && previousZone.kind === "conference") {
+              self.x = previousZone.x + previousZone.width / 2;
+              self.y = previousZone.y + previousZone.height / 2;
+              self.meetingZoneId = previousZoneId;
+              lastTrackedZoneId.current = previousZoneId;
+              insideConferenceZoneIdsRef.current.add(previousZone.id);
+              setPlayers((prev) => {
+                const current = prev[self.id];
+                if (!current) return prev;
+                return {
+                  ...prev,
+                  [self.id]: {
+                    ...current,
+                    x: self.x,
+                    y: self.y,
+                    meetingZoneId: previousZoneId,
+                  },
+                };
+              });
+              channelRef.current?.track(self);
+            }
             setShowExitZoneWhileRecordingConfirm(true);
           }
         }
