@@ -92,7 +92,11 @@ self.onmessage = async (event) => {
     // samplesは16kHzにダウンサンプリング済みのFloat32Array(メイン
     // スレッド側で変換済み、transferableで渡されている)。
     const samples = new Float32Array(msg.samples);
+    // 調査用ログ(2026-10報告: 音声の途切れ・文字起こしに声がほぼ入ら
+    // ない不具合の原因調査)。
+    const vadStart = performance.now();
     buffer.push(samples);
+    let segmentCount = 0;
     while (buffer.size() > vad.config.sileroVad.windowSize) {
       const windowSamples = buffer.get(
         buffer.head(),
@@ -104,18 +108,30 @@ self.onmessage = async (event) => {
       while (!vad.isEmpty()) {
         const segment = vad.front();
         vad.pop();
+        segmentCount++;
 
+        const decodeStart = performance.now();
         const stream = recognizer.createStream();
         stream.acceptWaveform(16000, segment.samples);
         recognizer.decode(stream);
         const result = recognizer.getResult(stream);
         stream.free();
+        const decodeMs = performance.now() - decodeStart;
         const text = (result?.text ?? "").trim();
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-worker] segment ${segmentCount}: ${segment.samples.length}サンプル decode=${decodeMs.toFixed(0)}ms text="${text}"`,
+        );
         if (!text) continue;
 
         self.postMessage({ type: "result", text, at: msg.at ?? Date.now() });
       }
     }
+    const totalMs = performance.now() - vadStart;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[sherpa-worker] audioメッセージ処理完了: ${samples.length}サンプル、segment数=${segmentCount}、VAD+decode合計=${totalMs.toFixed(0)}ms`,
+    );
     return;
   }
 
