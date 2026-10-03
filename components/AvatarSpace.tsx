@@ -9630,6 +9630,7 @@ export default function AvatarSpace({
                   isSelf
                   micOn={micEnabled}
                   transcriptionStatus={selfTranscriptionStatus}
+                  transcriptionPercent={sherpaLoadPercent}
                 />
                 {inCall && (
                   <button
@@ -9865,6 +9866,7 @@ export default function AvatarSpace({
                       isSelf
                       micOn={micEnabled}
                       transcriptionStatus={selfTranscriptionStatus}
+                      transcriptionPercent={sherpaLoadPercent}
                     />
                     {otherPlayers.map((p) => (
                       <VideoTile
@@ -10028,6 +10030,7 @@ export default function AvatarSpace({
                         isSelf
                         micOn={micEnabled}
                         transcriptionStatus={selfTranscriptionStatus}
+                        transcriptionPercent={sherpaLoadPercent}
                       />
                       {otherPlayers.map((p) => (
                         <VideoTile
