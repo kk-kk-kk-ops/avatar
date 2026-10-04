@@ -7140,13 +7140,21 @@ export default function AvatarSpace({
     micToggleInFlightRef.current = true;
     try {
       await room.localParticipant.setMicrophoneEnabled(next);
-      setMicEnabled(next);
+      // 2026-10報告(「マイクオフの状態で録画を開始すると文字起こしが
+      // 一切されない(オンのまま録画開始すると100%される)」)の原因が
+      // これだった: 以前は`setMicEnabled(next)`を先に呼んでいたため、
+      // (録画中なら)micEnabled状態の変化で即座に文字起こしパイプラインの
+      // 起動処理が走り、ノイズ抑制フィルターの`applyNoiseFilterProcessor`
+      // (トラックを破棄・再生成する処理、結果を待たずに呼んでいた)と
+      // 競合していた。文字起こし側がちょうどトラック差し替えの最中に
+      // マイクのトラックを取得してしまうと、タップした先が不完全な状態の
+      // ままになり音声が一切取り込めなくなる。ノイズ抑制フィルターの適用
+      // (トラックの差し替え)が完全に終わるまで待ってから、micEnabled状態
+      // を変える(=文字起こし側の起動処理をトリガーする)ようにする。
       if (next) {
-        // マイクONのたびにトラックが破棄・再生成されるため、その都度
-        // ノイズ抑制フィルターを適用し直す。失敗してもマイク自体の動作を
-        // 妨げないよう、結果を待たずに呼ぶ(内部でエラーは捕捉済み)。
-        void applyNoiseFilterProcessor(room);
+        await applyNoiseFilterProcessor(room);
       }
+      setMicEnabled(next);
       if (selfState.current) {
         selfState.current.micOn = next;
         channelRef.current?.track(selfState.current);
