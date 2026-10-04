@@ -898,7 +898,7 @@ export default function AvatarSpace({
   // (詳細はstopRecording参照)。
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   const isStoppingRecordingRef = useRef(false);
-  // 録画停止〜ローカル保存完了までの残り時間をヘッダーに「残り%」として
+  // 録画停止〜ローカル保存完了までの進捗をヘッダーに0→100%として
   // 表示するための状態(2026-10追加、録画開始者のみ)。nullの時は非表示。
   const [recordingStopProgressPercent, setRecordingStopProgressPercent] =
     useState<number | null>(null);
@@ -8033,7 +8033,7 @@ export default function AvatarSpace({
     isStoppingRecordingRef.current = true;
     setIsStoppingRecording(true);
     recordingStopStartAtRef.current = Date.now();
-    setRecordingStopProgressPercent(100);
+    setRecordingStopProgressPercent(0);
     // 10秒分まとめて送る方式(2026-10追加)のため、停止操作があった時点で
     // 即座に溜まっている分をWorkerへ送っておく(自然にたまるのを待つと
     // 最大10秒分の発言の確定が遅れ、下の猶予期間内に終わらない恐れが
@@ -8066,12 +8066,12 @@ export default function AvatarSpace({
     }, RECORDING_STOP_GRACE_MS);
   }, []);
 
-  // 録画停止中(isStoppingRecording)の間、ヘッダーに出す「残り%」表示を
+  // 録画停止中(isStoppingRecording)の間、ヘッダーに出す進捗%表示を
   // 一定間隔で更新する(2026-10追加)。全体の猶予時間(GRACE+FLUSH)に対する
-  // 残り時間の割合を表示するだけで、実際の保存完了タイミングとは厳密には
-  // 一致しない(recorder.stop()後のonstop処理自体にもわずかに時間がかかる
-  // ため)が、ユーザーへの目安としては十分。停止処理が終わったら(false
-  // に戻ったら)非表示に戻す。
+  // 経過時間の割合(0→100%)を表示するだけで、実際の保存完了タイミングとは
+  // 厳密には一致しない(recorder.stop()後のonstop処理自体にもわずかに
+  // 時間がかかるため)が、ユーザーへの目安としては十分。停止処理が終わったら
+  // (falseに戻ったら)非表示に戻す。
   useEffect(() => {
     if (!isStoppingRecording) {
       setRecordingStopProgressPercent(null);
@@ -8083,8 +8083,8 @@ export default function AvatarSpace({
       const startedAt = recordingStopStartAtRef.current;
       if (startedAt === null) return;
       const elapsed = Date.now() - startedAt;
-      const remaining = Math.max(0, Math.round(100 - (elapsed / totalMs) * 100));
-      setRecordingStopProgressPercent(remaining);
+      const progress = Math.min(100, Math.round((elapsed / totalMs) * 100));
+      setRecordingStopProgressPercent(progress);
     };
     tick();
     const interval = window.setInterval(tick, 200);
@@ -9551,7 +9551,7 @@ export default function AvatarSpace({
                 className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white shadow"
                 title="録画・文字起こしをローカルに保存中です"
               >
-                文字起こし保存中:残り{recordingStopProgressPercent}%
+                文字起こし保存中:{recordingStopProgressPercent}%
               </span>
             )}
             <div className="flex shrink-0 flex-col items-center">
