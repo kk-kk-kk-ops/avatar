@@ -7714,6 +7714,10 @@ export default function AvatarSpace({
       // 2026-10報告: メインスレッドでの処理に戻したが、10秒分まとめて
       // 1回だけ処理することで、常時動き続ける場合に比べて頻度を大きく
       // 減らしている(通話音声の途切れ対策)。
+      // eslint-disable-next-line no-console
+      console.log(
+        `[sherpa-debug] flush: ${(merged.length / expectedSampleRate).toFixed(2)}s分の音声を処理`,
+      );
       buffer.push(merged);
       while (buffer.size() > vad.config.sileroVad.windowSize) {
         const windowSamples = buffer.get(
@@ -7735,6 +7739,13 @@ export default function AvatarSpace({
           const result = recognizer.getResult(stream);
           stream.free();
           const text = (result?.text ?? "").trim();
+          // 2026-10調査用(「普通に話すと文字起こしが結構飛ぶ」の原因調査):
+          // 一時的な診断ログ。VADが検出した各発話区間の長さとdecode結果を
+          // 全て記録する(textが空の場合も含む)。原因特定後に削除する。
+          // eslint-disable-next-line no-console
+          console.log(
+            `[sherpa-debug] segment: ${(segment.samples.length / expectedSampleRate).toFixed(2)}s -> "${text}"`,
+          );
           if (!text) continue;
 
           const now = Date.now();
@@ -7789,7 +7800,21 @@ export default function AvatarSpace({
     // 単純な蓄積・転送のみにして専用スレッド側の処理を極力軽くしている)。
     // ダウンサンプリング自体は軽い処理なのでメインスレッドで行って問題
     // ない。
+    // 2026-10調査用: worklet(専用スレッド)からのメッセージ受信間隔が
+    // 不自然に空いていないか(=メインスレッド側でのdecode処理中に受信が
+    // 遅延・滞留していないか)を確認するための一時的な診断ログ。500ms以上
+    // 間隔が空いた場合のみ記録する(通常は数十ms間隔で届く想定)。原因
+    // 特定後に削除する。
+    let lastWorkletMessageAt: number | null = null;
     workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+      const nowMs = Date.now();
+      if (lastWorkletMessageAt !== null && nowMs - lastWorkletMessageAt > 500) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-debug] worklet受信の間隔が${nowMs - lastWorkletMessageAt}ms空いた`,
+        );
+      }
+      lastWorkletMessageAt = nowMs;
       const samples = downsampleBuffer(
         e.data,
         audioCtx.sampleRate,
