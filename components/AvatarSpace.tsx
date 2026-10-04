@@ -1024,7 +1024,14 @@ export default function AvatarSpace({
   // ようにする。
   const sherpaFlushPendingRef = useRef<(() => void) | null>(null);
   const sherpaAudioContextRef = useRef<AudioContext | null>(null);
-  const sherpaProcessorNodeRef = useRef<ScriptProcessorNode | null>(null);
+  // 2026-10報告(「普通に話すと文字起こしが結構飛んでいる」)対応: 旧実装
+  // のScriptProcessorNodeはメインスレッド上で動くため、VAD+decode()で
+  // メインスレッドが塞がっている間はマイク音声フレームの取り込み自体が
+  // 丸ごと欠落していた。AudioWorkletNodeは専用のオーディオレンダリング
+  // スレッド上で動くため、メインスレッドがどれだけ塞がっていても取り込み
+  // 自体は欠落しない(postMessageでメインスレッドへ渡す分の処理が遅れる
+  // だけで、データそのものは失われない)。
+  const sherpaWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sherpaSourceNodeRef =
     useRef<MediaStreamAudioSourceNode | null>(null);
   const sherpaRunningRef = useRef(false);
@@ -7575,13 +7582,13 @@ export default function AvatarSpace({
     // 分の発言が未処理のまま失われてしまうため)。
     sherpaFlushPendingRef.current?.();
     sherpaFlushPendingRef.current = null;
-    const processor = sherpaProcessorNodeRef.current;
+    const workletNode = sherpaWorkletNodeRef.current;
     const source = sherpaSourceNodeRef.current;
     const audioCtx = sherpaAudioContextRef.current;
-    if (processor) {
-      processor.onaudioprocess = null;
+    if (workletNode) {
+      workletNode.port.onmessage = null;
       try {
-        processor.disconnect();
+        workletNode.disconnect();
       } catch {
         // 既に切断済みの場合などは無視
       }
@@ -7600,7 +7607,7 @@ export default function AvatarSpace({
     // (このトラック自体の所有者はLiveKit側)なので、ここでtrack.stop()
     // すると通話のマイクまで切れてしまう。参照を外すだけにする。
     sherpaMicStreamRef.current = null;
-    sherpaProcessorNodeRef.current = null;
+    sherpaWorkletNodeRef.current = null;
     sherpaSourceNodeRef.current = null;
     sherpaAudioContextRef.current = null;
     sherpaVadRef.current?.reset();
@@ -7670,7 +7677,17 @@ export default function AvatarSpace({
     const expectedSampleRate = 16000;
     const audioCtx = new AudioContext();
     const mediaStreamSource = audioCtx.createMediaStreamSource(micStream);
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    // 2026-10報告(「普通に話すと文字起こしが結構飛んでいる」)対応:
+    // ScriptProcessorNode(メインスレッド上で動く、非推奨API)から
+    // AudioWorkletNode(専用のオーディオレンダリングスレッド上で動く)へ
+    // 変更する。メインスレッドがVAD+decode()で塞がっていても、取り込み
+    // 自体はこの専用スレッドで継続されるため欠落しない(詳細は下記
+    // worklet.port.onmessage側のコメント参照)。
+    await audioCtx.audioWorklet.addModule("/sherpa/mic-capture-worklet.js");
+    const workletNode = new AudioWorkletNode(
+      audioCtx,
+      "mic-capture-processor",
+    );
 
     // 2026-10報告のバグ修正: 以前はここでVAD・認識(重いWASM呼び出し)を
     // メインスレッド上で直接行っており、1発言分の音声をまとめて認識する
@@ -7767,12 +7784,14 @@ export default function AvatarSpace({
       }, 0);
     };
 
-    processor.onaudioprocess = (e) => {
-      let samples: Float32Array = new Float32Array(
-        e.inputBuffer.getChannelData(0),
-      );
-      samples = downsampleBuffer(
-        samples,
+    // worklet側は専用スレッドでためたチャンク(Float32Array)をそのまま
+    // postMessageしてくるだけ(ダウンサンプリング等の重い処理は持たせず、
+    // 単純な蓄積・転送のみにして専用スレッド側の処理を極力軽くしている)。
+    // ダウンサンプリング自体は軽い処理なのでメインスレッドで行って問題
+    // ない。
+    workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+      const samples = downsampleBuffer(
+        e.data,
         audioCtx.sampleRate,
         expectedSampleRate,
       );
@@ -7783,13 +7802,20 @@ export default function AvatarSpace({
       }
     };
 
-    mediaStreamSource.connect(processor);
-    processor.connect(audioCtx.destination);
+    mediaStreamSource.connect(workletNode);
+    // AudioWorkletNodeはScriptProcessorNodeと異なり出力先への接続が無くても
+    // 動作するはずだが、一部環境での取り扱いの違いによるリスクを避けるため
+    // (旧実装でもdestinationへの接続が必要だった)、無音(gain=0)で
+    // destinationへ接続しグラフ上「生きた」状態を保つ。
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    workletNode.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
 
     sherpaMicStreamRef.current = micStream;
     sherpaAudioContextRef.current = audioCtx;
     sherpaSourceNodeRef.current = mediaStreamSource;
-    sherpaProcessorNodeRef.current = processor;
+    sherpaWorkletNodeRef.current = workletNode;
     sherpaRunningRef.current = true;
     activeTranscriptionEngineRef.current = "sherpa";
   }, [loadSherpaOnnx, addCaptionLine, startWebSpeechFallback]);

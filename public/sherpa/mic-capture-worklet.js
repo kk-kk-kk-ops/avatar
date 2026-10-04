@@ -1,0 +1,49 @@
+// マイク音声の取り込み専用AudioWorkletProcessor(2026-10追加)。
+//
+// 文字起こし(sherpa-onnx)のVAD+decode()はメインスレッド上で行うため、
+// 処理中はメインスレッドが長時間塞がることがある。以前はマイクの取り込み
+// 自体も(非推奨の)ScriptProcessorNodeでメインスレッド上で行っていたため、
+// decode()中に届いた音声フレームがそのまま丸ごと欠落していた
+// (「普通に話すと文字起こしが結構飛んでいる」報告)。
+//
+// AudioWorkletProcessorはメインスレッドとは別の専用オーディオレンダリング
+// スレッド上で動作するため、メインスレッドがどれだけ塞がっていても
+// process()の呼び出し自体は欠落しない。ここでは最低限の処理(一定量まで
+// まとめてメインスレッドへpostMessageするだけ)に留め、ダウンサンプリング
+// 等の処理は(軽いので)メインスレッド側に任せる。
+class MicCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._chunks = [];
+    this._length = 0;
+    // 128サンプル(1クオンタム)ごとにpostMessageすると呼び出し過多に
+    // なるため、旧ScriptProcessorNode実装と同程度の粒度(4096サンプル)
+    // までまとめてから送る。
+    this._postThreshold = 4096;
+  }
+
+  process(inputs) {
+    const input = inputs[0];
+    const channel = input && input[0];
+    if (channel && channel.length > 0) {
+      this._chunks.push(channel.slice());
+      this._length += channel.length;
+      if (this._length >= this._postThreshold) {
+        const merged = new Float32Array(this._length);
+        let offset = 0;
+        for (const chunk of this._chunks) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        this._chunks = [];
+        this._length = 0;
+        this.port.postMessage(merged);
+      }
+    }
+    // falseを返すとブラウザ側がこのノードを破棄してしまうため、常にtrue
+    // を返して処理を継続させる。
+    return true;
+  }
+}
+
+registerProcessor("mic-capture-processor", MicCaptureProcessor);
