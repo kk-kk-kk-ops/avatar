@@ -7809,19 +7809,36 @@ export default function AvatarSpace({
         }
         pendingChunks = [];
         pendingSamples = 0;
+        // 2026-10調査用: 実際に声が録れているか(無音・極小音量になって
+        // いないか)を確認するための一時的なRMS(音量)ログ。
+        let sumSq = 0;
+        for (let i = 0; i < merged.length; i++) sumSq += merged[i] * merged[i];
+        const rms = Math.sqrt(sumSq / merged.length);
+        // eslint-disable-next-line no-console
+        console.log(`[sherpa-debug] merged音声のRMS(音量): ${rms.toFixed(4)}`);
         // 2026-10報告: メインスレッドでの処理に戻したが、10秒分まとめて
         // 1回だけ処理することで、常時動き続ける場合に比べて頻度を大きく
         // 減らしている(通話音声の途切れ対策)。
         buffer.push(merged);
+        let anyDetected = false;
         while (buffer.size() > vad.config.sileroVad.windowSize) {
           const windowSamples = buffer.get(
             buffer.head(),
             vad.config.sileroVad.windowSize,
           );
           vad.acceptWaveform(windowSamples);
+          try {
+            if (vad.isDetected()) anyDetected = true;
+          } catch {
+            // 未サポートの可能性があるため握り潰す(調査用ログのみに影響)。
+          }
           buffer.pop(vad.config.sileroVad.windowSize);
           drainReadySegments();
         }
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-debug] このflushでVADが発話中と判定した瞬間があったか: ${anyDetected}`,
+        );
       }
       if (isFinal) {
         // 何らかの理由で失敗しても(末尾の1発話を取りこぼすだけで済み)、
