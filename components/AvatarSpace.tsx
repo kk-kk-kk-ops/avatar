@@ -899,6 +899,12 @@ export default function AvatarSpace({
   // (詳細はstopRecording参照)。
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   const isStoppingRecordingRef = useRef(false);
+  // 録画開始ボタンを押してから、文字起こしパイプラインの準備(マイクの
+  // タップ等)が完了するまでtrueにする(2026-10追加、録画開始者のみ)。
+  // 「録画中」アイコンへの切り替え・presenceへのrecordingOn反映を、この
+  // 準備が終わるまで遅らせることで、録画開始直後の数秒分の発言が文字
+  // 起こしされない問題を視覚的に分かるようにする(startRecording参照)。
+  const [isPreparingRecording, setIsPreparingRecording] = useState(false);
   // 録画停止〜ローカル保存完了までの進捗をヘッダーに0→100%として
   // 表示するための状態(2026-10追加、録画開始者のみ)。nullの時は非表示。
   const [recordingStopProgressPercent, setRecordingStopProgressPercent] =
@@ -7637,7 +7643,13 @@ export default function AvatarSpace({
     sherpaBufferRef.current?.reset();
   }, [stopWebSpeechFallback]);
 
-  const startLocalSpeechPipeline = useCallback(async () => {
+  // forceStart: 録画開始者本人がstartRecording()から直接呼ぶ際にtrue。
+  // この時点ではまだpresence経由のrecordingOwnerIdが更新されていない
+  // (録画中アイコンへの切り替えを文字起こし準備完了まで遅らせるため、
+  // わざと先にこちらを呼んでいる。startRecording参照)ため、
+  // recordingOwnerIdRef.current===nullのガードだけ迂回する。他の条件
+  // (会議室にいるか・マイクONか)はforceStartでも通常通り必須のまま。
+  const startLocalSpeechPipeline = useCallback(async (forceStart = false) => {
     if (
       sherpaRunningRef.current ||
       activeTranscriptionEngineRef.current !== "none"
@@ -7658,7 +7670,7 @@ export default function AvatarSpace({
       if (
         !sameConferenceRoomAsRecorderRef.current ||
         !micEnabledRef.current ||
-        recordingOwnerIdRef.current === null
+        (!forceStart && recordingOwnerIdRef.current === null)
       ) {
         return;
       }
@@ -7676,7 +7688,7 @@ export default function AvatarSpace({
     if (
       !sameConferenceRoomAsRecorderRef.current ||
       !micEnabledRef.current ||
-      recordingOwnerIdRef.current === null
+      (!forceStart && recordingOwnerIdRef.current === null)
     ) {
       return;
     }
@@ -8202,6 +8214,22 @@ export default function AvatarSpace({
       // webmになる、通常のMediaRecorderの使い方)。
       recorder.start(5000);
 
+      // 2026-10報告(「冒頭数秒の発言が文字起こしされない」)対応: 文字
+      // 起こしパイプラインの準備(マイクのタップ・AudioWorklet初期化等)
+      // には多少の時間がかかる。録画中フラグ(recordingOn)をpresenceに
+      // 立てる前にこの準備を済ませておくことで、「録画中」アイコンへの
+      // 切り替え・会議室内の他参加者への通知(≒他参加者が話し始めてよい
+      // タイミング)を、実際に文字起こしできる状態になるまで遅らせる。
+      // forceStart=trueで呼ぶことで、まだrecordingOwnerIdが立っていない
+      // (=このままだと「録画中ではない」と判定されて開始を見送ってしまう)
+      // 状態でも、録画開始者本人からの明示的な呼び出しとして開始させる。
+      setIsPreparingRecording(true);
+      try {
+        await startLocalSpeechPipeline(true);
+      } finally {
+        setIsPreparingRecording(false);
+      }
+
       // 録画中フラグをpresence(players)に立てる。会議室の施錠と同じ
       // 仕組みのため、既に接続中の参加者にはpresence同期で即座に、
       // この後入室してくる参加者にも入室時のpresence同期で確実に伝わる
@@ -8221,7 +8249,7 @@ export default function AvatarSpace({
       // 共有ダイアログをキャンセルした場合などはここに来る。既存の画面
       // 共有開始処理と同じくエラー扱いにはしない。
     }
-  }, [saveCaptionsLocally, cleanupRecordingResources]);
+  }, [saveCaptionsLocally, cleanupRecordingResources, startLocalSpeechPipeline]);
 
   // 録画停止の猶予期間(2026-10追加)。交互に話したりすると、Web Speech
   // APIの文字起こしが追いつかず、停止操作の直後だと直前の発言が確定・
@@ -9957,6 +9985,7 @@ export default function AvatarSpace({
                     disabled={
                       !isScreenRecordingSupported() ||
                       isStoppingRecording ||
+                      isPreparingRecording ||
                       (recordingOwnerId !== null &&
                         recordingOwnerId !== selfId.current)
                     }
@@ -9965,9 +9994,11 @@ export default function AvatarSpace({
                         ? "このブラウザでは画面録画を利用できません"
                         : isStoppingRecording
                           ? "停止処理中です(文字起こしの完了を待っています)"
-                          : recordingOwnerName
-                            ? `${recordingOwnerName}さんが録画中です`
-                            : undefined
+                          : isPreparingRecording
+                            ? "文字起こしの準備中です…"
+                            : recordingOwnerName
+                              ? `${recordingOwnerName}さんが録画中です`
+                              : undefined
                     }
                     warning={sherpaStatus === "error"}
                     warningReason={
@@ -10255,6 +10286,7 @@ export default function AvatarSpace({
                           disabled={
                             !isScreenRecordingSupported() ||
                             isStoppingRecording ||
+                            isPreparingRecording ||
                             (recordingOwnerId !== null &&
                               recordingOwnerId !== selfId.current)
                           }
@@ -10263,9 +10295,11 @@ export default function AvatarSpace({
                               ? "このブラウザでは画面録画を利用できません"
                               : isStoppingRecording
                                 ? "停止処理中です(文字起こしの完了を待っています)"
-                                : recordingOwnerName
-                                  ? `${recordingOwnerName}さんが録画中です`
-                                  : undefined
+                                : isPreparingRecording
+                                  ? "文字起こしの準備中です…"
+                                  : recordingOwnerName
+                                    ? `${recordingOwnerName}さんが録画中です`
+                                    : undefined
                           }
                           warning={sherpaStatus === "error"}
                           warningReason={
@@ -10409,6 +10443,7 @@ export default function AvatarSpace({
                         disabled={
                           !isScreenRecordingSupported() ||
                           isStoppingRecording ||
+                          isPreparingRecording ||
                           (recordingOwnerId !== null &&
                             recordingOwnerId !== selfId.current)
                         }
@@ -10417,9 +10452,11 @@ export default function AvatarSpace({
                             ? "このブラウザでは画面録画を利用できません"
                             : isStoppingRecording
                               ? "停止処理中です(文字起こしの完了を待っています)"
-                              : recordingOwnerName
-                                ? `${recordingOwnerName}さんが録画中です`
-                                : undefined
+                              : isPreparingRecording
+                                ? "文字起こしの準備中です…"
+                                : recordingOwnerName
+                                  ? `${recordingOwnerName}さんが録画中です`
+                                  : undefined
                         }
                         warning={sherpaStatus === "error"}
                         warningReason={
