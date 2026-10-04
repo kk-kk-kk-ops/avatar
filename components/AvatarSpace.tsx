@@ -842,16 +842,27 @@ export default function AvatarSpace({
   }, [recordingOwnerId]);
   const [showRecordConfirm, setShowRecordConfirm] = useState(false);
   // 録画開始者が録画中に会議エリアから出ようとした時の確認(2026-10
-  // 追加)。以前は無条件で自動停止していたが、誤って外に出て録画が
-  // 止まってしまう事故を防ぐため、境界を越える移動そのものをブロックし
-  // (壁と同じ扱い、下のconferenceゾーンのforEach内)、それと同時に確認
-  // ポップアップを出す。「はい」までは実際には外に出られない(アバターを
-  // 中心などへ押し戻す演出は不自然という報告があったため廃止し、最初から
-  // 出さない方式にした)。壁に当たり続ける間、毎フレーム出し直さないよう
-  // exitZonePromptShownRefで一度だけ出すようにする。
+  // 追加)。境界を越える移動そのものをブロックし(壁と同じ扱い、下の
+  // conferenceゾーンのforEach内)、それと同時に確認ポップアップを出す。
+  // ポップアップ表示中は(横方向も含め)一切移動できないようにする
+  // (2026-10報告: 壁際で軸ごとにブロックするだけだと横移動もできなく
+  // なってしまったため、ポップアップ表示中は移動そのものを完全に止める
+  // 方式に変更)。「いいえ」を選んだ時だけ、押していた移動方向と反対に
+  // 10px戻す(壁に張り付いたままにならないように)。壁に当たり続ける間、
+  // 毎フレーム出し直さないようexitZonePromptShownRefで一度だけ出す。
   const [showExitZoneWhileRecordingConfirm, setShowExitZoneWhileRecordingConfirm] =
     useState(false);
+  const showExitZoneWhileRecordingConfirmRef = useRef(false);
+  useEffect(() => {
+    showExitZoneWhileRecordingConfirmRef.current =
+      showExitZoneWhileRecordingConfirm;
+  }, [showExitZoneWhileRecordingConfirm]);
   const exitZonePromptShownRef = useRef(false);
+  // ブロックされた瞬間の移動方向(正規化済み単位ベクトル)。「いいえ」を
+  // 選んだ時にこの逆方向へ10px戻すために使う。
+  const exitBlockDirectionRef = useRef<{ dx: number; dy: number } | null>(
+    null,
+  );
   // 録画開始者が「退室」ボタンを押した時の確認(2026-10追加)。録画開始者
   // 以外が押した場合はこの確認を挟まず、従来通りそのまま退室する。
   const [showLeaveRoomWhileRecordingConfirm, setShowLeaveRoomWhileRecordingConfirm] =
@@ -6213,9 +6224,15 @@ export default function AvatarSpace({
       if (self) {
         let dx = 0;
         let dy = 0;
+        // 2026-10追加: 録画中に会議エリアから出ようとした時の確認ポップ
+        // アップが表示されている間は、横方向を含め一切移動できないように
+        // する(軸ごとのブロックだけだと壁沿いに横移動できてしまうため)。
+        const movementFrozenForExitConfirm =
+          recordingOwnerIdRef.current === self.id &&
+          showExitZoneWhileRecordingConfirmRef.current;
         // アバターの向き別スプライトのプリロードが終わるまでは、キー/タッチ
         // 操作による移動・向き変更を受け付けない(ローディング画面表示中)。
-        if (assetsReadyRef.current) {
+        if (assetsReadyRef.current && !movementFrozenForExitConfirm) {
           const keys = keysDown.current;
           if (keys.size > 0) {
             // 矢印キー/タッチ操作が入力されたら、ダブルクリック移動中でも
@@ -6396,6 +6413,15 @@ export default function AvatarSpace({
                 if (!touchY) blockedY = true;
                 if (!exitZonePromptShownRef.current) {
                   exitZonePromptShownRef.current = true;
+                  // 「いいえ」が選ばれた時に押し戻す方向(このフレームの移動
+                  // 方向の単位ベクトル)を記録しておく。押し戻し自体はここ
+                  // では行わない(ポップアップ表示中は移動を全凍結するため、
+                  // ここで押し戻しても次フレームで再度境界に押し付けられる)。
+                  const dirLen = Math.hypot(dx, dy) || 1;
+                  exitBlockDirectionRef.current = {
+                    dx: dx / dirLen,
+                    dy: dy / dirLen,
+                  };
                   setShowExitZoneWhileRecordingConfirm(true);
                 }
                 return;
@@ -8063,6 +8089,7 @@ export default function AvatarSpace({
   const confirmExitZoneWhileRecording = useCallback(() => {
     setShowExitZoneWhileRecordingConfirm(false);
     exitZonePromptShownRef.current = false;
+    exitBlockDirectionRef.current = null;
     stopRecording();
   }, [stopRecording]);
   const declineExitZoneWhileRecording = useCallback(() => {
@@ -8071,8 +8098,28 @@ export default function AvatarSpace({
     // 向けて移動入力が続いている可能性が高く、リセットすると次のフレーム
     // で即座にポップアップが再表示されてしまうため。壁から実際に離れた
     // (touchingに戻った)タイミングで自動的にリセットされる。
-    // 録画・移動ブロックともに継続する(アバターは壁際でブロックされた
-    // ままなので、押し戻す処理は不要)。
+    // 2026-10追加: ポップアップ表示中は移動を全凍結しているため、表示中に
+    // 横方向の入力を続けると壁に張り付いたまま横移動ができなくなる
+    // (軸ごとのブロックのみだと発生する問題)。「いいえ」を選んだ瞬間に
+    // だけ、境界に近づいた移動方向と反対へ10pxだけ押し戻すことで、壁から
+    // 少し離れて横移動の余地を作る。
+    const dir = exitBlockDirectionRef.current;
+    exitBlockDirectionRef.current = null;
+    if (dir) {
+      const self = selfState.current;
+      if (self) {
+        self.x -= dir.dx * 10;
+        self.y -= dir.dy * 10;
+        setPlayers((prev) => {
+          const existing = prev[self.id];
+          if (!existing) return prev;
+          return {
+            ...prev,
+            [self.id]: { ...existing, x: self.x, y: self.y },
+          };
+        });
+      }
+    }
   }, []);
 
   // 録画中に「退室」ボタンを押した時の確認(2026-10追加、録画開始者の
