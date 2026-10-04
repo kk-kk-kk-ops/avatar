@@ -1022,7 +1022,9 @@ export default function AvatarSpace({
   // 音声劣化を緩和できる可能性がある。録画停止時はこの関数を呼んで
   // 即座に溜まっている分を送り、録画停止の猶予期間内に処理が終わる
   // ようにする。
-  const sherpaFlushPendingRef = useRef<(() => void) | null>(null);
+  const sherpaFlushPendingRef = useRef<((isFinal?: boolean) => void) | null>(
+    null,
+  );
   const sherpaAudioContextRef = useRef<AudioContext | null>(null);
   // 2026-10報告(「普通に話すと文字起こしが結構飛んでいる」)対応: 旧実装
   // のScriptProcessorNodeはメインスレッド上で動くため、VAD+decode()で
@@ -7588,8 +7590,10 @@ export default function AvatarSpace({
     sherpaRunningRef.current = false;
     // 10秒分まとめて送る方式(2026-10追加)のため、停止時にその時点で
     // 溜まっている分を即座に送っておく(自然にたまるのを待つと最大10秒
-    // 分の発言が未処理のまま失われてしまうため)。
-    sherpaFlushPendingRef.current?.();
+    // 分の発言が未処理のまま失われてしまうため)。isFinal=trueでVAD内部の
+    // 確定待ち区間も強制的に確定させる(呼んだ直後にvad.reset()するため、
+    // ここで確定させないと末尾の発話が永久に失われる)。
+    sherpaFlushPendingRef.current?.(true);
     sherpaFlushPendingRef.current = null;
     const workletNode = sherpaWorkletNodeRef.current;
     const source = sherpaSourceNodeRef.current;
@@ -7718,66 +7722,80 @@ export default function AvatarSpace({
     const FLUSH_INTERVAL_SAMPLES = expectedSampleRate * 10; // 約10秒分
     let pendingChunks: Float32Array[] = [];
     let pendingSamples = 0;
-    const flushPendingAudio = () => {
-      if (pendingSamples === 0) return;
-      const merged = new Float32Array(pendingSamples);
-      let offset = 0;
-      for (const chunk of pendingChunks) {
-        merged.set(chunk, offset);
-        offset += chunk.length;
-      }
-      pendingChunks = [];
-      pendingSamples = 0;
-      // 2026-10報告: メインスレッドでの処理に戻したが、10秒分まとめて
-      // 1回だけ処理することで、常時動き続ける場合に比べて頻度を大きく
-      // 減らしている(通話音声の途切れ対策)。
-      buffer.push(merged);
-      while (buffer.size() > vad.config.sileroVad.windowSize) {
-        const windowSamples = buffer.get(
-          buffer.head(),
-          vad.config.sileroVad.windowSize,
-        );
-        vad.acceptWaveform(windowSamples);
-        buffer.pop(vad.config.sileroVad.windowSize);
+    // VADの区間キューに既に確定している発話区間を全て取り出し、認識・配信
+    // する(flushPendingAudio本体・末尾強制確定の両方から呼ぶため分離)。
+    const drainReadySegments = () => {
+      while (!vad.isEmpty()) {
+        const segment = vad.front();
+        vad.pop();
+        const self = selfState.current;
+        if (!self) continue;
 
-        while (!vad.isEmpty()) {
-          const segment = vad.front();
-          vad.pop();
-          const self = selfState.current;
-          if (!self) continue;
+        const stream = recognizer.createStream();
+        stream.acceptWaveform(expectedSampleRate, segment.samples);
+        recognizer.decode(stream);
+        const result = recognizer.getResult(stream);
+        stream.free();
+        const text = (result?.text ?? "").trim();
+        if (!text) continue;
 
-          const stream = recognizer.createStream();
-          stream.acceptWaveform(expectedSampleRate, segment.samples);
-          recognizer.decode(stream);
-          const result = recognizer.getResult(stream);
-          stream.free();
-          const text = (result?.text ?? "").trim();
-          if (!text) continue;
-
-          const now = Date.now();
-          const lastEmitted = lastEmittedTextRef.current;
-          if (
-            lastEmitted &&
-            lastEmitted.text === text &&
-            now - lastEmitted.at < 5000
-          ) {
-            continue;
-          }
-          lastEmittedTextRef.current = { text, at: now };
-          const line = {
-            id: `${self.id}-${now}`,
-            senderName: self.name,
-            text,
-            at: now,
-          };
-          addCaptionLine(line);
-          channelRef.current?.httpSend("caption", {
-            id: line.id,
-            senderName: line.senderName,
-            text: line.text,
-            at: line.at,
-          });
+        const now = Date.now();
+        const lastEmitted = lastEmittedTextRef.current;
+        if (
+          lastEmitted &&
+          lastEmitted.text === text &&
+          now - lastEmitted.at < 5000
+        ) {
+          continue;
         }
+        lastEmittedTextRef.current = { text, at: now };
+        const line = {
+          id: `${self.id}-${now}`,
+          senderName: self.name,
+          text,
+          at: now,
+        };
+        addCaptionLine(line);
+        channelRef.current?.httpSend("caption", {
+          id: line.id,
+          senderName: line.senderName,
+          text: line.text,
+          at: line.at,
+        });
+      }
+    };
+    // isFinal=true(録画停止・パイプライン終了時)は、まだ無音判定の猶予中
+    // で「発話区間」として確定していない末尾の発話があれば、vad.flush()で
+    // 強制的に確定させる(2026-10報告: 朗読の最後の1行がまるごと抜ける
+    // 問題への対応。無音が十分続くのを待てないまま終了するとVAD内部に
+    // 「確定待ち」の区間が残り、二度と取り出されずに失われていた)。
+    const flushPendingAudio = (isFinal = false) => {
+      if (pendingSamples > 0) {
+        const merged = new Float32Array(pendingSamples);
+        let offset = 0;
+        for (const chunk of pendingChunks) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        pendingChunks = [];
+        pendingSamples = 0;
+        // 2026-10報告: メインスレッドでの処理に戻したが、10秒分まとめて
+        // 1回だけ処理することで、常時動き続ける場合に比べて頻度を大きく
+        // 減らしている(通話音声の途切れ対策)。
+        buffer.push(merged);
+        while (buffer.size() > vad.config.sileroVad.windowSize) {
+          const windowSamples = buffer.get(
+            buffer.head(),
+            vad.config.sileroVad.windowSize,
+          );
+          vad.acceptWaveform(windowSamples);
+          buffer.pop(vad.config.sileroVad.windowSize);
+          drainReadySegments();
+        }
+      }
+      if (isFinal) {
+        vad.flush();
+        drainReadySegments();
       }
     };
     sherpaFlushPendingRef.current = flushPendingAudio;
