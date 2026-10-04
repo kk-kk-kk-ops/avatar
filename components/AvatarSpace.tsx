@@ -7641,7 +7641,11 @@ export default function AvatarSpace({
         "[sherpa-onnx] ローカル認識が使えないためフォールバックします",
         err,
       );
-      if (!sameConferenceRoomAsRecorderRef.current || !micEnabledRef.current) {
+      if (
+        !sameConferenceRoomAsRecorderRef.current ||
+        !micEnabledRef.current ||
+        recordingOwnerIdRef.current === null
+      ) {
         return;
       }
       const started = startWebSpeechFallback();
@@ -7654,8 +7658,12 @@ export default function AvatarSpace({
       return;
     }
     // ロード完了を待っている間に状況が変わっている(マイクOFF・会議室
-    // 退出等)場合は開始しない。
-    if (!sameConferenceRoomAsRecorderRef.current || !micEnabledRef.current) {
+    // 退出・録画停止等)場合は開始しない。
+    if (
+      !sameConferenceRoomAsRecorderRef.current ||
+      !micEnabledRef.current ||
+      recordingOwnerIdRef.current === null
+    ) {
       return;
     }
     const vad = sherpaVadRef.current;
@@ -7897,8 +7905,17 @@ export default function AvatarSpace({
 
   // 録画中かどうか/マイクONの組み合わせが変わるたびに認識の開始・停止を
   // 行う(録画していない・マイクOFF・会議室が違うのいずれかなら停止)。
+  // 2026-10報告のバグ修正: `sameConferenceRoomAsRecorder`は「録画開始者と
+  // 同じ会議室にいるか」の判定だが、他参加者側の条件(isZoneConference)は
+  // 録画中かどうかに関係なく「今conference系ゾーンにいるか」だけで真に
+  // なってしまうため、録画していない時でも(会議室にいてマイクONなら)
+  // 認識パイプラインが動き続けてしまっていた。その結果、録画停止後〜次の
+  // 録画開始までの間のつぶやきがcaptionLinesに積まれ、次の録画の文字起こし
+  // の先頭に紛れ込むバグになっていた(「2回目の録画で前回の内容が混ざる」
+  // 報告)。`recordingOwnerId !== null`(=誰かが実際に録画中)を明示的に
+  // 条件へ追加し、録画中でない間は確実にパイプラインを止める。
   useEffect(() => {
-    if (sameConferenceRoomAsRecorder && micEnabled) {
+    if (sameConferenceRoomAsRecorder && micEnabled && recordingOwnerId !== null) {
       void startLocalSpeechPipeline();
     } else {
       stopLocalSpeechPipeline();
