@@ -7795,7 +7795,20 @@ export default function AvatarSpace({
     // を実現するため、`minSilenceDuration`(0.8秒)を十分に超える1秒分の
     // 無音サンプルを通常の音声と同じ経路でVADに流し込み、VAD自身の無音
     // 検出ロジックで自然に区間を閉じさせる。
+    // 2026-10報告: vad.flush()が例外を投げて後片付け(呼び出し元の
+    // stopLocalSpeechPipeline側のreset等)まで巻き込んでいたregressionを
+    // 経験した。この関数のどこで例外が起きても呼び出し元の後片付けを
+    // 絶対にブロックしないよう、関数全体をtry/catchで囲む(本体は
+    // runFlushへ切り出す)。
     const flushPendingAudio = (isFinal = false) => {
+      try {
+        runFlush(isFinal);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("[sherpa-onnx] flushPendingAudioに失敗しました", err);
+      }
+    };
+    const runFlush = (isFinal: boolean) => {
       // eslint-disable-next-line no-console
       console.log(
         `[sherpa-debug] flushPendingAudio呼び出し: pendingSamples=${pendingSamples} isFinal=${isFinal}`,
