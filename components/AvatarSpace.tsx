@@ -843,12 +843,15 @@ export default function AvatarSpace({
   const [showRecordConfirm, setShowRecordConfirm] = useState(false);
   // 録画開始者が録画中に会議エリアから出ようとした時の確認(2026-10
   // 追加)。以前は無条件で自動停止していたが、誤って外に出て録画が
-  // 止まってしまう事故を防ぐため、確認を挟むようにした。「いいえ」の
-  // 場合はアバターの位置はそのまま(ゾーン判定上は既に外に出た扱いだが)
-  // 録画自体は止めない(録画は画面共有ストリームに基づくため、ゾーン
-  // 判定とは独立して動き続けられる)。
+  // 止まってしまう事故を防ぐため、境界を越える移動そのものをブロックし
+  // (壁と同じ扱い、下のconferenceゾーンのforEach内)、それと同時に確認
+  // ポップアップを出す。「はい」までは実際には外に出られない(アバターを
+  // 中心などへ押し戻す演出は不自然という報告があったため廃止し、最初から
+  // 出さない方式にした)。壁に当たり続ける間、毎フレーム出し直さないよう
+  // exitZonePromptShownRefで一度だけ出すようにする。
   const [showExitZoneWhileRecordingConfirm, setShowExitZoneWhileRecordingConfirm] =
     useState(false);
+  const exitZonePromptShownRef = useRef(false);
   // 録画開始者が「退室」ボタンを押した時の確認(2026-10追加)。録画開始者
   // 以外が押した場合はこの確認を挟まず、従来通りそのまま退室する。
   const [showLeaveRoomWhileRecordingConfirm, setShowLeaveRoomWhileRecordingConfirm] =
@@ -6370,19 +6373,31 @@ export default function AvatarSpace({
               // 2026-10追加: 録画開始者は、誤って会議エリアの外に出て録画が
               // 止まってしまう事故を防ぐため、出ようとする移動そのものを
               // 障害物と同様にブロックする(壁沿いに滑る挙動は維持する
-              // ため、X/Y軸どちらかがまだ触れていれば止めない)。録画停止
-              // 処理中(isStoppingRecordingRef)は既に退室が確定している
-              // ため、ここではブロックしない。「退室」ボタンによる明示的な
-              // 退室は別途確認ポップアップで扱う(handleLeaveRoomButtonClick
-              // 参照、ワープ等で当たり判定を経由せず外に出た場合の保険として
-              // showExitZoneWhileRecordingConfirmもそのまま残している)。
+              // ため、X/Y軸どちらかがまだ触れていれば止めない)。同時に
+              // 確認ポップアップを出す(壁に当たり続けている間、毎フレーム
+              // 出し直さないようexitZonePromptShownRefで一度だけにする)。
+              // 録画停止処理中(isStoppingRecordingRef、「はい」を選んだ後
+              // 含む)は既に退室が確定しているため、ここではブロックしない。
+              // 「退室」ボタンによる明示的な退室は別途確認ポップアップで
+              // 扱う(handleLeaveRoomButtonClick参照)。
               if (
+                self.id === recordingOwnerIdRef.current &&
+                touching
+              ) {
+                // 壁から離れた(=境界を押している最中ではない)ので、次に
+                // 当たった時はまた新規の試行としてポップアップを出す。
+                exitZonePromptShownRef.current = false;
+              } else if (
                 self.id === recordingOwnerIdRef.current &&
                 !touching &&
                 !isStoppingRecordingRef.current
               ) {
                 if (!touchX) blockedX = true;
                 if (!touchY) blockedY = true;
+                if (!exitZonePromptShownRef.current) {
+                  exitZonePromptShownRef.current = true;
+                  setShowExitZoneWhileRecordingConfirm(true);
+                }
                 return;
               }
               // 入室済み:出る方向には一切制限をかけず、ポップアップも出さない。
@@ -6538,7 +6553,6 @@ export default function AvatarSpace({
         const zoneId = stickyMeetingZone ? stickyMeetingZone.id : pointZoneId;
         self.meetingZoneId = zoneId;
         if (zoneId !== lastTrackedZoneId.current) {
-          const previousZoneId = lastTrackedZoneId.current;
           lastTrackedZoneId.current = zoneId;
           // 施錠中の会議室からの自動解錠は、当たり判定(矩形の重なり)基準の
           // 退室検知(上のconferenceゾーンのforEach内)で行っている。ここは
@@ -6599,50 +6613,12 @@ export default function AvatarSpace({
             // disabledにするが、入室直前にONだった場合の保険として)。
             setAnnouncementFlag(false);
           }
-          // 2026-10追加: 録画を開始した本人が会議室から出た(別のゾーンへ
-          // 移動した・ゾーン外に出た)場合、確認ポップアップを出す
-          // (以前は無条件で自動停止していたが、誤って外に出て録画が
-          // 止まってしまう事故を防ぐため)。work/announcementの分岐とは
-          // 独立に、常にこのタイミングで判定する。
-          //
-          // 2026-10報告のバグ修正: この判定は中心点ベースのため、当たり
-          // 判定(アバターの矩形)ベースの移動ブロック(上のconferenceゾーン
-          // のforEach内)より先に「外に出た」と判定してしまう(アバターの
-          // 当たり判定の半分の距離だけ、中心点の方が先に境界を越えられる
-          // ため)。ポップアップを出すのと同時に、直前にいた会議室の中心へ
-          // 強制的に押し戻すことで、見た目上も会議室の外に出た状態で
-          // ポップアップが表示され続けることが無いようにする。
-          if (
-            recordingOwnerIdRef.current === self.id &&
-            enteredZone?.kind !== "conference" &&
-            !isStoppingRecordingRef.current
-          ) {
-            const previousZone = previousZoneId
-              ? meetingZonesRef.current.find((z) => z.id === previousZoneId)
-              : null;
-            if (previousZone && previousZone.kind === "conference") {
-              self.x = previousZone.x + previousZone.width / 2;
-              self.y = previousZone.y + previousZone.height / 2;
-              self.meetingZoneId = previousZoneId;
-              lastTrackedZoneId.current = previousZoneId;
-              insideConferenceZoneIdsRef.current.add(previousZone.id);
-              setPlayers((prev) => {
-                const current = prev[self.id];
-                if (!current) return prev;
-                return {
-                  ...prev,
-                  [self.id]: {
-                    ...current,
-                    x: self.x,
-                    y: self.y,
-                    meetingZoneId: previousZoneId,
-                  },
-                };
-              });
-              channelRef.current?.track(self);
-            }
-            setShowExitZoneWhileRecordingConfirm(true);
-          }
+          // 2026-10報告: 録画中に会議室から出ようとした時の確認ポップ
+          // アップ・移動ブロックは、この中心点ベースの判定ではなく、下の
+          // conferenceゾーンのforEach内(当たり判定ベース、実際に移動を
+          // ブロックしている場所と同じ基準)で行う。ここで扱うと基準が
+          // ズレて「ポップアップは出たがアバターは既に外に出ている」
+          // 不具合になるため(2026-10報告で確認済み)。
         }
 
         // 自分のアバターの見た目の位置は、Reactのstateを介さずDOM操作で
@@ -8080,15 +8056,23 @@ export default function AvatarSpace({
     setShowRecordConfirm(false);
   }, []);
 
-  // 録画中に会議エリアから出ようとした時の確認(2026-10追加)。
+  // 録画中に会議エリアから出ようとした時の確認(2026-10追加)。「はい」を
+  // 選ぶとstopRecording()でisStoppingRecordingRefが立ち、移動ブロックの
+  // 条件から外れるため、次の移動入力からは普通に外へ出られるようになる
+  // (アバターを強制移動させる必要は無い)。
   const confirmExitZoneWhileRecording = useCallback(() => {
     setShowExitZoneWhileRecordingConfirm(false);
+    exitZonePromptShownRef.current = false;
     stopRecording();
   }, [stopRecording]);
   const declineExitZoneWhileRecording = useCallback(() => {
     setShowExitZoneWhileRecordingConfirm(false);
-    // 録画は止めない(画面共有ストリームに基づくため、会議エリアの
-    // ゾーン判定とは独立して動き続けられる)。
+    // exitZonePromptShownRefはここでリセットしない。まだ壁(境界)に
+    // 向けて移動入力が続いている可能性が高く、リセットすると次のフレーム
+    // で即座にポップアップが再表示されてしまうため。壁から実際に離れた
+    // (touchingに戻った)タイミングで自動的にリセットされる。
+    // 録画・移動ブロックともに継続する(アバターは壁際でブロックされた
+    // ままなので、押し戻す処理は不要)。
   }, []);
 
   // 録画中に「退室」ボタンを押した時の確認(2026-10追加、録画開始者の
