@@ -7794,8 +7794,20 @@ export default function AvatarSpace({
         }
       }
       if (isFinal) {
-        vad.flush();
-        drainReadySegments();
+        // 2026-10報告: vad.flush()を呼んだ直後に次の録画で文字起こしが
+        // 一切行われなくなる(保存されない)regressionが発生した。この
+        // WASMビルドで`flush()`が実際にサポートされているか断定できない
+        // ため、失敗してもここで完全に握り潰し、以降のreset()や後片付け
+        // (呼び出し元のstopLocalSpeechPipeline側)には絶対に影響させない
+        // (末尾の1発話を取りこぼす方が、次の録画が丸ごと動かなくなるより
+        // 安全なため)。
+        try {
+          vad.flush();
+          drainReadySegments();
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("[sherpa-onnx] vad.flush()に失敗しました", err);
+        }
       }
     };
     sherpaFlushPendingRef.current = flushPendingAudio;
