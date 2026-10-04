@@ -7664,8 +7664,6 @@ export default function AvatarSpace({
     ) {
       return;
     }
-    // eslint-disable-next-line no-console
-    console.log(`[sherpa-debug] startLocalSpeechPipeline呼び出し: ${Date.now()}`);
     try {
       await loadSherpaOnnx();
     } catch (err) {
@@ -7768,10 +7766,6 @@ export default function AvatarSpace({
       while (!vad.isEmpty()) {
         const segment = vad.front();
         vad.pop();
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-debug] segment: start=${segment.start} len=${segment.samples.length} (${(segment.samples.length / expectedSampleRate).toFixed(2)}s)`,
-        );
         const self = selfState.current;
         if (!self) continue;
 
@@ -7781,8 +7775,6 @@ export default function AvatarSpace({
         const result = recognizer.getResult(stream);
         stream.free();
         const text = (result?.text ?? "").trim();
-        // eslint-disable-next-line no-console
-        console.log(`[sherpa-debug] decode結果: "${text}"`);
         if (!text) continue;
 
         const now = Date.now();
@@ -7909,15 +7901,7 @@ export default function AvatarSpace({
     // 単純な蓄積・転送のみにして専用スレッド側の処理を極力軽くしている)。
     // ダウンサンプリング自体は軽い処理なのでメインスレッドで行って問題
     // ない。
-    let firstAudioFrameLogged = false;
     workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      if (!firstAudioFrameLogged) {
-        firstAudioFrameLogged = true;
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-debug] 最初の音声フレームを受信: ${Date.now()}`,
-        );
-      }
       const samples = downsampleBuffer(
         e.data,
         audioCtx.sampleRate,
@@ -7931,8 +7915,6 @@ export default function AvatarSpace({
     };
 
     currentSourceNode.connect(workletNode);
-    // eslint-disable-next-line no-console
-    console.log(`[sherpa-debug] マイクタップ接続完了: ${Date.now()}`);
     // AudioWorkletNodeはScriptProcessorNodeと異なり出力先への接続が無くても
     // 動作するはずだが、一部環境での取り扱いの違いによるリスクを避けるため
     // (旧実装でもdestinationへの接続が必要だった)、無音(gain=0)で
