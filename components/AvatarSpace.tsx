@@ -7748,6 +7748,25 @@ export default function AvatarSpace({
     };
     sherpaFlushPendingRef.current = flushPendingAudio;
 
+    // 2026-10報告(「普通に話すと文字起こしが結構飛んでいる」): VAD+decode()
+    // (重いWASM処理)をonaudioprocessコールバックの中で直接呼んでいたため、
+    // 自然な会話(10秒の間に区切りが複数回発生し、decode()も複数回走る)
+    // だとその間ずっとこのコールバックの呼び出しスタック内で処理が続く
+    // ことになり、その間に届いたはずの新しいマイク音声フレームの取り込み
+    // 自体が遅延・欠落していた(結果、その間に話した内容がそのまま丸ごと
+    // 録れずに「飛ぶ」)。コールバック自身はデータの蓄積だけで即座に
+    // returnさせ、重いflush処理はsetTimeoutで次のタスクへ退避することで、
+    // 音声コールバックの呼び出し自体を塞がないようにする。
+    let flushScheduled = false;
+    const scheduleFlush = () => {
+      if (flushScheduled) return;
+      flushScheduled = true;
+      window.setTimeout(() => {
+        flushScheduled = false;
+        flushPendingAudio();
+      }, 0);
+    };
+
     processor.onaudioprocess = (e) => {
       let samples: Float32Array = new Float32Array(
         e.inputBuffer.getChannelData(0),
@@ -7760,7 +7779,7 @@ export default function AvatarSpace({
       pendingChunks.push(samples);
       pendingSamples += samples.length;
       if (pendingSamples >= FLUSH_INTERVAL_SAMPLES) {
-        flushPendingAudio();
+        scheduleFlush();
       }
     };
 
