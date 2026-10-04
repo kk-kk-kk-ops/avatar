@@ -8094,16 +8094,21 @@ export default function AvatarSpace({
         video: true,
         audio: true,
       });
-      let micStream: MediaStream | null = null;
-      try {
-        micStream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
-      } catch {
-        // マイクの権限が無い/拒否された場合でも、画面(+共有した音声)の
-        // 録画自体は続行する。
-        micStream = null;
-      }
+      // 2026-10報告(「一度文字起こしが保存されないことがあると、その後も
+      // されない」)の調査で、ここが独立した`getUserMedia({audio:true})`を
+      // 録画ごとに新規取得していたことが根本原因だと判明した。LiveKitの
+      // マイクキャプチャ(文字起こしパイプラインが横取りしているのと同じ
+      // トラック)と、この独立取得が同じ物理マイクデバイスへ同時アクセス
+      // する回数が録画を繰り返すたびに積み重なり、ある時点でOS/ドライバー
+      // レベルの競合により入力が無音化(以降の録画も含め恒久的に)して
+      // いた(2026-10の別報告「マイクを2本持つと音量が下がる」と同じ系統
+      // の問題)。LiveKitの公開中トラックを共有してWeb Audio的にタップする
+      // 方式(文字起こしパイプラインと同じ考え方)に変更し、独立取得を
+      // やめる。
+      const liveKitMicTrack =
+        livekitRoomRef.current?.localParticipant.getTrackPublication(
+          Track.Source.Microphone,
+        )?.track?.mediaStreamTrack ?? null;
 
       const audioContext = new AudioContext();
       const destination = audioContext.createMediaStreamDestination();
@@ -8114,14 +8119,17 @@ export default function AvatarSpace({
           )
           .connect(destination);
       }
-      if (micStream && micStream.getAudioTracks().length > 0) {
-        audioContext.createMediaStreamSource(micStream).connect(destination);
+      if (liveKitMicTrack) {
+        audioContext
+          .createMediaStreamSource(new MediaStream([liveKitMicTrack]))
+          .connect(destination);
       }
       recordingAudioContextRef.current = audioContext;
-      recordingTracksRef.current = [
-        ...displayStream.getTracks(),
-        ...(micStream?.getTracks() ?? []),
-      ];
+      // liveKitMicTrackはLiveKit側が所有するトラックを共有しているだけ
+      // なので、cleanupRecordingResources()で.stop()してしまうと通話の
+      // マイクまで切れてしまう。停止対象にはdisplayStreamのトラックのみ
+      // を含める。
+      recordingTracksRef.current = [...displayStream.getTracks()];
 
       const combinedStream = new MediaStream([
         ...displayStream.getVideoTracks(),
