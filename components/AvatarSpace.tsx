@@ -841,6 +841,40 @@ export default function AvatarSpace({
   useEffect(() => {
     micEnabledRef.current = micEnabled;
   }, [micEnabled]);
+  // ノイズ抑制フィルター(マイクのキーボード打鍵音等を抑える機能)の
+  // ON/OFF(2026-10追加、設定画面のチェックボックスで切り替える)。効果の
+  // 感じ方・相性が環境によって分かれるため、ビルド時の一律ON/OFFではなく
+  // ユーザーごとにその場で切り替えられるようにした。ブラウザのlocalStorage
+  // に保存し、次回以降も同じ設定を維持する(他の参加者には影響しない、
+  // 自分のマイクだけの設定のため同期は不要)。
+  const [noiseFilterEnabled, setNoiseFilterEnabled] = useState(true);
+  const noiseFilterEnabledRef = useRef(true);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("globy-noise-filter-enabled");
+      if (saved !== null) setNoiseFilterEnabled(saved === "true");
+    } catch {
+      // プライベートウィンドウ等でlocalStorageが使えない場合は既定値のまま
+    }
+  }, []);
+  useEffect(() => {
+    noiseFilterEnabledRef.current = noiseFilterEnabled;
+    try {
+      window.localStorage.setItem(
+        "globy-noise-filter-enabled",
+        String(noiseFilterEnabled),
+      );
+    } catch {
+      // 保存できなくても動作自体に影響はない
+    }
+    // チェックボックスを切り替えた瞬間、既にマイクONで通話中なら即座に
+    // 反映する(次にマイクをON/OFFするまで待たせない)。
+    const room = livekitRoomRef.current;
+    if (room && micEnabledRef.current) {
+      void applyNoiseFilterProcessor(room, noiseFilterEnabled);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noiseFilterEnabled]);
 
   // 録画中かどうか(2026-10、文字起こし単体のトグルから画面録画機能に
   // 変更)。録画している間だけ、マイクONのChrome/Edge参加者全員の発言が
@@ -4616,7 +4650,9 @@ export default function AvatarSpace({
         if (micEnabledRef.current) {
           room.localParticipant
             .setMicrophoneEnabled(true)
-            .then(() => applyNoiseFilterProcessor(room))
+            .then(() =>
+              applyNoiseFilterProcessor(room, noiseFilterEnabledRef.current),
+            )
             .catch((err) => console.warn("[livekit] mic再パブリッシュ失敗", err));
         }
         if (inCallRef.current) {
@@ -7152,7 +7188,7 @@ export default function AvatarSpace({
       // (トラックの差し替え)が完全に終わるまで待ってから、micEnabled状態
       // を変える(=文字起こし側の起動処理をトリガーする)ようにする。
       if (next) {
-        await applyNoiseFilterProcessor(room);
+        await applyNoiseFilterProcessor(room, noiseFilterEnabledRef.current);
       }
       setMicEnabled(next);
       if (selfState.current) {
@@ -12030,6 +12066,26 @@ export default function AvatarSpace({
                           {PRESENCE_STATUS_LABELS[status]}
                         </label>
                       ))}
+                    </div>
+
+                    {/* ノイズ抑制フィルター(2026-10追加)。効果の感じ方が
+                        環境によって分かれるため、その場でON/OFFできる
+                        設定として用意する(他の設定と違い「保存する」
+                        ボタンを待たず、チェックした瞬間に反映される)。 */}
+                    <div className="mt-4">
+                      <p className="mb-2 text-xs font-semibold text-slate-400">
+                        マイク
+                      </p>
+                      <label className="flex items-center gap-2 text-sm text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={noiseFilterEnabled}
+                          onChange={(e) =>
+                            setNoiseFilterEnabled(e.target.checked)
+                          }
+                        />
+                        ノイズ抑制
+                      </label>
                     </div>
                   </div>
 
