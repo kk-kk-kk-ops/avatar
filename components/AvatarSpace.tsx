@@ -7594,8 +7594,6 @@ export default function AvatarSpace({
       stopWebSpeechFallback();
     }
     if (!sherpaRunningRef.current) return;
-    // eslint-disable-next-line no-console
-    console.log("[sherpa-debug] stopLocalSpeechPipeline: 終了処理開始");
     activeTranscriptionEngineRef.current = "none";
     sherpaRunningRef.current = false;
     // 10秒分まとめて送る方式(2026-10追加)のため、停止時にその時点で
@@ -7680,23 +7678,12 @@ export default function AvatarSpace({
       !micEnabledRef.current ||
       recordingOwnerIdRef.current === null
     ) {
-      // eslint-disable-next-line no-console
-      console.log(
-        "[sherpa-debug] startLocalSpeechPipeline: ロード待ち中に状況が変わったため開始しない",
-        {
-          sameConferenceRoomAsRecorder: sameConferenceRoomAsRecorderRef.current,
-          micEnabled: micEnabledRef.current,
-          recordingOwnerId: recordingOwnerIdRef.current,
-        },
-      );
       return;
     }
     const vad = sherpaVadRef.current;
     const buffer = sherpaBufferRef.current;
     const recognizer = sherpaRecognizerRef.current;
     if (!vad || !buffer || !recognizer) return;
-    // eslint-disable-next-line no-console
-    console.log("[sherpa-debug] startLocalSpeechPipeline: 開始");
 
     // 2026-10報告: 文字起こし用に独立したgetUserMediaストリームを別途
     // 取得する方式を試したところ、時間が経つにつれて録れる音量が
@@ -7768,10 +7755,6 @@ export default function AvatarSpace({
         const result = recognizer.getResult(stream);
         stream.free();
         const text = (result?.text ?? "").trim();
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-debug] drainReadySegments: ${(segment.samples.length / expectedSampleRate).toFixed(2)}s -> "${text}"`,
-        );
         if (!text) continue;
 
         const now = Date.now();
@@ -7827,10 +7810,6 @@ export default function AvatarSpace({
       }
     };
     const runFlush = (isFinal: boolean) => {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[sherpa-debug] flushPendingAudio呼び出し: pendingSamples=${pendingSamples} isFinal=${isFinal}`,
-      );
       if (pendingSamples > 0) {
         const merged = new Float32Array(pendingSamples);
         let offset = 0;
@@ -7840,36 +7819,19 @@ export default function AvatarSpace({
         }
         pendingChunks = [];
         pendingSamples = 0;
-        // 2026-10調査用: 実際に声が録れているか(無音・極小音量になって
-        // いないか)を確認するための一時的なRMS(音量)ログ。
-        let sumSq = 0;
-        for (let i = 0; i < merged.length; i++) sumSq += merged[i] * merged[i];
-        const rms = Math.sqrt(sumSq / merged.length);
-        // eslint-disable-next-line no-console
-        console.log(`[sherpa-debug] merged音声のRMS(音量): ${rms.toFixed(4)}`);
         // 2026-10報告: メインスレッドでの処理に戻したが、10秒分まとめて
         // 1回だけ処理することで、常時動き続ける場合に比べて頻度を大きく
         // 減らしている(通話音声の途切れ対策)。
         buffer.push(merged);
-        let anyDetected = false;
         while (buffer.size() > vad.config.sileroVad.windowSize) {
           const windowSamples = buffer.get(
             buffer.head(),
             vad.config.sileroVad.windowSize,
           );
           vad.acceptWaveform(windowSamples);
-          try {
-            if (vad.isDetected()) anyDetected = true;
-          } catch {
-            // 未サポートの可能性があるため握り潰す(調査用ログのみに影響)。
-          }
           buffer.pop(vad.config.sileroVad.windowSize);
           drainReadySegments();
         }
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-debug] このflushでVADが発話中と判定した瞬間があったか: ${anyDetected}`,
-        );
       }
       if (isFinal) {
         // 何らかの理由で失敗しても(末尾の1発話を取りこぼすだけで済み)、
