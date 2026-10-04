@@ -9,9 +9,13 @@ import { Track, type Room } from "livekit-client";
 // するだけで元の挙動に戻る)。
 // 2026-10報告: マイクONのたびにこのフィルターがトラックを破棄・再生成
 // する仕組みが、文字起こしパイプライン(マイクトラックをWeb Audio APIで
-// タップしている)の音声取り込みが時々無音のまま固まる現象と関係している
-// 疑いがあるため、切り分けのため一時的に無効化する。
-export const NOISE_FILTER_ENABLED = false;
+// タップしている)の音声取り込みが時々無音のまま固まる現象の原因だと
+// 切り分けで確定した(無効化すると文字起こしが安定する一方、キーボード
+// 打鍵音等のノイズが直接聞こえるようになることも確認済み)。文字起こし
+// 側(components/AvatarSpace.tsx の startLocalSpeechPipeline)で
+// TrackEvent.TrackProcessorUpdateを監視し、トラック入れ替え時にタップし
+// 直す対応を入れたため、本来の機能(ノイズ抑制)を復元する。
+export const NOISE_FILTER_ENABLED = true;
 
 // パッケージのREADMEは「デフォルトでバンドル済みアセットを使う」と
 // 書かれているが、実際のv1.3.0ソースコードはWASM本体(約16MB)とONNX
