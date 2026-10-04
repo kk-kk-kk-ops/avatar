@@ -7385,21 +7385,30 @@ export default function AvatarSpace({
                 // 精度が落ちる・不自然に途切れて見える問題があった。自然な
                 // 間でも区切られにくくするため0.8秒へ延ばす(無音判定自体を
                 // 緩めるだけで、録画停止までの猶予期間等とは無関係)。
+                // 2026-10-04追記: AudioWorklet化で取り込み自体の欠落は解消
+                // したが、朗読テストで一部の発話区間がVADに検出されず
+                // (speech-probabilityがthresholdの0.5を越えなかった可能性)
+                // 丸ごと認識対象から漏れるケースが残ったため、thresholdを
+                // 0.35に下げてVADをより敏感にする(やや小さい声・トーンの
+                // 低い発話も拾いやすくする代わりに、誤検出が多少増える
+                // トレードオフ)。maxSpeechDurationも、bufferSizeInSeconds
+                // (30秒)の範囲内でより長く連続した発話を強制的に区切らずに
+                // 済むよう20→29秒に延ばす。
                 sherpaVadRef.current = (window as any).createVad(Module, {
                   sileroVad: {
                     model: "./silero_vad.onnx",
-                    threshold: 0.5,
+                    threshold: 0.35,
                     minSilenceDuration: 0.8,
                     minSpeechDuration: 0.25,
-                    maxSpeechDuration: 20,
+                    maxSpeechDuration: 29,
                     windowSize: 512,
                   },
                   tenVad: {
                     model: "",
-                    threshold: 0.5,
+                    threshold: 0.35,
                     minSilenceDuration: 0.8,
                     minSpeechDuration: 0.25,
-                    maxSpeechDuration: 20,
+                    maxSpeechDuration: 29,
                     windowSize: 256,
                   },
                   sampleRate: 16000,
