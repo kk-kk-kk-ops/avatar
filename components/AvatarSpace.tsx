@@ -8,6 +8,7 @@ import {
   Room as LiveKitRoom,
   RoomEvent,
   Track,
+  TrackEvent,
   type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
@@ -1036,6 +1037,13 @@ export default function AvatarSpace({
   const sherpaWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sherpaSourceNodeRef =
     useRef<MediaStreamAudioSourceNode | null>(null);
+  // 2026-10報告: ノイズ抑制フィルター(lib/audio/noiseFilterProcessor.ts)
+  // はマイクONのたびにトラックを破棄・再生成する。そのタイミングで既に
+  // タップしていたMediaStreamTrackが無効になり、以降の音声取り込みが
+  // 無音のまま固まる不具合があったため、LiveKitのTrackオブジェクトの
+  // trackProcessorUpdateイベントを監視し、トラックが入れ替わったら
+  // タップし直す。後片付け用にlistener解除関数を保持する。
+  const sherpaTrackListenerCleanupRef = useRef<(() => void) | null>(null);
   const sherpaRunningRef = useRef(false);
   // 内容ベースの重複排除(保険)。VADで発言ごとに自然に区切られるため
   // Web Speech API版にあったresultIndexの重複対策は不要になったが、
@@ -7597,6 +7605,8 @@ export default function AvatarSpace({
     // ここで確定させないと末尾の発話が永久に失われる)。
     sherpaFlushPendingRef.current?.(true);
     sherpaFlushPendingRef.current = null;
+    sherpaTrackListenerCleanupRef.current?.();
+    sherpaTrackListenerCleanupRef.current = null;
     const workletNode = sherpaWorkletNodeRef.current;
     const source = sherpaSourceNodeRef.current;
     const audioCtx = sherpaAudioContextRef.current;
@@ -7697,9 +7707,17 @@ export default function AvatarSpace({
     // するだけ)方式に戻す。サンプルレートを16kHzに強制していた点は
     // 既に修正済みなので、その修正だけを活かした状態で再検証する。
     const room = livekitRoomRef.current;
-    const micTrack =
+    // 2026-10報告(「文字起こしが時々無音のまま固まる」): ノイズ抑制
+    // フィルター(lib/audio/noiseFilterProcessor.ts)がマイクONのたびに
+    // MediaStreamTrackを破棄・再生成するため、ここで取得したmicTrackへの
+    // 参照は後から無効になることがある。LiveKitのTrackオブジェクト自体
+    // (micPublicationTrack)は再生成されず同じインスタンスが使われ続ける
+    // ため、こちらを保持してtrackProcessorUpdateイベントを監視し、
+    // トラックが入れ替わったタイミングでタップし直す(下記参照)。
+    const micPublicationTrack =
       room?.localParticipant.getTrackPublication(Track.Source.Microphone)
-        ?.track?.mediaStreamTrack ?? null;
+        ?.track ?? null;
+    const micTrack = micPublicationTrack?.mediaStreamTrack ?? null;
     if (!micTrack) return;
     const micStream = new MediaStream([micTrack]);
 
@@ -7710,7 +7728,7 @@ export default function AvatarSpace({
     // Buffer(純JS)で行う。
     const expectedSampleRate = 16000;
     const audioCtx = new AudioContext();
-    const mediaStreamSource = audioCtx.createMediaStreamSource(micStream);
+    let currentSourceNode = audioCtx.createMediaStreamSource(micStream);
     // 2026-10報告(「普通に話すと文字起こしが結構飛んでいる」)対応:
     // ScriptProcessorNode(メインスレッド上で動く、非推奨API)から
     // AudioWorkletNode(専用のオーディオレンダリングスレッド上で動く)へ
@@ -7914,7 +7932,7 @@ export default function AvatarSpace({
       }
     };
 
-    mediaStreamSource.connect(workletNode);
+    currentSourceNode.connect(workletNode);
     // AudioWorkletNodeはScriptProcessorNodeと異なり出力先への接続が無くても
     // 動作するはずだが、一部環境での取り扱いの違いによるリスクを避けるため
     // (旧実装でもdestinationへの接続が必要だった)、無音(gain=0)で
@@ -7924,9 +7942,39 @@ export default function AvatarSpace({
     workletNode.connect(silentGain);
     silentGain.connect(audioCtx.destination);
 
+    // ノイズ抑制フィルターの再適用等でマイクのMediaStreamTrackが入れ替え
+    // られた時、古いトラックへの接続(=今後一切データが来なくなる)を
+    // 作り直す。
+    if (micPublicationTrack) {
+      const handleTrackProcessorUpdate = () => {
+        const newMediaStreamTrack = micPublicationTrack.mediaStreamTrack;
+        if (!newMediaStreamTrack || newMediaStreamTrack === micTrack) return;
+        try {
+          currentSourceNode.disconnect();
+        } catch {
+          // 既に切断済みの場合などは無視
+        }
+        currentSourceNode = audioCtx.createMediaStreamSource(
+          new MediaStream([newMediaStreamTrack]),
+        );
+        currentSourceNode.connect(workletNode);
+        sherpaSourceNodeRef.current = currentSourceNode;
+      };
+      micPublicationTrack.on(
+        TrackEvent.TrackProcessorUpdate,
+        handleTrackProcessorUpdate,
+      );
+      sherpaTrackListenerCleanupRef.current = () => {
+        micPublicationTrack.off(
+          TrackEvent.TrackProcessorUpdate,
+          handleTrackProcessorUpdate,
+        );
+      };
+    }
+
     sherpaMicStreamRef.current = micStream;
     sherpaAudioContextRef.current = audioCtx;
-    sherpaSourceNodeRef.current = mediaStreamSource;
+    sherpaSourceNodeRef.current = currentSourceNode;
     sherpaWorkletNodeRef.current = workletNode;
     sherpaRunningRef.current = true;
     activeTranscriptionEngineRef.current = "sherpa";
