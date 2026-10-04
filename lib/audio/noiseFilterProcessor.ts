@@ -7,7 +7,11 @@ import { Track, type Room } from "livekit-client";
 // 出ない)を試験的に適用する。効果検証中の試作のため、このフラグ1つで
 // いつでも無効化できるようにしている(問題があればfalseにして再デプロイ
 // するだけで元の挙動に戻る)。
-export const NOISE_FILTER_ENABLED = true;
+// 2026-10報告: マイクONのたびにこのフィルターがトラックを破棄・再生成
+// する仕組みが、文字起こしパイプライン(マイクトラックをWeb Audio APIで
+// タップしている)の音声取り込みが時々無音のまま固まる現象と関係している
+// 疑いがあるため、切り分けのため一時的に無効化する。
+export const NOISE_FILTER_ENABLED = false;
 
 // パッケージのREADMEは「デフォルトでバンドル済みアセットを使う」と
 // 書かれているが、実際のv1.3.0ソースコードはWASM本体(約16MB)とONNX
