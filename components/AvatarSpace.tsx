@@ -7586,6 +7586,8 @@ export default function AvatarSpace({
       stopWebSpeechFallback();
     }
     if (!sherpaRunningRef.current) return;
+    // eslint-disable-next-line no-console
+    console.log("[sherpa-debug] stopLocalSpeechPipeline: 終了処理開始");
     activeTranscriptionEngineRef.current = "none";
     sherpaRunningRef.current = false;
     // 10秒分まとめて送る方式(2026-10追加)のため、停止時にその時点で
@@ -7668,12 +7670,23 @@ export default function AvatarSpace({
       !micEnabledRef.current ||
       recordingOwnerIdRef.current === null
     ) {
+      // eslint-disable-next-line no-console
+      console.log(
+        "[sherpa-debug] startLocalSpeechPipeline: ロード待ち中に状況が変わったため開始しない",
+        {
+          sameConferenceRoomAsRecorder: sameConferenceRoomAsRecorderRef.current,
+          micEnabled: micEnabledRef.current,
+          recordingOwnerId: recordingOwnerIdRef.current,
+        },
+      );
       return;
     }
     const vad = sherpaVadRef.current;
     const buffer = sherpaBufferRef.current;
     const recognizer = sherpaRecognizerRef.current;
     if (!vad || !buffer || !recognizer) return;
+    // eslint-disable-next-line no-console
+    console.log("[sherpa-debug] startLocalSpeechPipeline: 開始");
 
     // 2026-10報告: 文字起こし用に独立したgetUserMediaストリームを別途
     // 取得する方式を試したところ、時間が経つにつれて録れる音量が
@@ -7737,6 +7750,10 @@ export default function AvatarSpace({
         const result = recognizer.getResult(stream);
         stream.free();
         const text = (result?.text ?? "").trim();
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-debug] drainReadySegments: ${(segment.samples.length / expectedSampleRate).toFixed(2)}s -> "${text}"`,
+        );
         if (!text) continue;
 
         const now = Date.now();
@@ -7779,6 +7796,10 @@ export default function AvatarSpace({
     // 無音サンプルを通常の音声と同じ経路でVADに流し込み、VAD自身の無音
     // 検出ロジックで自然に区間を閉じさせる。
     const flushPendingAudio = (isFinal = false) => {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[sherpa-debug] flushPendingAudio呼び出し: pendingSamples=${pendingSamples} isFinal=${isFinal}`,
+      );
       if (pendingSamples > 0) {
         const merged = new Float32Array(pendingSamples);
         let offset = 0;
