@@ -7372,7 +7372,35 @@ export default function AvatarSpace({
               try {
                 const Module = (window as any).Module;
                 sherpaModuleRef.current = Module;
-                sherpaVadRef.current = (window as any).createVad(Module);
+                // 2026-10報告: 既定のminSilenceDuration(0.5秒)だと、話し
+                // 言葉の短い息継ぎ・言い回しの間でも区切られてしまい、1文が
+                // 複数の断片に分割されて個別に認識される結果、文脈が失われて
+                // 精度が落ちる・不自然に途切れて見える問題があった。自然な
+                // 間でも区切られにくくするため0.8秒へ延ばす(無音判定自体を
+                // 緩めるだけで、録画停止までの猶予期間等とは無関係)。
+                sherpaVadRef.current = (window as any).createVad(Module, {
+                  sileroVad: {
+                    model: "./silero_vad.onnx",
+                    threshold: 0.5,
+                    minSilenceDuration: 0.8,
+                    minSpeechDuration: 0.25,
+                    maxSpeechDuration: 20,
+                    windowSize: 512,
+                  },
+                  tenVad: {
+                    model: "",
+                    threshold: 0.5,
+                    minSilenceDuration: 0.8,
+                    minSpeechDuration: 0.25,
+                    maxSpeechDuration: 20,
+                    windowSize: 256,
+                  },
+                  sampleRate: 16000,
+                  numThreads: 1,
+                  provider: "cpu",
+                  debug: 0,
+                  bufferSizeInSeconds: 30,
+                });
                 sherpaBufferRef.current = new (window as any).CircularBuffer(
                   30 * 16000,
                   Module,
