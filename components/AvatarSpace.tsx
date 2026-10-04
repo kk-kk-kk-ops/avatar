@@ -7765,10 +7765,19 @@ export default function AvatarSpace({
       }
     };
     // isFinal=true(録画停止・パイプライン終了時)は、まだ無音判定の猶予中
-    // で「発話区間」として確定していない末尾の発話があれば、vad.flush()で
-    // 強制的に確定させる(2026-10報告: 朗読の最後の1行がまるごと抜ける
-    // 問題への対応。無音が十分続くのを待てないまま終了するとVAD内部に
+    // で「発話区間」として確定していない末尾の発話があれば、強制的に確定
+    // させる(2026-10報告: 朗読の最後の1行がまるごと抜ける問題、および
+    // 「録画停止と同時にマイクをオフにすると直前の発話が途切れる」問題
+    // への対応。無音が十分続くのを待てないまま終了するとVAD内部に
     // 「確定待ち」の区間が残り、二度と取り出されずに失われていた)。
+    // 2026-10報告(regression): 専用の`vad.flush()`(WASM側の
+    // `SherpaOnnxVoiceActivityDetectorFlush`)を使ったところ、このWASM
+    // ビルドでは未サポートらしく、呼び出し失敗時に後片付け処理まで巻き
+    // 込んで次の録画が完全に機能しなくなるregressionを起こした。確実に
+    // 動作する`acceptWaveform`だけで同じ効果(末尾の未確定区間を確定させる)
+    // を実現するため、`minSilenceDuration`(0.8秒)を十分に超える1秒分の
+    // 無音サンプルを通常の音声と同じ経路でVADに流し込み、VAD自身の無音
+    // 検出ロジックで自然に区間を閉じさせる。
     const flushPendingAudio = (isFinal = false) => {
       if (pendingSamples > 0) {
         const merged = new Float32Array(pendingSamples);
@@ -7794,19 +7803,24 @@ export default function AvatarSpace({
         }
       }
       if (isFinal) {
-        // 2026-10報告: vad.flush()を呼んだ直後に次の録画で文字起こしが
-        // 一切行われなくなる(保存されない)regressionが発生した。この
-        // WASMビルドで`flush()`が実際にサポートされているか断定できない
-        // ため、失敗してもここで完全に握り潰し、以降のreset()や後片付け
-        // (呼び出し元のstopLocalSpeechPipeline側)には絶対に影響させない
-        // (末尾の1発話を取りこぼす方が、次の録画が丸ごと動かなくなるより
-        // 安全なため)。
+        // 何らかの理由で失敗しても(末尾の1発話を取りこぼすだけで済み)、
+        // 絶対に後片付け(呼び出し元のstopLocalSpeechPipeline側のreset等)
+        // をブロックしないようtry/catchで囲む。
         try {
-          vad.flush();
-          drainReadySegments();
+          const silenceSamples = new Float32Array(expectedSampleRate); // 1秒分の無音
+          buffer.push(silenceSamples);
+          while (buffer.size() > vad.config.sileroVad.windowSize) {
+            const windowSamples = buffer.get(
+              buffer.head(),
+              vad.config.sileroVad.windowSize,
+            );
+            vad.acceptWaveform(windowSamples);
+            buffer.pop(vad.config.sileroVad.windowSize);
+            drainReadySegments();
+          }
         } catch (err) {
           // eslint-disable-next-line no-console
-          console.warn("[sherpa-onnx] vad.flush()に失敗しました", err);
+          console.warn("[sherpa-onnx] 末尾発話の確定処理に失敗しました", err);
         }
       }
     };
