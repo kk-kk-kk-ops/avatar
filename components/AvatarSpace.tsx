@@ -7459,6 +7459,17 @@ export default function AvatarSpace({
                       },
                       modelType: "transducer",
                     },
+                    // 2026-10報告(「聞き間違い・欠落が多い」)対応: 既定の
+                    // decodingMethod("greedy_search"、各ステップで最も
+                    // 確率が高い1候補だけを採用する)から、複数の候補を
+                    // 保持して最終的に最も良い系列を選ぶ
+                    // "modified_beam_search"へ変更する。ダウンロード容量の
+                    // 増加は無く、decode()の計算量が多少増えるだけ(既に
+                    // 10秒バッチ処理で頻度を抑えているため許容範囲)。
+                    // 効果が無ければdecodingMethodの行を削除(既定の
+                    // greedy_searchに戻る)すればよい。
+                    decodingMethod: "modified_beam_search",
+                    maxActivePaths: 4,
                   },
                   Module,
                 );
