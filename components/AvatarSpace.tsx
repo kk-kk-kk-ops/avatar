@@ -507,6 +507,30 @@ function isScreenRecordingSupported(): boolean {
   );
 }
 
+// 録画・文字起こしのローカル保存ファイル名に使う日時スタンプ
+// (YYYYMMDD-HHmm)。動画・テキストで共通の時刻にするため1箇所にまとめる。
+function formatSaveStamp(): string {
+  const now = new Date();
+  return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+// Blobをローカルファイルとしてダウンロードさせる(サーバー・DBには送らない)。
+// beforeunload/pagehide中に呼ぶ場合、revokeObjectURLは呼ばない(ページが
+// 閉じる途中でURLを解放すると、ダウンロードが開始する前にキャンセルされる
+// 環境があるため)。
+function downloadBlob(blob: Blob, filename: string, keepUrl = false): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (!keepUrl) {
+    URL.revokeObjectURL(url);
+  }
+}
+
 // グループチャット・DMの@メンション表示用。テキスト中の「@全員」「@<相手
 // の表示名>」を藍色でハイライトする(入力中のオーバーレイ・送信済み
 // メッセージの吹き出し表示、両方で共有する)。表示名の直後が空白または
@@ -874,6 +898,11 @@ export default function AvatarSpace({
   // (詳細はstopRecording参照)。
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   const isStoppingRecordingRef = useRef(false);
+  // 録画停止〜ローカル保存完了までの残り時間をヘッダーに「残り%」として
+  // 表示するための状態(2026-10追加、録画開始者のみ)。nullの時は非表示。
+  const [recordingStopProgressPercent, setRecordingStopProgressPercent] =
+    useState<number | null>(null);
+  const recordingStopStartAtRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingTracksRef = useRef<MediaStreamTrack[]>([]);
   const recordingAudioContextRef = useRef<AudioContext | null>(null);
@@ -7821,8 +7850,9 @@ export default function AvatarSpace({
   }, [recordingOwnerId]);
 
   // 字幕テキストをローカルのテキストファイルとして保存する(ダウンロード
-  // フォルダへ。サーバー・DBには一切送らない)。
-  const saveCaptionsLocally = useCallback(() => {
+  // フォルダへ。サーバー・DBには一切送らない)。keepUrl=trueはページ離脱
+  // 処理中(beforeunload/pagehide)からの呼び出し用(downloadBlob参照)。
+  const saveCaptionsLocally = useCallback((keepUrl = false) => {
     // 自分・相手それぞれの発言はネットワーク到着順にバッファへ積まれて
     // おり、話した順と一致しない場合がある(2026-10報告)ため、保存前に
     // 発言時刻(at)で時系列順に並べ直す。
@@ -7838,16 +7868,7 @@ export default function AvatarSpace({
       })
       .join("\n");
     const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const now = new Date();
-    const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-    a.href = url;
-    a.download = `transcript-${stamp}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `transcript-${formatSaveStamp()}.txt`, keepUrl);
   }, []);
 
   // ---- 画面録画の開始/停止(2026-10追加) ----
@@ -7937,16 +7958,7 @@ export default function AvatarSpace({
           type: "video/webm",
         });
         recordedChunksRef.current = [];
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        const now = new Date();
-        const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-        a.href = url;
-        a.download = `recording-${stamp}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, `recording-${formatSaveStamp()}.webm`);
 
         // 2. 文字起こしテキストもまとめてローカルへ保存。録画中フラグを
         // 下ろす(=全員の音声認識を止める)のはstopRecording側で既に
@@ -7970,7 +7982,13 @@ export default function AvatarSpace({
       });
 
       mediaRecorderRef.current = recorder;
-      recorder.start();
+      // タイムスライス指定無しだとondataavailableはstop()時にしか発火せず、
+      // recordedChunksRef には停止するまで何も積まれない。録画中に誤って
+      // 画面更新・タブを閉じてしまった場合でもその時点までの動画を保存
+      // できるようにするため(2026-10追加)、5秒おきに区切ってこまめに
+      // 確定させる(複数チャンクを1つのBlobにまとめても再生可能な1本の
+      // webmになる、通常のMediaRecorderの使い方)。
+      recorder.start(5000);
 
       // 録画中フラグをpresence(players)に立てる。会議室の施錠と同じ
       // 仕組みのため、既に接続中の参加者にはpresence同期で即座に、
@@ -8014,6 +8032,8 @@ export default function AvatarSpace({
     if (isStoppingRecordingRef.current) return;
     isStoppingRecordingRef.current = true;
     setIsStoppingRecording(true);
+    recordingStopStartAtRef.current = Date.now();
+    setRecordingStopProgressPercent(100);
     // 10秒分まとめて送る方式(2026-10追加)のため、停止操作があった時点で
     // 即座に溜まっている分をWorkerへ送っておく(自然にたまるのを待つと
     // 最大10秒分の発言の確定が遅れ、下の猶予期間内に終わらない恐れが
@@ -8046,6 +8066,31 @@ export default function AvatarSpace({
     }, RECORDING_STOP_GRACE_MS);
   }, []);
 
+  // 録画停止中(isStoppingRecording)の間、ヘッダーに出す「残り%」表示を
+  // 一定間隔で更新する(2026-10追加)。全体の猶予時間(GRACE+FLUSH)に対する
+  // 残り時間の割合を表示するだけで、実際の保存完了タイミングとは厳密には
+  // 一致しない(recorder.stop()後のonstop処理自体にもわずかに時間がかかる
+  // ため)が、ユーザーへの目安としては十分。停止処理が終わったら(false
+  // に戻ったら)非表示に戻す。
+  useEffect(() => {
+    if (!isStoppingRecording) {
+      setRecordingStopProgressPercent(null);
+      recordingStopStartAtRef.current = null;
+      return;
+    }
+    const totalMs = RECORDING_STOP_GRACE_MS + RECORDING_STOP_FLUSH_MS;
+    const tick = () => {
+      const startedAt = recordingStopStartAtRef.current;
+      if (startedAt === null) return;
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(0, Math.round(100 - (elapsed / totalMs) * 100));
+      setRecordingStopProgressPercent(remaining);
+    };
+    tick();
+    const interval = window.setInterval(tick, 200);
+    return () => window.clearInterval(interval);
+  }, [isStoppingRecording]);
+
   // 2026-10報告: 録画停止〜実際の保存(動画・文字起こしテキストの
   // ダウンロード)までの猶予期間(最大7秒)は、会議室ゾーンから出ても
   // 処理自体は止まらない設計になっている(setTimeoutはReactの状態とは
@@ -8063,6 +8108,35 @@ export default function AvatarSpace({
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, []);
+
+  // 2026-10追加: (上の警告とは別に)録画中(停止処理中ではない通常の
+  // 録画中)にページを更新・閉じられた場合でも、その時点までの動画・
+  // 文字起こしをローカルへ保存する。MediaRecorderをタイムスライス付き
+  // (5秒おき、start(5000)参照)で開始しているため、recordedChunksRef.
+  // currentには直前5秒以内までの動画データが既に積まれている。stop()を
+  // 呼んで正式な終了処理(onstop)の完了を待つ余裕は無い(ページが実際に
+  // 閉じ始めると非同期処理は実行されない)ため、ここでは既に確定済みの
+  // チャンク・字幕だけをそのまま保存する(直前5秒分・未デコード分は
+  // 失われる可能性がある、ベストエフォート)。既に正規の停止保存フロー
+  // (stopRecording→recorder.onstop)が進行中の場合はそちら側に任せ、
+  // 二重保存にならないようにする。
+  useEffect(() => {
+    const handler = () => {
+      if (recordingOwnerIdRef.current !== selfId.current) return;
+      if (isStoppingRecordingRef.current) return;
+      const recorder = mediaRecorderRef.current;
+      if (!recorder || recorder.state === "inactive") return;
+      if (recordedChunksRef.current.length > 0) {
+        const blob = new Blob(recordedChunksRef.current, {
+          type: "video/webm",
+        });
+        downloadBlob(blob, `recording-${formatSaveStamp()}.webm`, true);
+      }
+      saveCaptionsLocally(true);
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [saveCaptionsLocally]);
 
   const handleRecordButtonClick = useCallback(() => {
     if (recordingOwnerIdRef.current === selfId.current) {
@@ -9472,6 +9546,14 @@ export default function AvatarSpace({
               上部中央に独立したフローティング表示として置く
               (2026-09報告により変更。詳細はcontainerRef内のJSX参照)。 */}
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            {recordingStopProgressPercent !== null && (
+              <span
+                className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white shadow"
+                title="録画・文字起こしをローカルに保存中です"
+              >
+                文字起こし保存中:残り{recordingStopProgressPercent}%
+              </span>
+            )}
             <div className="flex shrink-0 flex-col items-center">
               <AnnouncementButton
                 enabled={announcementOn}
