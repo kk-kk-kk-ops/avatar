@@ -313,6 +313,7 @@ export const PLANS: Record<
     historyRetentionLabel: string; // チャット・画像履歴の保管期間(表示用)。実際の削除判定は
     // supabase/consolidated_setup.sqlのget_expired_chat_message_ids()に同じ期間をハードコードしている
     // (DBはこの表示値を読まない。他の上限値と同じくコード側を唯一の情報源とする方針のため)
+    recordingEnabled: boolean; // 会議室の画面録画・自動文字起こし機能が使えるか(Freeのみfalse)
   }
 > = {
   free: {
@@ -327,6 +328,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: 5,
     voiceCallDailyMinutes: null,
     historyRetentionLabel: "7日",
+    recordingEnabled: false,
   },
   light: {
     label: "Light",
@@ -340,6 +342,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: 45,
     voiceCallDailyMinutes: null,
     historyRetentionLabel: "1ヶ月",
+    recordingEnabled: true,
   },
   standard: {
     label: "Standard",
@@ -353,6 +356,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: 120,
     voiceCallDailyMinutes: null,
     historyRetentionLabel: "1ヶ月",
+    recordingEnabled: true,
   },
   pro: {
     label: "Pro",
@@ -366,6 +370,7 @@ export const PLANS: Record<
     videoCallDailyMinutes: null,
     voiceCallDailyMinutes: null,
     historyRetentionLabel: "3ヶ月",
+    recordingEnabled: true,
   },
 };
 

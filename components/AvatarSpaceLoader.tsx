@@ -15,6 +15,7 @@ type Props = {
   screenShareDailyMinutes: number | null;
   videoCallDailyMinutes: number | null;
   voiceCallDailyMinutes: number | null;
+  recordingEnabled: boolean;
   isAccountAdmin: boolean;
   isMaster: boolean;
   guestInviteToken?: string | null;
@@ -32,6 +33,7 @@ export default function AvatarSpaceLoader({
   screenShareDailyMinutes,
   videoCallDailyMinutes,
   voiceCallDailyMinutes,
+  recordingEnabled,
   isAccountAdmin,
   isMaster,
   guestInviteToken,
@@ -57,6 +59,7 @@ export default function AvatarSpaceLoader({
         screenShareDailyMinutes={screenShareDailyMinutes}
         videoCallDailyMinutes={videoCallDailyMinutes}
         voiceCallDailyMinutes={voiceCallDailyMinutes}
+        recordingEnabled={recordingEnabled}
         isAccountAdmin={isAccountAdmin}
         isMaster={isMaster}
         guestInviteToken={guestInviteToken}

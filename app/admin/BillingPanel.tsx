@@ -145,6 +145,7 @@ export default function BillingPanel({
                   <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
                   <li>音声通話: {formatPlanDailyLimit(info.voiceCallDailyMinutes)}</li>
                   <li>チャット履歴保管期間: {info.historyRetentionLabel}</li>
+                  {info.recordingEnabled && <li>画面録画・文字起こし: 利用可</li>}
                 </ul>
                 <button
                   onClick={() => handlePlanCardClick(id)}
@@ -247,6 +248,7 @@ export default function BillingPanel({
                     <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
                     <li>音声通話: 無制限</li>
                     <li>チャット履歴保管期間: {info.historyRetentionLabel}</li>
+                    {info.recordingEnabled && <li>画面録画・文字起こし: 利用可</li>}
                   </ul>
                   <button
                     onClick={() => handleDebugSwitch(id)}
