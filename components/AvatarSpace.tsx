@@ -7454,12 +7454,23 @@ export default function AvatarSpace({
                 // トレードオフ)。maxSpeechDurationも、bufferSizeInSeconds
                 // (30秒)の範囲内でより長く連続した発話を強制的に区切らずに
                 // 済むよう20→29秒に延ばす。
+                // 2026-10-05追記(「最初の0.何秒かが絶対に入らない」):
+                // minSpeechDuration(既定0.25秒、当初から未変更)は「無音
+                // から声に変わった瞬間、本当に発話が始まったとVADが確信
+                // するまでに必要な、連続して声らしいと判定された時間」。
+                // この確信が得られるまでの区間はセグメントの開始点として
+                // 遡って含めてもらえず、実際に話し始めた瞬間からこの時間
+                // 分は確実に失われる(thresholdをどれだけ下げても、この
+                // 「確信に必要な継続時間」自体は変わらないため解決しない)。
+                // 0.1秒に短くし、確信に必要な時間を減らすことで、話し始め
+                // の欠落を減らす(誤検出・雑音を拾いやすくなるトレードオフ
+                // は多少増えるが、既定の0.25秒より確実に改善するはず)。
                 sherpaVadRef.current = (window as any).createVad(Module, {
                   sileroVad: {
                     model: "./silero_vad.onnx",
                     threshold: 0.35,
                     minSilenceDuration: 0.8,
-                    minSpeechDuration: 0.25,
+                    minSpeechDuration: 0.1,
                     maxSpeechDuration: 29,
                     windowSize: 512,
                   },
@@ -7467,7 +7478,7 @@ export default function AvatarSpace({
                     model: "",
                     threshold: 0.35,
                     minSilenceDuration: 0.8,
-                    minSpeechDuration: 0.25,
+                    minSpeechDuration: 0.1,
                     maxSpeechDuration: 29,
                     windowSize: 256,
                   },
