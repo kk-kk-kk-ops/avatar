@@ -7835,62 +7835,133 @@ export default function AvatarSpace({
     const FLUSH_INTERVAL_SAMPLES = expectedSampleRate * 1; // 約1秒分
     let pendingChunks: Float32Array[] = [];
     let pendingSamples = 0;
-    // VADの区間キューに既に確定している発話区間を全て取り出し、認識・配信
-    // する(flushPendingAudio本体・末尾強制確定の両方から呼ぶため分離)。
-    const drainReadySegments = () => {
-      while (!vad.isEmpty()) {
-        const segment = vad.front();
-        vad.pop();
-        const self = selfState.current;
-        if (!self) continue;
+    // 2026-10-05報告対応(「話し始めの0.何秒〜1秒が絶対に入らない」):
+    // VAD自身の区間切り出し(front/pop)は、「無音→発話」の切り替わりを
+    // 確信するまでの数百ms〜1秒程度を区間の先頭から切り捨ててしまう仕様
+    // だった(thresholdやminSpeechDurationをいくら調整しても、この
+    // 「確信に必要な時間」自体は解消できない)。ユーザー提案により、VAD
+    // 自身の区間切り出しには頼らず、「無音と判定され続けている時間」だけ
+    // を区切りのトリガーに使う自前の方式に変更する: 音声は(無音か発話かに
+    // 関わらず)常時自前のバッファに積み続け、isDetected()がfalseの状態が
+    // minSilenceDuration分続いたらそこでバッファ全体(「確信」前の無音
+    // →発話の切り替わり部分も含む)をdecodeしてバッファをリセットする。
+    // これにより「発話開始の確信」待ちによる冒頭の欠落が原理上発生しなく
+    // なる(確信が得られる前の音声も、単に自前のバッファに残り続けている
+    // だけで失われない)。副次効果として、VAD自身のキュー(front/pop)に
+    // 依存しなくなったため、同じ音声が2回decodeされる現象(2026-10報告)
+    // も原理上起きなくなった(各ウィンドウは必ず1回だけ自前バッファに
+    // 積まれ、カット時に一度だけ消費される)。
+    let ownSegmentChunks: Float32Array[] = [];
+    let ownSegmentSamples = 0;
+    let speechSeenInOwnSegment = false;
+    let silentSamplesInOwnSegment = 0;
+    const SILENCE_CUT_SAMPLES = Math.round(
+      (vad.config.sileroVad.minSilenceDuration ?? 0.8) * expectedSampleRate,
+    );
+    const MAX_OWN_SEGMENT_SAMPLES = Math.round(
+      (vad.config.sileroVad.maxSpeechDuration ?? 29) * expectedSampleRate,
+    );
+    // まだ発話が一度も検出されていない(無音だけ)間にバッファが伸び続ける
+    // のを防ぐため、直前のこの秒数だけを残して古い部分は捨てる(実際に
+    // 発話が始まった時、この程度の「無音の尾」が先頭に残っても問題ない)。
+    const PRE_ROLL_SAMPLES = expectedSampleRate * 1;
 
-        const stream = recognizer.createStream();
-        stream.acceptWaveform(expectedSampleRate, segment.samples);
-        recognizer.decode(stream);
-        const result = recognizer.getResult(stream);
-        stream.free();
-        const text = (result?.text ?? "").trim();
-        if (!text) continue;
+    const concatFloat32 = (chunks: Float32Array[], total: number) => {
+      const merged = new Float32Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return merged;
+    };
 
-        const now = Date.now();
-        const lastEmitted = lastEmittedTextRef.current;
-        if (
-          lastEmitted &&
-          lastEmitted.text === text &&
-          now - lastEmitted.at < 5000
-        ) {
-          continue;
-        }
-        lastEmittedTextRef.current = { text, at: now };
-        const line = {
-          id: `${self.id}-${now}`,
-          senderName: self.name,
-          text,
-          at: now,
-        };
-        addCaptionLine(line);
-        channelRef.current?.httpSend("caption", {
-          id: line.id,
-          senderName: line.senderName,
-          text: line.text,
-          at: line.at,
-        });
+    const decodeAndEmit = (samples: Float32Array) => {
+      const self = selfState.current;
+      if (!self) return;
+
+      const stream = recognizer.createStream();
+      stream.acceptWaveform(expectedSampleRate, samples);
+      recognizer.decode(stream);
+      const result = recognizer.getResult(stream);
+      stream.free();
+      const text = (result?.text ?? "").trim();
+      if (!text) return;
+
+      const now = Date.now();
+      const lastEmitted = lastEmittedTextRef.current;
+      if (
+        lastEmitted &&
+        lastEmitted.text === text &&
+        now - lastEmitted.at < 5000
+      ) {
+        return;
+      }
+      lastEmittedTextRef.current = { text, at: now };
+      const line = {
+        id: `${self.id}-${now}`,
+        senderName: self.name,
+        text,
+        at: now,
+      };
+      addCaptionLine(line);
+      channelRef.current?.httpSend("caption", {
+        id: line.id,
+        senderName: line.senderName,
+        text: line.text,
+        at: line.at,
+      });
+    };
+
+    const resetOwnSegment = () => {
+      ownSegmentChunks = [];
+      ownSegmentSamples = 0;
+      speechSeenInOwnSegment = false;
+      silentSamplesInOwnSegment = 0;
+    };
+
+    const cutOwnSegmentIfAny = () => {
+      if (!speechSeenInOwnSegment || ownSegmentSamples === 0) {
+        resetOwnSegment();
+        return;
+      }
+      const merged = concatFloat32(ownSegmentChunks, ownSegmentSamples);
+      resetOwnSegment();
+      decodeAndEmit(merged);
+    };
+
+    const pushWindowToOwnSegment = (
+      windowSamples: Float32Array,
+      detected: boolean,
+    ) => {
+      ownSegmentChunks.push(windowSamples);
+      ownSegmentSamples += windowSamples.length;
+      if (detected) {
+        speechSeenInOwnSegment = true;
+        silentSamplesInOwnSegment = 0;
+      } else {
+        silentSamplesInOwnSegment += windowSamples.length;
+      }
+
+      if (
+        speechSeenInOwnSegment &&
+        silentSamplesInOwnSegment >= SILENCE_CUT_SAMPLES
+      ) {
+        cutOwnSegmentIfAny();
+        return;
+      }
+      if (ownSegmentSamples >= MAX_OWN_SEGMENT_SAMPLES) {
+        cutOwnSegmentIfAny();
+        return;
+      }
+      if (!speechSeenInOwnSegment && ownSegmentSamples > PRE_ROLL_SAMPLES) {
+        const merged = concatFloat32(ownSegmentChunks, ownSegmentSamples);
+        const trimmed = merged.slice(merged.length - PRE_ROLL_SAMPLES);
+        ownSegmentChunks = [trimmed];
+        ownSegmentSamples = trimmed.length;
       }
     };
-    // isFinal=true(録画停止・パイプライン終了時)は、まだ無音判定の猶予中
-    // で「発話区間」として確定していない末尾の発話があれば、強制的に確定
-    // させる(2026-10報告: 朗読の最後の1行がまるごと抜ける問題、および
-    // 「録画停止と同時にマイクをオフにすると直前の発話が途切れる」問題
-    // への対応。無音が十分続くのを待てないまま終了するとVAD内部に
-    // 「確定待ち」の区間が残り、二度と取り出されずに失われていた)。
-    // 2026-10報告(regression): 専用の`vad.flush()`(WASM側の
-    // `SherpaOnnxVoiceActivityDetectorFlush`)を使ったところ、このWASM
-    // ビルドでは未サポートらしく、呼び出し失敗時に後片付け処理まで巻き
-    // 込んで次の録画が完全に機能しなくなるregressionを起こした。確実に
-    // 動作する`acceptWaveform`だけで同じ効果(末尾の未確定区間を確定させる)
-    // を実現するため、`minSilenceDuration`(0.8秒)を十分に超える1秒分の
-    // 無音サンプルを通常の音声と同じ経路でVADに流し込み、VAD自身の無音
-    // 検出ロジックで自然に区間を閉じさせる。
+
     // 2026-10報告: vad.flush()が例外を投げて後片付け(呼び出し元の
     // stopLocalSpeechPipeline側のreset等)まで巻き込んでいたregressionを
     // 経験した。この関数のどこで例外が起きても呼び出し元の後片付けを
@@ -7914,9 +7985,6 @@ export default function AvatarSpace({
         }
         pendingChunks = [];
         pendingSamples = 0;
-        // 2026-10報告: メインスレッドでの処理に戻したが、10秒分まとめて
-        // 1回だけ処理することで、常時動き続ける場合に比べて頻度を大きく
-        // 減らしている(通話音声の途切れ対策)。
         buffer.push(merged);
         while (buffer.size() > vad.config.sileroVad.windowSize) {
           const windowSamples = buffer.get(
@@ -7924,26 +7992,19 @@ export default function AvatarSpace({
             vad.config.sileroVad.windowSize,
           );
           vad.acceptWaveform(windowSamples);
+          const detected = vad.isDetected();
           buffer.pop(vad.config.sileroVad.windowSize);
-          drainReadySegments();
+          pushWindowToOwnSegment(windowSamples, detected);
         }
       }
       if (isFinal) {
-        // 何らかの理由で失敗しても(末尾の1発話を取りこぼすだけで済み)、
-        // 絶対に後片付け(呼び出し元のstopLocalSpeechPipeline側のreset等)
-        // をブロックしないようtry/catchで囲む。
+        // 録画停止時: 無音が十分続くのを待たず、たまっている分をそのまま
+        // 確定させる(2026-10報告: 朗読の最後の1行・「停止と同時にマイク
+        // をオフにすると直前の発話が途切れる」問題への対応)。自前の
+        // バッファ方式になったことで、VAD側の無音確定を待つための
+        // 「1秒分の無音を流し込む」トリックは不要になった。
         try {
-          const silenceSamples = new Float32Array(expectedSampleRate); // 1秒分の無音
-          buffer.push(silenceSamples);
-          while (buffer.size() > vad.config.sileroVad.windowSize) {
-            const windowSamples = buffer.get(
-              buffer.head(),
-              vad.config.sileroVad.windowSize,
-            );
-            vad.acceptWaveform(windowSamples);
-            buffer.pop(vad.config.sileroVad.windowSize);
-            drainReadySegments();
-          }
+          cutOwnSegmentIfAny();
         } catch (err) {
           // eslint-disable-next-line no-console
           console.warn("[sherpa-onnx] 末尾発話の確定処理に失敗しました", err);
