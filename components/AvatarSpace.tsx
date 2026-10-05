@@ -10160,9 +10160,13 @@ export default function AvatarSpace({
                   ゾーンの鍵アイコンと、このプレビュー行の位置が画面上で
                   たまたま重なって見えることがあったため(2026-09報告)、
                   このプレビュー行専用の余白を確保して置く。地図上のものと
-                  全く同じhandleLockIconClick/判定を使い挙動を揃える。 */}
+                  全く同じhandleLockIconClick/判定を使い挙動を揃える。
+                  鍵・録画・テロップの3アイコンは、右隣のプレビュー枠
+                  (140px)の高さに合わせてjustify-betweenで均等配置する
+                  (2026-10報告: gap-1だと3つが上に固まり、下に余白が
+                  余って見えていた)。 */}
               {selfConferenceZone && (
-                <div className="flex shrink-0 flex-col items-center gap-1">
+                <div className="flex h-[140px] shrink-0 flex-col items-center justify-between">
                   <button
                     type="button"
                     onClick={() => handleLockIconClick(selfConferenceZone.id)}
@@ -10504,9 +10508,12 @@ export default function AvatarSpace({
                         会議室に今いる人にだけ表示する。会議室入室時の
                         常時表示プレビュー行と同じく、一番左のプレビュー
                         枠の左側に置く(2026-09報告により、専用の行に
-                        分けていたのをやめて位置を揃えた)。 */}
+                        分けていたのをやめて位置を揃えた)。
+                        鍵・録画・テロップの3アイコンは、右隣のプレビュー
+                        枠(140px)の高さに合わせてjustify-betweenで均等
+                        配置する(2026-10報告)。 */}
                     {selfConferenceZone && (
-                      <div className="flex shrink-0 flex-col items-center gap-1">
+                      <div className="flex h-[140px] shrink-0 flex-col items-center justify-between">
                         <button
                           type="button"
                           onClick={() => handleLockIconClick(selfConferenceZone.id)}
@@ -10670,9 +10677,14 @@ export default function AvatarSpace({
                 <div className="flex flex-1 items-start gap-2 overflow-auto p-4">
                   {/* 会議室(conference)の施錠アイコン。会議室入室時の常時
                       表示プレビュー行と同じく、一番左のプレビュー枠の
-                      左側に置く。 */}
+                      左側に置く。鍵・録画・テロップの3アイコンは、右隣の
+                      プレビュー枠(meetingTileHeight)の高さに合わせて
+                      justify-betweenで均等配置する(2026-10報告)。 */}
                   {selfConferenceZone && (
-                    <div className="flex shrink-0 flex-col items-center gap-1">
+                    <div
+                      className="flex shrink-0 flex-col items-center justify-between"
+                      style={{ height: meetingTileHeight }}
+                    >
                       <button
                         type="button"
                         onClick={() => handleLockIconClick(selfConferenceZone.id)}
