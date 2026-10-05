@@ -7465,20 +7465,27 @@ export default function AvatarSpace({
                 // 0.1秒に短くし、確信に必要な時間を減らすことで、話し始め
                 // の欠落を減らす(誤検出・雑音を拾いやすくなるトレードオフ
                 // は多少増えるが、既定の0.25秒より確実に改善するはず)。
+                // 2026-10-05さらに追記: 「う」しか入らない(ほぼ全て欠落)
+                // との再報告。ノイズ抑制フィルターのおかげで元々のノイズは
+                // 少ないとのことなので、誤検出のリスクより欠落を防ぐことを
+                // 優先し、より極端な設定にする。windowSize(512サンプル
+                // =32ms)が検出の最小単位のため、minSpeechDurationは
+                // ほぼその下限(0.03秒)まで下げる。thresholdも0.2まで
+                // 下げ、より弱い・小さい声でも「発話」と判定しやすくする。
                 sherpaVadRef.current = (window as any).createVad(Module, {
                   sileroVad: {
                     model: "./silero_vad.onnx",
-                    threshold: 0.35,
+                    threshold: 0.2,
                     minSilenceDuration: 0.8,
-                    minSpeechDuration: 0.1,
+                    minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
                     windowSize: 512,
                   },
                   tenVad: {
                     model: "",
-                    threshold: 0.35,
+                    threshold: 0.2,
                     minSilenceDuration: 0.8,
-                    minSpeechDuration: 0.1,
+                    minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
                     windowSize: 256,
                   },
