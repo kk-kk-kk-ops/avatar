@@ -7474,17 +7474,20 @@ export default function AvatarSpace({
                 // 下げ、より弱い・小さい声でも「発話」と判定しやすくする。
                 // 2026-10-05さらに追記(「たび」のような弱い子音始まりの
                 // 語が入りにくい、時々は入る=確率的): thresholdを実用上の
-                // 下限付近(0.1)まで下げる。これより大きく下げると、声の
-                // ない時間帯(室内の環境音・呼吸音等)まで常時「発話」と
-                // 判定してしまい、無音判定自体が機能しなくなる(文がずっと
-                // 繋がったまま確定しない等の別の不具合を招く)ため、実質的な
-                // 下限と考えてよい。minSpeechDuration(0.03秒)は既に
-                // windowSize(32ms)相当で、これ以上は意味のある差を生まない
-                // ため変更しない。
+                // 下限付近(0.1)まで下げてみたが、副作用として「話し終えて
+                // から5秒前後テロップが出ない」報告が来た。原因は、自前の
+                // セグメント切り出し(セクション15)で使っているisDetected()
+                // が、感度を上げすぎたことでノイズ・環境音を誤って「発話」
+                // と判定しやすくなり、その誤判定が区間の先頭(無音の巻き
+                // 戻し=PRE_ROLL_SAMPLESのトリミング停止)を実際より何秒も
+                // 早い時点に固定してしまい、区間が無駄に長くなっていた
+                // ため(decode自体は速いが、区間に含まれる無音が長いほど
+                // 「実際に話してから表示されるまで」の見かけの遅れが増える)。
+                // 0.35(元の値)に戻し、誤判定による区間の肥大化を抑える。
                 sherpaVadRef.current = (window as any).createVad(Module, {
                   sileroVad: {
                     model: "./silero_vad.onnx",
-                    threshold: 0.1,
+                    threshold: 0.35,
                     minSilenceDuration: 0.8,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
@@ -7492,7 +7495,7 @@ export default function AvatarSpace({
                   },
                   tenVad: {
                     model: "",
-                    threshold: 0.1,
+                    threshold: 0.35,
                     minSilenceDuration: 0.8,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
