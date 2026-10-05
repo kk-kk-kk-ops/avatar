@@ -7880,12 +7880,17 @@ export default function AvatarSpace({
       const self = selfState.current;
       if (!self) return;
 
+      const decodeStartedAt = Date.now();
       const stream = recognizer.createStream();
       stream.acceptWaveform(expectedSampleRate, samples);
       recognizer.decode(stream);
       const result = recognizer.getResult(stream);
       stream.free();
       const text = (result?.text ?? "").trim();
+      // eslint-disable-next-line no-console
+      console.log(
+        `[sherpa-debug] decode: ${(samples.length / expectedSampleRate).toFixed(2)}s分を${Date.now() - decodeStartedAt}msで処理 -> "${text}"`,
+      );
       if (!text) return;
 
       const now = Date.now();
@@ -7930,6 +7935,10 @@ export default function AvatarSpace({
       decodeAndEmit(merged);
     };
 
+    // 2026-10調査用: 「無音になってから文字起こしが表示されるまで約10秒
+    // かかる」原因調査のための一時的な診断ログ。実際に無音になった瞬間
+    // (silenceStartedAt)と、カットが発生した瞬間の時間差を計測する。
+    let silenceStartedAt: number | null = null;
     const pushWindowToOwnSegment = (
       windowSamples: Float32Array,
       detected: boolean,
@@ -7939,14 +7948,22 @@ export default function AvatarSpace({
       if (detected) {
         speechSeenInOwnSegment = true;
         silentSamplesInOwnSegment = 0;
+        silenceStartedAt = null;
       } else {
         silentSamplesInOwnSegment += windowSamples.length;
+        if (silenceStartedAt === null) {
+          silenceStartedAt = Date.now();
+        }
       }
 
       if (
         speechSeenInOwnSegment &&
         silentSamplesInOwnSegment >= SILENCE_CUT_SAMPLES
       ) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-debug] 無音検出から${silenceStartedAt ? Date.now() - silenceStartedAt : -1}ms後にカット`,
+        );
         cutOwnSegmentIfAny();
         return;
       }
@@ -10260,6 +10277,21 @@ export default function AvatarSpace({
                   micOn={p.micOn === true}
                   transcriptionStatus={p.transcriptionStatus}
                 />
+              ))}
+            </div>
+          )}
+
+          {/* リアルタイム字幕(テロップ)表示(2026-10再追加)。常時表示
+              プレビュー行(上記)にも、「会議モード」モーダルと同じく
+              直近5件だけ表示する。鍵アイコン・録画ボタンがプレビュー行の
+              左端にあるため、重ならないよう右側に配置する。 */}
+          {!meetingViewOpen && selfInMeetingRoom && captionLines.length > 0 && (
+            <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-xs flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
+              {captionLines.slice(-5).map((line) => (
+                <p key={line.id} className="leading-snug">
+                  <span className="text-emerald-400">{line.senderName}:</span>{" "}
+                  {line.text}
+                </p>
               ))}
             </div>
           )}
