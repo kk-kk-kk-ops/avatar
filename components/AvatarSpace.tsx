@@ -7832,7 +7832,7 @@ export default function AvatarSpace({
     // バッチ間隔は実際には「文字起こしの精度」ではなく「結果が表示される
     // までの遅延」にしか影響しないため、リアルタイム字幕(テロップ)表示
     // を追加したこともあり、1秒へ短縮して体感速度を優先する。
-    const FLUSH_INTERVAL_SAMPLES = expectedSampleRate * 1; // 約1秒分
+    const FLUSH_INTERVAL_SAMPLES = Math.round(expectedSampleRate * 0.5); // 約0.5秒分
     let pendingChunks: Float32Array[] = [];
     let pendingSamples = 0;
     // 2026-10-05報告対応(「話し始めの0.何秒〜1秒が絶対に入らない」):
@@ -7993,6 +7993,18 @@ export default function AvatarSpace({
           );
           vad.acceptWaveform(windowSamples);
           const detected = vad.isDetected();
+          // 2026-10報告(「話し終わっても次の発話が文字起こしされない」)
+          // 対応: セグメントの内容自体は自前のバッファ(ownSegmentChunks)
+          // を使うが、VAD内部では今まで通り区間が確定するたびに自身の
+          // キューへ積み続けている。front/pop で取り出さずに放置すると、
+          // このキューが溜まり続けてVAD内部の状態が詰まり、2回目以降の
+          // 発話がisDetected()で検出されなくなる(ように見える)不具合が
+          // あった。内容は使わないが、キューを空にするためだけに
+          // front()+pop()を呼んで必ず消費する。
+          while (!vad.isEmpty()) {
+            vad.front();
+            vad.pop();
+          }
           buffer.pop(vad.config.sileroVad.windowSize);
           pushWindowToOwnSegment(windowSamples, detected);
         }
