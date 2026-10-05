@@ -51,7 +51,7 @@ export default function TelopButton({ enabled, onClick, disabled }: Props) {
           ? "文字起こしテロップを非表示にする"
           : "文字起こしテロップを表示する"
       }
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-black/60 text-white"
       } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}
     >

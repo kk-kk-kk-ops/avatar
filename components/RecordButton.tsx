@@ -64,7 +64,7 @@ export default function RecordButton({
               : "画面録画を開始する"
         }
         aria-label={recording ? "録画を停止する" : "画面録画を開始する"}
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
           recording
             ? "bg-red-600 text-white hover:bg-red-500"
             : "bg-black/60 text-white hover:bg-black/80"
