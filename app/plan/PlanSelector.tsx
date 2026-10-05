@@ -71,6 +71,7 @@ export default function PlanSelector() {
                 <li>ビデオ通話: {formatPlanDailyLimit(plan.videoCallDailyMinutes)}</li>
                 <li>音声通話: {formatPlanDailyLimit(plan.voiceCallDailyMinutes)}</li>
                 <li>チャット履歴保管期間: {plan.historyRetentionLabel}</li>
+                {plan.recordingEnabled && <li>画面録画・文字起こし: 利用可</li>}
               </ul>
               {planId === "free" && (
                 <p className="mt-2 rounded-md bg-emerald-50 px-2 py-1.5 text-[10px] leading-snug text-emerald-700">

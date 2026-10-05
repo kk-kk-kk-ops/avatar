@@ -678,6 +678,8 @@ type Props = {
   // kind='voice_call')。「音声通話中」はマイクON かつ 近くに人がいる
   // (eligiblePeerIds.length > 0)状態として計測する。
   voiceCallDailyMinutes: number | null;
+  // プランごとの画面録画・自動文字起こし機能の利用可否(Freeのみfalse)。
+  recordingEnabled: boolean;
   isAccountAdmin: boolean;
   isMaster: boolean;
   // 他人の招待URL経由で参加しているゲストの場合のみ渡される招待
@@ -707,6 +709,7 @@ export default function AvatarSpace({
   screenShareDailyMinutes,
   videoCallDailyMinutes,
   voiceCallDailyMinutes,
+  recordingEnabled,
   isAccountAdmin,
   isMaster,
   guestInviteToken,
@@ -8605,8 +8608,9 @@ export default function AvatarSpace({
       return;
     }
     if (recordingOwnerIdRef.current !== null) return;
+    if (!recordingEnabled) return;
     setShowRecordConfirm(true);
-  }, [stopRecording]);
+  }, [stopRecording, recordingEnabled]);
 
   const confirmStartRecording = useCallback(() => {
     setShowRecordConfirm(false);
@@ -10209,6 +10213,7 @@ export default function AvatarSpace({
                     recording={recordingOwnerId !== null || isStoppingRecording}
                     onClick={handleRecordButtonClick}
                     disabled={
+                      !recordingEnabled ||
                       !isScreenRecordingSupported() ||
                       isStoppingRecording ||
                       isPreparingRecording ||
@@ -10216,7 +10221,9 @@ export default function AvatarSpace({
                         recordingOwnerId !== selfId.current)
                     }
                     disabledReason={
-                      !isScreenRecordingSupported()
+                      !recordingEnabled
+                        ? "現在のプランでは画面録画・文字起こしをご利用いただけません"
+                        : !isScreenRecordingSupported()
                         ? "このブラウザでは画面録画を利用できません"
                         : isStoppingRecording
                           ? "停止処理中です(文字起こしの完了を待っています)"
@@ -10559,6 +10566,7 @@ export default function AvatarSpace({
                           }
                           onClick={handleRecordButtonClick}
                           disabled={
+                            !recordingEnabled ||
                             !isScreenRecordingSupported() ||
                             isStoppingRecording ||
                             isPreparingRecording ||
@@ -10566,7 +10574,9 @@ export default function AvatarSpace({
                               recordingOwnerId !== selfId.current)
                           }
                           disabledReason={
-                            !isScreenRecordingSupported()
+                            !recordingEnabled
+                              ? "現在のプランでは画面録画・文字起こしをご利用いただけません"
+                              : !isScreenRecordingSupported()
                               ? "このブラウザでは画面録画を利用できません"
                               : isStoppingRecording
                                 ? "停止処理中です(文字起こしの完了を待っています)"
@@ -10730,6 +10740,7 @@ export default function AvatarSpace({
                         }
                         onClick={handleRecordButtonClick}
                         disabled={
+                          !recordingEnabled ||
                           !isScreenRecordingSupported() ||
                           isStoppingRecording ||
                           isPreparingRecording ||
@@ -10737,7 +10748,9 @@ export default function AvatarSpace({
                             recordingOwnerId !== selfId.current)
                         }
                         disabledReason={
-                          !isScreenRecordingSupported()
+                          !recordingEnabled
+                            ? "現在のプランでは画面録画・文字起こしをご利用いただけません"
+                            : !isScreenRecordingSupported()
                             ? "このブラウザでは画面録画を利用できません"
                             : isStoppingRecording
                               ? "停止処理中です(文字起こしの完了を待っています)"
