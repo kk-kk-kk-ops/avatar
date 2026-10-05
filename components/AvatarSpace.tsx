@@ -7700,6 +7700,12 @@ export default function AvatarSpace({
     // 分の発言が未処理のまま失われてしまうため)。isFinal=trueでVAD内部の
     // 確定待ち区間も強制的に確定させる(呼んだ直後にvad.reset()するため、
     // ここで確定させないと末尾の発話が永久に失われる)。
+    // eslint-disable-next-line no-console
+    console.log(
+      `[sherpa-debug] stopLocalSpeechPipeline呼び出し: sherpaFlushPendingRef.current=${
+        sherpaFlushPendingRef.current ? "あり" : "null"
+      }`,
+    );
     sherpaFlushPendingRef.current?.(true);
     sherpaFlushPendingRef.current = null;
     sherpaTrackListenerCleanupRef.current?.();
@@ -8005,6 +8011,12 @@ export default function AvatarSpace({
       }
     };
     const runFlush = (isFinal: boolean) => {
+      if (isFinal) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-debug] isFinal flush開始: pendingSamples=${pendingSamples} ownSegmentSamples=${ownSegmentSamples} speechSeenInOwnSegment=${speechSeenInOwnSegment}`,
+        );
+      }
       if (pendingSamples > 0) {
         const merged = new Float32Array(pendingSamples);
         let offset = 0;
@@ -8044,6 +8056,10 @@ export default function AvatarSpace({
         // をオフにすると直前の発話が途切れる」問題への対応)。自前の
         // バッファ方式になったことで、VAD側の無音確定を待つための
         // 「1秒分の無音を流し込む」トリックは不要になった。
+        // eslint-disable-next-line no-console
+        console.log(
+          `[sherpa-debug] isFinal cut直前: ownSegmentSamples=${ownSegmentSamples} speechSeenInOwnSegment=${speechSeenInOwnSegment}`,
+        );
         try {
           cutOwnSegmentIfAny();
         } catch (err) {
