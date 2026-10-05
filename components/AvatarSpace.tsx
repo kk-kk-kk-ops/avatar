@@ -7943,8 +7943,17 @@ export default function AvatarSpace({
       silentSamplesInOwnSegment = 0;
     };
 
-    const cutOwnSegmentIfAny = () => {
-      if (!speechSeenInOwnSegment || ownSegmentSamples === 0) {
+    // force=true(録画停止・マイクオフ等によるパイプライン終了時のみ)は、
+    // speechSeenInOwnSegmentがまだfalseでも(=VADが「発話」とまだ確信して
+    // いなくても)とにかくdecodeを試す。2026-10報告「文字起こし中にマイク
+    // をオフにすると何も表示されない」の原因がこれだった: 話し始めた
+    // 直後にマイクがオフになり、VADが確信する前にパイプラインが終了して
+    // しまうと、実際には音声が入っていても(speechSeenInOwnSegment=false
+    // のまま)何も確定させずに捨てていた。終了時はどうせこれが最後の
+    // チャンスなので、空振り(本当に無音だった場合はdecodeAndEmit側で
+    // 自然に何も起きない)を気にせず必ず試す。
+    const cutOwnSegmentIfAny = (force = false) => {
+      if ((!speechSeenInOwnSegment && !force) || ownSegmentSamples === 0) {
         resetOwnSegment();
         return;
       }
@@ -8061,7 +8070,7 @@ export default function AvatarSpace({
           `[sherpa-debug] isFinal cut直前: ownSegmentSamples=${ownSegmentSamples} speechSeenInOwnSegment=${speechSeenInOwnSegment}`,
         );
         try {
-          cutOwnSegmentIfAny();
+          cutOwnSegmentIfAny(true);
         } catch (err) {
           // eslint-disable-next-line no-console
           console.warn("[sherpa-onnx] 末尾発話の確定処理に失敗しました", err);
