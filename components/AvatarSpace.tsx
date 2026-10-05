@@ -7492,11 +7492,15 @@ export default function AvatarSpace({
                 // なり、1文が複数の断片に分かれて表示される頻度が増える
                 // 可能性がある。2026-10-03報告で0.5秒だと断片化しやすい
                 // ことが分かっているため、再発したら0.8秒に戻すこと)。
+                // 2026-10-06追記(「無音判定をもっと厳しくして無音になった
+                // らすぐ切る」): 0.5秒→0.3秒へさらに短縮する。断片化の
+                // トレードオフはさらに強まるため、文の途中で区切られる
+                // ことが増えたら0.5秒以上へ戻すこと。
                 sherpaVadRef.current = (window as any).createVad(Module, {
                   sileroVad: {
                     model: "./silero_vad.onnx",
                     threshold: 0.35,
-                    minSilenceDuration: 0.5,
+                    minSilenceDuration: 0.3,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
                     windowSize: 512,
@@ -7504,7 +7508,7 @@ export default function AvatarSpace({
                   tenVad: {
                     model: "",
                     threshold: 0.35,
-                    minSilenceDuration: 0.5,
+                    minSilenceDuration: 0.3,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
                     windowSize: 256,
@@ -7849,8 +7853,12 @@ export default function AvatarSpace({
     // バッチ間隔は実際には「文字起こしの精度」ではなく「結果が表示される
     // までの遅延」にしか影響しないため、リアルタイム字幕(テロップ)表示
     // を追加したこともあり、体感速度を優先してさらに0.25秒へ短縮する
-    // (2026-10-05報告「もっと1秒くらいで出るようにして」)。
-    const FLUSH_INTERVAL_SAMPLES = Math.round(expectedSampleRate * 0.25); // 約0.25秒分
+    // (2026-10-05報告「もっと1秒くらいで出るようにして」)。2026-10-06
+    // 追記(「無音になったらすぐ切る」)でminSilenceDurationを0.3秒へ
+    // 短縮したのに合わせ、カット判定自体をチェックする頻度もさらに
+    // 0.1秒へ短縮する(無音と確信してから実際にカットされるまでの
+    // ズレを減らす)。
+    const FLUSH_INTERVAL_SAMPLES = Math.round(expectedSampleRate * 0.1); // 約0.1秒分
     let pendingChunks: Float32Array[] = [];
     let pendingSamples = 0;
     // 2026-10-05報告対応(「話し始めの0.何秒〜1秒が絶対に入らない」):
