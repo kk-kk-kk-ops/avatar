@@ -8570,19 +8570,27 @@ export default function AvatarSpace({
   // 失われる可能性がある、ベストエフォート)。既に正規の停止保存フロー
   // (stopRecording→recorder.onstop)が進行中の場合はそちら側に任せ、
   // 二重保存にならないようにする。
+  // 2026-10報告: 「文字起こしは保存されるのに動画が保存されない」との
+  // 報告があった。ブラウザ(特にChrome系)は、beforeunload中に複数の
+  // ダウンロードを連続して発生させると、後から発生させた方だけが確実に
+  // 成功し、先に発生させた方は(ページの破棄が先に進んでしまい)サイレント
+  // に失敗することがある。動画(Blob生成に時間がかかる、サイズも大きい)
+  // を先に、文字起こし(小さく速い)を後にしていたため、動画側が破棄され
+  // やすかったと考えられる。より重要な動画を後に(=確実に成功する側に)
+  // 持ってくるよう順序を入れ替える。
   useEffect(() => {
     const handler = () => {
       if (recordingOwnerIdRef.current !== selfId.current) return;
       if (isStoppingRecordingRef.current) return;
       const recorder = mediaRecorderRef.current;
       if (!recorder || recorder.state === "inactive") return;
+      saveCaptionsLocally(true);
       if (recordedChunksRef.current.length > 0) {
         const blob = new Blob(recordedChunksRef.current, {
           type: "video/webm",
         });
         downloadBlob(blob, `recording-${formatSaveStamp()}.webm`, true);
       }
-      saveCaptionsLocally(true);
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
