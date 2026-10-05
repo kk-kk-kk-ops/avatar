@@ -7484,11 +7484,19 @@ export default function AvatarSpace({
                 // ため(decode自体は速いが、区間に含まれる無音が長いほど
                 // 「実際に話してから表示されるまで」の見かけの遅れが増える)。
                 // 0.35(元の値)に戻し、誤判定による区間の肥大化を抑える。
+                // 2026-10-05さらに追記(「2秒くらいで出るようになった、
+                // もっと1秒くらいにして」): カットまでの時間は主に
+                // minSilenceDuration(無音と確信するまでの時間)で決まる。
+                // 0.8秒→0.5秒に短縮し、表示までの速さを優先する(トレード
+                // オフ: 文中の短い息継ぎ・言い回しの間でも区切られやすく
+                // なり、1文が複数の断片に分かれて表示される頻度が増える
+                // 可能性がある。2026-10-03報告で0.5秒だと断片化しやすい
+                // ことが分かっているため、再発したら0.8秒に戻すこと)。
                 sherpaVadRef.current = (window as any).createVad(Module, {
                   sileroVad: {
                     model: "./silero_vad.onnx",
                     threshold: 0.35,
-                    minSilenceDuration: 0.8,
+                    minSilenceDuration: 0.5,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
                     windowSize: 512,
@@ -7496,7 +7504,7 @@ export default function AvatarSpace({
                   tenVad: {
                     model: "",
                     threshold: 0.35,
-                    minSilenceDuration: 0.8,
+                    minSilenceDuration: 0.5,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
                     windowSize: 256,
@@ -7834,8 +7842,9 @@ export default function AvatarSpace({
     // 重くなっても取り込み自体は影響を受けないこと、の2点が判明した。
     // バッチ間隔は実際には「文字起こしの精度」ではなく「結果が表示される
     // までの遅延」にしか影響しないため、リアルタイム字幕(テロップ)表示
-    // を追加したこともあり、1秒へ短縮して体感速度を優先する。
-    const FLUSH_INTERVAL_SAMPLES = Math.round(expectedSampleRate * 0.5); // 約0.5秒分
+    // を追加したこともあり、体感速度を優先してさらに0.25秒へ短縮する
+    // (2026-10-05報告「もっと1秒くらいで出るようにして」)。
+    const FLUSH_INTERVAL_SAMPLES = Math.round(expectedSampleRate * 0.25); // 約0.25秒分
     let pendingChunks: Float32Array[] = [];
     let pendingSamples = 0;
     // 2026-10-05報告対応(「話し始めの0.何秒〜1秒が絶対に入らない」):
