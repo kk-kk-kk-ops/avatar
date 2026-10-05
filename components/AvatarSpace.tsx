@@ -62,6 +62,7 @@ import TouchControls from "./TouchControls";
 import MicButton from "./MicButton";
 import AnnouncementButton from "./AnnouncementButton";
 import RecordButton from "./RecordButton";
+import TelopButton from "./TelopButton";
 import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import VideoTile from "./VideoTile";
@@ -10204,28 +10205,12 @@ export default function AvatarSpace({
                     }
                   />
                   {/* 文字起こしテロップの表示/非表示切り替え(2026-10追加)。
-                      録画ボタンの真下に配置する。会議室に入った最初はOFF。 */}
-                  <button
-                    type="button"
+                      録画ボタンの真下に配置する。会議室に入った最初はOFF。
+                      デザイン・ホバー挙動はMicButton等に統一(2026-10)。 */}
+                  <TelopButton
+                    enabled={showCaptionTelop}
                     onClick={() => setShowCaptionTelop((v) => !v)}
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm hover:bg-black/80 ${
-                      showCaptionTelop
-                        ? "bg-emerald-600 text-white"
-                        : "bg-black/60 text-white"
-                    }`}
-                    aria-label={
-                      showCaptionTelop
-                        ? "文字起こしテロップを非表示にする"
-                        : "文字起こしテロップを表示する"
-                    }
-                    title={
-                      showCaptionTelop
-                        ? "文字起こしテロップを非表示にする"
-                        : "文字起こしテロップを表示する"
-                    }
-                  >
-                    📝
-                  </button>
+                  />
                 </div>
               )}
               {/* 画面共有中の人のプレビュー(自分・他人問わず、常に一番左。
@@ -10567,28 +10552,12 @@ export default function AvatarSpace({
                         />
                         {/* 文字起こしテロップの表示/非表示切り替え(2026-10
                             追加)。録画ボタンの真下に配置する。会議室に
-                            入った最初はOFF。 */}
-                        <button
-                          type="button"
+                            入った最初はOFF。デザイン・ホバー挙動は
+                            MicButton等に統一(2026-10)。 */}
+                        <TelopButton
+                          enabled={showCaptionTelop}
                           onClick={() => setShowCaptionTelop((v) => !v)}
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm hover:bg-black/80 ${
-                            showCaptionTelop
-                              ? "bg-emerald-600 text-white"
-                              : "bg-black/60 text-white"
-                          }`}
-                          aria-label={
-                            showCaptionTelop
-                              ? "文字起こしテロップを非表示にする"
-                              : "文字起こしテロップを表示する"
-                          }
-                          title={
-                            showCaptionTelop
-                              ? "文字起こしテロップを非表示にする"
-                              : "文字起こしテロップを表示する"
-                          }
-                        >
-                          📝
-                        </button>
+                        />
                       </div>
                     )}
                     <VideoTile
@@ -10748,28 +10717,12 @@ export default function AvatarSpace({
                       />
                       {/* 文字起こしテロップの表示/非表示切り替え(2026-10
                           追加)。録画ボタンの真下に配置する。会議室に
-                          入った最初はOFF。 */}
-                      <button
-                        type="button"
+                          入った最初はOFF。デザイン・ホバー挙動は
+                          MicButton等に統一(2026-10)。 */}
+                      <TelopButton
+                        enabled={showCaptionTelop}
                         onClick={() => setShowCaptionTelop((v) => !v)}
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm hover:bg-black/80 ${
-                          showCaptionTelop
-                            ? "bg-emerald-600 text-white"
-                            : "bg-black/60 text-white"
-                        }`}
-                        aria-label={
-                          showCaptionTelop
-                            ? "文字起こしテロップを非表示にする"
-                            : "文字起こしテロップを表示する"
-                        }
-                        title={
-                          showCaptionTelop
-                            ? "文字起こしテロップを非表示にする"
-                            : "文字起こしテロップを表示する"
-                        }
-                      >
-                        📝
-                      </button>
+                      />
                     </div>
                   )}
                   <div
