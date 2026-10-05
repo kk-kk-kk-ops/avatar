@@ -7472,10 +7472,19 @@ export default function AvatarSpace({
                 // =32ms)が検出の最小単位のため、minSpeechDurationは
                 // ほぼその下限(0.03秒)まで下げる。thresholdも0.2まで
                 // 下げ、より弱い・小さい声でも「発話」と判定しやすくする。
+                // 2026-10-05さらに追記(「たび」のような弱い子音始まりの
+                // 語が入りにくい、時々は入る=確率的): thresholdを実用上の
+                // 下限付近(0.1)まで下げる。これより大きく下げると、声の
+                // ない時間帯(室内の環境音・呼吸音等)まで常時「発話」と
+                // 判定してしまい、無音判定自体が機能しなくなる(文がずっと
+                // 繋がったまま確定しない等の別の不具合を招く)ため、実質的な
+                // 下限と考えてよい。minSpeechDuration(0.03秒)は既に
+                // windowSize(32ms)相当で、これ以上は意味のある差を生まない
+                // ため変更しない。
                 sherpaVadRef.current = (window as any).createVad(Module, {
                   sileroVad: {
                     model: "./silero_vad.onnx",
-                    threshold: 0.2,
+                    threshold: 0.1,
                     minSilenceDuration: 0.8,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
@@ -7483,7 +7492,7 @@ export default function AvatarSpace({
                   },
                   tenVad: {
                     model: "",
-                    threshold: 0.2,
+                    threshold: 0.1,
                     minSilenceDuration: 0.8,
                     minSpeechDuration: 0.03,
                     maxSpeechDuration: 29,
