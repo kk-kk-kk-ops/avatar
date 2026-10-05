@@ -10331,7 +10331,7 @@ export default function AvatarSpace({
               直近5件だけ表示する。鍵アイコン・録画ボタンがプレビュー行の
               左端にあるため、重ならないよう右側に配置する。 */}
           {!meetingViewOpen && selfInMeetingRoom && captionLines.length > 0 && (
-            <div className="pointer-events-none absolute right-3 top-3 z-20 flex max-w-xs flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
+            <div className="pointer-events-none absolute right-3 top-3 z-20 flex w-[300px] flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
               {captionLines.slice(-5).map((line) => (
                 <p key={line.id} className="leading-snug">
                   <span className="text-emerald-400">{line.senderName}:</span>{" "}
@@ -10493,7 +10493,7 @@ export default function AvatarSpace({
                   表示される)と重なって使いづらかったため、右側(閉じる
                   ボタンの真下)に変更する。 */}
               {captionLines.length > 0 && (
-                <div className="pointer-events-none absolute right-3 top-14 z-10 flex max-w-xs flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
+                <div className="pointer-events-none absolute right-3 top-14 z-10 flex w-[300px] flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
                   {captionLines.slice(-5).map((line) => (
                     <p key={line.id} className="leading-snug">
                       <span className="text-emerald-400">
