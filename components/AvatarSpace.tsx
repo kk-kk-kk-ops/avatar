@@ -7704,12 +7704,6 @@ export default function AvatarSpace({
     // 分の発言が未処理のまま失われてしまうため)。isFinal=trueでVAD内部の
     // 確定待ち区間も強制的に確定させる(呼んだ直後にvad.reset()するため、
     // ここで確定させないと末尾の発話が永久に失われる)。
-    // eslint-disable-next-line no-console
-    console.log(
-      `[sherpa-debug] stopLocalSpeechPipeline呼び出し: sherpaFlushPendingRef.current=${
-        sherpaFlushPendingRef.current ? "あり" : "null"
-      }`,
-    );
     sherpaFlushPendingRef.current?.(true);
     sherpaFlushPendingRef.current = null;
     sherpaTrackListenerCleanupRef.current?.();
@@ -7906,17 +7900,12 @@ export default function AvatarSpace({
       const self = selfState.current;
       if (!self) return;
 
-      const decodeStartedAt = Date.now();
       const stream = recognizer.createStream();
       stream.acceptWaveform(expectedSampleRate, samples);
       recognizer.decode(stream);
       const result = recognizer.getResult(stream);
       stream.free();
       const text = (result?.text ?? "").trim();
-      // eslint-disable-next-line no-console
-      console.log(
-        `[sherpa-debug] decode: ${(samples.length / expectedSampleRate).toFixed(2)}s分を${Date.now() - decodeStartedAt}msで処理 -> "${text}"`,
-      );
       if (!text) return;
 
       const now = Date.now();
@@ -7970,10 +7959,6 @@ export default function AvatarSpace({
       decodeAndEmit(merged);
     };
 
-    // 2026-10調査用: 「無音になってから文字起こしが表示されるまで約10秒
-    // かかる」原因調査のための一時的な診断ログ。実際に無音になった瞬間
-    // (silenceStartedAt)と、カットが発生した瞬間の時間差を計測する。
-    let silenceStartedAt: number | null = null;
     const pushWindowToOwnSegment = (
       windowSamples: Float32Array,
       detected: boolean,
@@ -7983,22 +7968,14 @@ export default function AvatarSpace({
       if (detected) {
         speechSeenInOwnSegment = true;
         silentSamplesInOwnSegment = 0;
-        silenceStartedAt = null;
       } else {
         silentSamplesInOwnSegment += windowSamples.length;
-        if (silenceStartedAt === null) {
-          silenceStartedAt = Date.now();
-        }
       }
 
       if (
         speechSeenInOwnSegment &&
         silentSamplesInOwnSegment >= SILENCE_CUT_SAMPLES
       ) {
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-debug] 無音検出から${silenceStartedAt ? Date.now() - silenceStartedAt : -1}ms後にカット`,
-        );
         cutOwnSegmentIfAny();
         return;
       }
@@ -8028,12 +8005,6 @@ export default function AvatarSpace({
       }
     };
     const runFlush = (isFinal: boolean) => {
-      if (isFinal) {
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-debug] isFinal flush開始: pendingSamples=${pendingSamples} ownSegmentSamples=${ownSegmentSamples} speechSeenInOwnSegment=${speechSeenInOwnSegment}`,
-        );
-      }
       if (pendingSamples > 0) {
         const merged = new Float32Array(pendingSamples);
         let offset = 0;
@@ -8073,10 +8044,6 @@ export default function AvatarSpace({
         // をオフにすると直前の発話が途切れる」問題への対応)。自前の
         // バッファ方式になったことで、VAD側の無音確定を待つための
         // 「1秒分の無音を流し込む」トリックは不要になった。
-        // eslint-disable-next-line no-console
-        console.log(
-          `[sherpa-debug] isFinal cut直前: ownSegmentSamples=${ownSegmentSamples} speechSeenInOwnSegment=${speechSeenInOwnSegment}`,
-        );
         try {
           cutOwnSegmentIfAny(true);
         } catch (err) {
