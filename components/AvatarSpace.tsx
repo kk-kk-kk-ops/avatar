@@ -7879,9 +7879,19 @@ export default function AvatarSpace({
     let ownSegmentSamples = 0;
     let speechSeenInOwnSegment = false;
     let silentSamplesInOwnSegment = 0;
+    // VADが「発話」と判定した(detected===true)サンプル数だけを別途数える
+    // (2026-10報告: マイクのオン/オフ操作そのもので生じる一瞬のポツッという
+    // ノイズをVADが短く「発話」と誤検出し、その前後の無音(プリロール分の
+    // 無音含む)ごとdecodeしてしまい、「えっ」「はい」のような実際には
+    // 発話していない短い幻聴テキストが出る不具合があった。ownSegmentSamples
+    // (無音部分も含む区間全体の長さ)ではなく、実際にdetected=trueだった
+    // サンプル数だけで「本当に喋ったか」を判定することで、ノイズの一瞬の
+    // 誤検出(数十ms程度)と、実際の発話(通常100ms以上)を区別する)。
+    let speechSampleCountInOwnSegment = 0;
     const SILENCE_CUT_SAMPLES = Math.round(
       (vad.config.sileroVad.minSilenceDuration ?? 0.8) * expectedSampleRate,
     );
+    const MIN_SPEECH_SAMPLES_TO_DECODE = Math.round(expectedSampleRate * 0.15);
     const MAX_OWN_SEGMENT_SAMPLES = Math.round(
       (vad.config.sileroVad.maxSpeechDuration ?? 29) * expectedSampleRate,
     );
@@ -7942,6 +7952,7 @@ export default function AvatarSpace({
       ownSegmentSamples = 0;
       speechSeenInOwnSegment = false;
       silentSamplesInOwnSegment = 0;
+      speechSampleCountInOwnSegment = 0;
     };
 
     // force=true(録画停止・マイクオフ等によるパイプライン終了時のみ)は、
@@ -7953,8 +7964,20 @@ export default function AvatarSpace({
     // のまま)何も確定させずに捨てていた。終了時はどうせこれが最後の
     // チャンスなので、空振り(本当に無音だった場合はdecodeAndEmit側で
     // 自然に何も起きない)を気にせず必ず試す。
+    // ただし2026-10報告「マイクのオン/オフ操作で『えっ』『はい』のような
+    // 存在しない発話が文字起こしされる」の対策として、detected=trueだった
+    // サンプル数(speechSampleCountInOwnSegment)がMIN_SPEECH_SAMPLES_TO_DECODE
+    // 未満の場合はforceでも常にdecodeをスキップする。本当に無音の区間を
+    // decodeに通すと、sherpa-onnx側が無音・雑音から「はい」等の実在しない
+    // 短い単語を幻聴することがあるため(force=trueの元々の意図は「確信前の
+    // 本物の発話を取りこぼさない」ことであり、「ノイズも含めて必ずdecodeする」
+    // ことではなかった)。
     const cutOwnSegmentIfAny = (force = false) => {
-      if ((!speechSeenInOwnSegment && !force) || ownSegmentSamples === 0) {
+      if (
+        (!speechSeenInOwnSegment && !force) ||
+        ownSegmentSamples === 0 ||
+        speechSampleCountInOwnSegment < MIN_SPEECH_SAMPLES_TO_DECODE
+      ) {
         resetOwnSegment();
         return;
       }
@@ -7971,6 +7994,7 @@ export default function AvatarSpace({
       ownSegmentSamples += windowSamples.length;
       if (detected) {
         speechSeenInOwnSegment = true;
+        speechSampleCountInOwnSegment += windowSamples.length;
         silentSamplesInOwnSegment = 0;
       } else {
         silentSamplesInOwnSegment += windowSamples.length;
