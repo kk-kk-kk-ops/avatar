@@ -16,10 +16,16 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
     super();
     this._chunks = [];
     this._length = 0;
-    // 128サンプル(1クオンタム)ごとにpostMessageすると呼び出し過多に
-    // なるため、旧ScriptProcessorNode実装と同程度の粒度(4096サンプル)
-    // までまとめてから送る。
-    this._postThreshold = 4096;
+    // 128サンプル(1クオンタム)ごとにpostMessageすると呼び出し過多になる
+    // ため、ある程度まとめてから送る。2026-10報告: iPhone(Safari)で
+    // マイクOFFにした瞬間、このワークレット自体が(iOS側のオーディオ
+    // セッション変更に伴い)即座にサスペンドされ、まだpostMessageしていない
+    // 分の音声がそのまま失われる現象が疑われる。4096サンプル(約85ms@48kHz)
+    // だと直前の発言の末尾がまとまって失われるリスクがあるため、1024
+    // サンプル(約21ms)まで小さくし、取りこぼしても被害を最小限にする
+    // (postMessageの呼び出し頻度は上がるが、1回あたりのデータ量が小さい
+    // ため負荷は軽微)。
+    this._postThreshold = 1024;
   }
 
   process(inputs) {

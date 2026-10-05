@@ -939,6 +939,9 @@ export default function AvatarSpace({
   // 準備が終わるまで遅らせることで、録画開始直後の数秒分の発言が文字
   // 起こしされない問題を視覚的に分かるようにする(startRecording参照)。
   const [isPreparingRecording, setIsPreparingRecording] = useState(false);
+  // リアルタイム字幕(テロップ)表示のON/OFF(2026-10追加)。録画ボタンの
+  // 真下に切り替えアイコンを置く。会議室に入った最初はOFF(非表示)。
+  const [showCaptionTelop, setShowCaptionTelop] = useState(false);
   // 録画停止〜ローカル保存完了までの進捗をヘッダーに0→100%として
   // 表示するための状態(2026-10追加、録画開始者のみ)。nullの時は非表示。
   const [recordingStopProgressPercent, setRecordingStopProgressPercent] =
@@ -10200,6 +10203,29 @@ export default function AvatarSpace({
                         : undefined
                     }
                   />
+                  {/* 文字起こしテロップの表示/非表示切り替え(2026-10追加)。
+                      録画ボタンの真下に配置する。会議室に入った最初はOFF。 */}
+                  <button
+                    type="button"
+                    onClick={() => setShowCaptionTelop((v) => !v)}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm hover:bg-black/80 ${
+                      showCaptionTelop
+                        ? "bg-emerald-600 text-white"
+                        : "bg-black/60 text-white"
+                    }`}
+                    aria-label={
+                      showCaptionTelop
+                        ? "文字起こしテロップを非表示にする"
+                        : "文字起こしテロップを表示する"
+                    }
+                    title={
+                      showCaptionTelop
+                        ? "文字起こしテロップを非表示にする"
+                        : "文字起こしテロップを表示する"
+                    }
+                  >
+                    💬
+                  </button>
                 </div>
               )}
               {/* 画面共有中の人のプレビュー(自分・他人問わず、常に一番左。
@@ -10305,7 +10331,10 @@ export default function AvatarSpace({
               プレビュー行(上記)にも、「会議モード」モーダルと同じく
               直近5件だけ表示する。鍵アイコン・録画ボタンがプレビュー行の
               左端にあるため、重ならないよう右側に配置する。 */}
-          {!meetingViewOpen && selfInMeetingRoom && captionLines.length > 0 && (
+          {!meetingViewOpen &&
+            selfInMeetingRoom &&
+            showCaptionTelop &&
+            captionLines.length > 0 && (
             <div className="pointer-events-none absolute right-3 top-3 z-20 flex w-[300px] flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
               {captionLines.slice(-5).map((line) => (
                 <p key={line.id} className="leading-snug">
@@ -10467,7 +10496,7 @@ export default function AvatarSpace({
                   だと画面共有中の鍵アイコン・録画ボタン(同じく左上に
                   表示される)と重なって使いづらかったため、右側(閉じる
                   ボタンの真下)に変更する。 */}
-              {captionLines.length > 0 && (
+              {showCaptionTelop && captionLines.length > 0 && (
                 <div className="pointer-events-none absolute right-3 top-14 z-10 flex w-[300px] flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
                   {captionLines.slice(-5).map((line) => (
                     <p key={line.id} className="leading-snug">
@@ -10536,6 +10565,30 @@ export default function AvatarSpace({
                               : undefined
                           }
                         />
+                        {/* 文字起こしテロップの表示/非表示切り替え(2026-10
+                            追加)。録画ボタンの真下に配置する。会議室に
+                            入った最初はOFF。 */}
+                        <button
+                          type="button"
+                          onClick={() => setShowCaptionTelop((v) => !v)}
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm hover:bg-black/80 ${
+                            showCaptionTelop
+                              ? "bg-emerald-600 text-white"
+                              : "bg-black/60 text-white"
+                          }`}
+                          aria-label={
+                            showCaptionTelop
+                              ? "文字起こしテロップを非表示にする"
+                              : "文字起こしテロップを表示する"
+                          }
+                          title={
+                            showCaptionTelop
+                              ? "文字起こしテロップを非表示にする"
+                              : "文字起こしテロップを表示する"
+                          }
+                        >
+                          💬
+                        </button>
                       </div>
                     )}
                     <VideoTile
@@ -10693,6 +10746,30 @@ export default function AvatarSpace({
                             : undefined
                         }
                       />
+                      {/* 文字起こしテロップの表示/非表示切り替え(2026-10
+                          追加)。録画ボタンの真下に配置する。会議室に
+                          入った最初はOFF。 */}
+                      <button
+                        type="button"
+                        onClick={() => setShowCaptionTelop((v) => !v)}
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm hover:bg-black/80 ${
+                          showCaptionTelop
+                            ? "bg-emerald-600 text-white"
+                            : "bg-black/60 text-white"
+                        }`}
+                        aria-label={
+                          showCaptionTelop
+                            ? "文字起こしテロップを非表示にする"
+                            : "文字起こしテロップを表示する"
+                        }
+                        title={
+                          showCaptionTelop
+                            ? "文字起こしテロップを非表示にする"
+                            : "文字起こしテロップを表示する"
+                        }
+                      >
+                        💬
+                      </button>
                     </div>
                   )}
                   <div
