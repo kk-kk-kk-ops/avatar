@@ -10325,14 +10325,16 @@ export default function AvatarSpace({
                   文字起こしの準備中…{sherpaLoadPercent}%
                 </div>
               )}
-              {/* リアルタイム字幕(テロップ)表示(2026-10再追加)。閉じる
-                  ボタン(右上)と対になる位置(左上)に、直近5件だけを
-                  古い順→新しい順に表示する(6件目が来たら一番上=一番
-                  古いものが自然に表示から外れる、captionLines自体は
+              {/* リアルタイム字幕(テロップ)表示(2026-10再追加)。直近5件
+                  だけを古い順→新しい順に表示する(6件目が来たら一番上=
+                  一番古いものが自然に表示から外れる、captionLines自体は
                   録画終了時の保存用に全件保持したままなのでslice(-5)は
-                  表示用のみ)。 */}
+                  表示用のみ)。2026-10報告: 左上(閉じるボタンの対の位置)
+                  だと画面共有中の鍵アイコン・録画ボタン(同じく左上に
+                  表示される)と重なって使いづらかったため、右側(閉じる
+                  ボタンの真下)に変更する。 */}
               {captionLines.length > 0 && (
-                <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-xs flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
+                <div className="pointer-events-none absolute right-3 top-14 z-10 flex max-w-xs flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
                   {captionLines.slice(-5).map((line) => (
                     <p key={line.id} className="leading-snug">
                       <span className="text-emerald-400">
