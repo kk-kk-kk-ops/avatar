@@ -9978,10 +9978,10 @@ export default function AvatarSpace({
             </div>
           )}
 
-          {/* 2026-10報告により、画面下部へのリアルタイム字幕(テロップ)
-              表示は廃止した。文字起こし自体(録画中の収集・録画停止時の
-              テキストファイル保存)は変更なく継続する(captionLines/
-              saveCaptionsLocally参照)。 */}
+          {/* リアルタイム字幕(テロップ)表示は、一度廃止した後ユーザー
+              要望で「会議モード」モーダル側(meetingViewOpen、閉じる
+              ボタンの左上)に再追加した。ここ(常時表示のアバター空間)
+              には表示しない。 */}
 
           {/* 「会議モード」ボタン(旧「会議画面」。2026-09報告により
               ヘッダーからアバター空間エリアの上部中央へ移動し、名称も
@@ -10304,6 +10304,24 @@ export default function AvatarSpace({
                 sherpaStatus === "initializing") && (
                 <div className="absolute bottom-3 right-3 z-10 rounded-md bg-black/70 px-3 py-1.5 text-xs text-white">
                   文字起こしの準備中…{sherpaLoadPercent}%
+                </div>
+              )}
+              {/* リアルタイム字幕(テロップ)表示(2026-10再追加)。閉じる
+                  ボタン(右上)と対になる位置(左上)に、直近5件だけを
+                  古い順→新しい順に表示する(6件目が来たら一番上=一番
+                  古いものが自然に表示から外れる、captionLines自体は
+                  録画終了時の保存用に全件保持したままなのでslice(-5)は
+                  表示用のみ)。 */}
+              {captionLines.length > 0 && (
+                <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-xs flex-col gap-1 rounded-lg bg-black/60 p-2 text-xs text-white">
+                  {captionLines.slice(-5).map((line) => (
+                    <p key={line.id} className="leading-snug">
+                      <span className="text-emerald-400">
+                        {line.senderName}:
+                      </span>{" "}
+                      {line.text}
+                    </p>
+                  ))}
                 </div>
               )}
               {activeSharerId ? (
