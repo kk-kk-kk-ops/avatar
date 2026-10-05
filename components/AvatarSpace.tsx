@@ -10186,15 +10186,16 @@ export default function AvatarSpace({
                   このプレビュー行専用の余白を確保して置く。地図上のものと
                   全く同じhandleLockIconClick/判定を使い挙動を揃える。
                   鍵・録画・テロップの3アイコンは、右隣のプレビュー枠
-                  (140px)の高さに合わせてjustify-betweenで均等配置する
-                  (2026-10報告: gap-1だと3つが上に固まり、下に余白が
-                  余って見えていた)。 */}
+                  (140px)の高さの中で縦中央揃え(2026-10報告: 録画アイコンを
+                  基準に中央に来るよう修正)にし、アイコン間の余白・大きさは
+                  ヘッダーのマイク/画面共有アイコンと揃える(gap-2 sm:gap-3、
+                  h-8 w-8)。 */}
               {selfConferenceZone && (
-                <div className="flex h-[140px] shrink-0 flex-col items-center justify-between">
+                <div className="flex h-[140px] shrink-0 flex-col items-center justify-center gap-2 sm:gap-3">
                   <button
                     type="button"
                     onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
                     aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
                     title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
                   >
@@ -10534,14 +10535,15 @@ export default function AvatarSpace({
                         枠の左側に置く(2026-09報告により、専用の行に
                         分けていたのをやめて位置を揃えた)。
                         鍵・録画・テロップの3アイコンは、右隣のプレビュー
-                        枠(140px)の高さに合わせてjustify-betweenで均等
-                        配置する(2026-10報告)。 */}
+                        枠(140px)の高さの中で縦中央揃えにし、アイコン間の
+                        余白・大きさはヘッダーのマイク/画面共有アイコンと
+                        揃える(2026-10報告)。 */}
                     {selfConferenceZone && (
-                      <div className="flex h-[140px] shrink-0 flex-col items-center justify-between">
+                      <div className="flex h-[140px] shrink-0 flex-col items-center justify-center gap-2 sm:gap-3">
                         <button
                           type="button"
                           onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
                           aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
                           title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
                         >
@@ -10702,17 +10704,18 @@ export default function AvatarSpace({
                   {/* 会議室(conference)の施錠アイコン。会議室入室時の常時
                       表示プレビュー行と同じく、一番左のプレビュー枠の
                       左側に置く。鍵・録画・テロップの3アイコンは、右隣の
-                      プレビュー枠(meetingTileHeight)の高さに合わせて
-                      justify-betweenで均等配置する(2026-10報告)。 */}
+                      プレビュー枠(meetingTileHeight)の高さの中で縦中央
+                      揃えにし、アイコン間の余白・大きさはヘッダーの
+                      マイク/画面共有アイコンと揃える(2026-10報告)。 */}
                   {selfConferenceZone && (
                     <div
-                      className="flex shrink-0 flex-col items-center justify-between"
+                      className="flex shrink-0 flex-col items-center justify-center gap-2 sm:gap-3"
                       style={{ height: meetingTileHeight }}
                     >
                       <button
                         type="button"
                         onClick={() => handleLockIconClick(selfConferenceZone.id)}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
                         aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
                         title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
                       >
