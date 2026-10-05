@@ -10224,7 +10224,7 @@ export default function AvatarSpace({
                         : "文字起こしテロップを表示する"
                     }
                   >
-                    💬
+                    📝
                   </button>
                 </div>
               )}
@@ -10587,7 +10587,7 @@ export default function AvatarSpace({
                               : "文字起こしテロップを表示する"
                           }
                         >
-                          💬
+                          📝
                         </button>
                       </div>
                     )}
@@ -10768,7 +10768,7 @@ export default function AvatarSpace({
                             : "文字起こしテロップを表示する"
                         }
                       >
-                        💬
+                        📝
                       </button>
                     </div>
                   )}
@@ -12243,7 +12243,7 @@ export default function AvatarSpace({
                         <span className="min-w-0 truncate">
                           {mention.groupId
                             ? `👥 ${mention.groupName}`
-                            : "💬 個人チャット"}
+                            : "📝 個人チャット"}
                         </span>
                         <span className="shrink-0">
                           {formatDmListTime(mention.createdAt)}
