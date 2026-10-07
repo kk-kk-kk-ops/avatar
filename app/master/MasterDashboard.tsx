@@ -7,6 +7,7 @@ import type {
   AccountSummary,
   Announcement,
   BugReport,
+  BugReportStatus,
   MaintenanceSettings,
   MapTemplate,
   PlanId,
@@ -23,7 +24,7 @@ import AccountServerAssignment from "./AccountServerAssignment";
 import MfaSettingsPanel from "./MfaSettingsPanel";
 import AnnouncementsPanel from "./AnnouncementsPanel";
 import BugReportsPanel from "./BugReportsPanel";
-import { markBugReportRead } from "./bugReportActions";
+import { markBugReportRead, updateBugReportStatus } from "./bugReportActions";
 import {
   TemplateEditorGuardContext,
   type TemplateEditorGuard,
@@ -86,6 +87,15 @@ export default function MasterDashboard({
     markBugReportRead(id).catch(() => {
       // 既読マークの失敗は表示上は無視する(次に開いた時にまた
       // 未読バッジが出るだけで、閲覧自体は既にできている)。
+    });
+  };
+
+  const handleBugReportStatusChange = (id: string, status: BugReportStatus) => {
+    setBugReportItems((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status } : r)),
+    );
+    updateBugReportStatus(id, status).catch(() => {
+      // 失敗した場合も表示上は無視する(リロードすれば実際の値に戻る)。
     });
   };
 
@@ -366,6 +376,7 @@ export default function MasterDashboard({
           <BugReportsPanel
             bugReports={bugReportItems}
             onReadBugReport={handleReadBugReport}
+            onStatusChange={handleBugReportStatusChange}
           />
         )}
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { BugReport } from "@/lib/types";
+import { BUG_REPORT_STATUSES, type BugReport, type BugReportStatus } from "@/lib/types";
 
 // マスター画面「不具合報告」タブ。設定(歯車)メニューからユーザーが
 // 送信した不具合報告を一覧(左、カテゴリをタイトルとして新しい順)+
@@ -20,6 +20,13 @@ function formatDateTime(iso: string): string {
     d.getHours(),
   )}:${pad(d.getMinutes())}`;
 }
+
+// ステータスごとのタイトル背景色(薄い色で3種を見分ける)。
+const STATUS_STYLES: Record<BugReportStatus, string> = {
+  未対応: "bg-orange-50",
+  完了: "bg-green-50",
+  対応不可: "bg-slate-200",
+};
 
 function UnreadBadge({ label }: { label: string }) {
   return (
@@ -44,9 +51,11 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 export default function BugReportsPanel({
   bugReports,
   onReadBugReport,
+  onStatusChange,
 }: {
   bugReports: Entry[];
   onReadBugReport: (id: string) => void;
+  onStatusChange: (id: string, status: BugReportStatus) => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(
     bugReports[0]?.id ?? null,
@@ -82,9 +91,11 @@ export default function BugReportsPanel({
               type="button"
               onClick={() => handleSelect(entry.id)}
               className={`flex w-full items-start justify-between gap-2 rounded-lg border p-3 text-left transition-colors ${
+                STATUS_STYLES[entry.status]
+              } ${
                 selectedId === entry.id
-                  ? "border-red-300 bg-red-50"
-                  : "border-slate-200 bg-white hover:border-slate-300"
+                  ? "border-red-400"
+                  : "border-slate-200 hover:border-slate-300"
               }`}
             >
               <span className="min-w-0 flex-1">
@@ -104,6 +115,22 @@ export default function BugReportsPanel({
       <div className="h-[90vh] min-w-0 flex-1 space-y-4 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
         {selected ? (
           <>
+            <div>
+              <p className="text-[11px] font-semibold text-slate-400">対応状況</p>
+              <select
+                value={selected.status}
+                onChange={(e) =>
+                  onStatusChange(selected.id, e.target.value as BugReportStatus)
+                }
+                className="mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-slate-500"
+              >
+                {BUG_REPORT_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
             <DetailRow label="どの機能でおきましたか？" value={selected.category} />
             <DetailRow label="何が起きましたか？" value={selected.issueType} />
             <DetailRow label="詳しい内容" value={selected.description} />

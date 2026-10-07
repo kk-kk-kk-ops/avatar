@@ -257,6 +257,10 @@ export const BUG_REPORT_ISSUE_TYPES = [
 
 export const BUG_REPORT_REPRODUCIBILITY = ["毎回", "ときどき", "1回だけ"] as const;
 
+// マスター画面での対応状況。デフォルトは「未対応」。
+export const BUG_REPORT_STATUSES = ["未対応", "完了", "対応不可"] as const;
+export type BugReportStatus = (typeof BUG_REPORT_STATUSES)[number];
+
 export type BugReport = {
   id: string;
   reporterName: string | null;
@@ -266,6 +270,7 @@ export type BugReport = {
   occurredAt: string;
   reproducibility: string;
   reproSteps: string;
+  status: BugReportStatus;
   createdAt: string;
 };
 
