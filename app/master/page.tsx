@@ -18,6 +18,7 @@ import {
   type AccountSummary,
   type Announcement,
   type BugReport,
+  type BugReportStatus,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
 
@@ -191,7 +192,7 @@ export default async function MasterPage() {
   const { data: bugReportRows } = await supabase
     .from("bug_reports")
     .select(
-      "id, reporter_name, category, issue_type, description, occurred_at, reproducibility, repro_steps, created_at, is_read",
+      "id, reporter_name, category, issue_type, description, occurred_at, reproducibility, repro_steps, status, created_at, is_read",
     )
     .order("created_at", { ascending: false });
   const bugReports: (BugReport & { unread: boolean })[] = (
@@ -205,6 +206,7 @@ export default async function MasterPage() {
     occurredAt: r.occurred_at,
     reproducibility: r.reproducibility,
     reproSteps: r.repro_steps,
+    status: (r.status as BugReportStatus) ?? "未対応",
     createdAt: r.created_at,
     unread: !r.is_read,
   }));

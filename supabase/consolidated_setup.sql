@@ -3131,6 +3131,10 @@ create table if not exists public.bug_reports (
   created_at timestamptz not null default now()
 );
 
+alter table public.bug_reports
+  add column if not exists status text not null default '未対応'
+    check (status in ('未対応', '完了', '対応不可'));
+
 alter table public.bug_reports enable row level security;
 
 drop policy if exists "bug_reports: insert own" on public.bug_reports;
