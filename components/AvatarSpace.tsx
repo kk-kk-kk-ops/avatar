@@ -14,6 +14,7 @@ import {
   type RemoteTrackPublication,
 } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
+import BugReportModal from "@/components/BugReportModal";
 import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import {
@@ -904,6 +905,7 @@ export default function AvatarSpace({
     recordingOwnerIdRef.current = recordingOwnerId;
   }, [recordingOwnerId]);
   const [showRecordConfirm, setShowRecordConfirm] = useState(false);
+  const [showBugReportModal, setShowBugReportModal] = useState(false);
   // 録画開始者が録画中に会議エリアから出ようとした時の確認(2026-10
   // 追加)。境界を越える移動そのものをブロックし(壁と同じ扱い、下の
   // conferenceゾーンのforEach内)、それと同時に確認ポップアップを出す。
@@ -12382,6 +12384,13 @@ export default function AvatarSpace({
                   保存する
                 </button>
 
+                <button
+                  onClick={() => setShowBugReportModal(true)}
+                  className="w-full rounded-lg bg-slate-800 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700"
+                >
+                  不具合報告
+                </button>
+
                 {(isAccountAdmin || isMaster) && (
                   <div className="space-y-2 border-t border-slate-700 pt-4">
                     {isAccountAdmin && (
@@ -12767,6 +12776,14 @@ export default function AvatarSpace({
       {/* 画面録画を開始する際の確認ポップアップ(2026-10追加)。注意書きが
           長いため、他の確認ポップアップ(text-center)とは異なり左寄せに
           する(2026-10報告)。 */}
+      {showBugReportModal && (
+        <BugReportModal
+          reporterUserId={authUserIdRef.current}
+          reporterName={settingsNameInput.trim()}
+          onClose={() => setShowBugReportModal(false)}
+        />
+      )}
+
       {showRecordConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="max-w-2xl rounded-xl bg-white p-6 text-left shadow-xl">

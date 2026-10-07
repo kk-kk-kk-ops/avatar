@@ -3108,6 +3108,48 @@ create policy "announcement_reads: own account"
   );
 
 
+-- ------------------------------------------------------------
+-- 21. bug_reports(不具合報告)。設定(歯車)メニューの「不具合報告」
+--     ボタンから、ログイン中の全ユーザー(管理者・ゲスト問わず)が
+--     送信できる。閲覧・既読管理はマスター画面でのみ行う。
+--     スクリーンショット等の添付は持たない(2026-10、ユーザー判断)。
+--     報告者名はprofilesへのJOINを避けるため送信時点の表示名を
+--     そのままreporter_nameに複製して持つ(履歴として残したいだけで
+--     リアルタイム性は不要なため)。
+-- ------------------------------------------------------------
+create table if not exists public.bug_reports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete set null,
+  reporter_name text,
+  category text not null,
+  issue_type text not null,
+  description text not null default '',
+  occurred_at timestamptz not null default now(),
+  reproducibility text not null,
+  repro_steps text not null default '',
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+alter table public.bug_reports enable row level security;
+
+drop policy if exists "bug_reports: insert own" on public.bug_reports;
+create policy "bug_reports: insert own"
+  on public.bug_reports for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists "bug_reports: select master" on public.bug_reports;
+create policy "bug_reports: select master"
+  on public.bug_reports for select
+  using (public.is_master(auth.uid()));
+
+drop policy if exists "bug_reports: update master" on public.bug_reports;
+create policy "bug_reports: update master"
+  on public.bug_reports for update
+  using (public.is_master(auth.uid()))
+  with check (public.is_master(auth.uid()));
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。

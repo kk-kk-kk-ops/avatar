@@ -17,6 +17,7 @@ import {
   type TemplateObjectImage,
   type AccountSummary,
   type Announcement,
+  type BugReport,
 } from "@/lib/types";
 import MasterDashboard from "./MasterDashboard";
 
@@ -187,6 +188,27 @@ export default async function MasterPage() {
     publishedAt: a.published_at,
   }));
 
+  const { data: bugReportRows } = await supabase
+    .from("bug_reports")
+    .select(
+      "id, reporter_name, category, issue_type, description, occurred_at, reproducibility, repro_steps, created_at, is_read",
+    )
+    .order("created_at", { ascending: false });
+  const bugReports: (BugReport & { unread: boolean })[] = (
+    bugReportRows ?? []
+  ).map((r) => ({
+    id: r.id,
+    reporterName: r.reporter_name,
+    category: r.category,
+    issueType: r.issue_type,
+    description: r.description,
+    occurredAt: r.occurred_at,
+    reproducibility: r.reproducibility,
+    reproSteps: r.repro_steps,
+    createdAt: r.created_at,
+    unread: !r.is_read,
+  }));
+
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
@@ -287,6 +309,7 @@ export default async function MasterPage() {
       templates={templates}
       accounts={accounts}
       announcements={announcements}
+      bugReports={bugReports}
       maintenance={{
         enabled: appSettings?.maintenance_enabled ?? false,
         startsAt: appSettings?.maintenance_starts_at ?? null,

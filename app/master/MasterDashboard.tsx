@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type {
   AccountSummary,
   Announcement,
+  BugReport,
   MaintenanceSettings,
   MapTemplate,
   PlanId,
@@ -21,6 +22,8 @@ import AvatarSettingsPanel from "./AvatarSettingsPanel";
 import AccountServerAssignment from "./AccountServerAssignment";
 import MfaSettingsPanel from "./MfaSettingsPanel";
 import AnnouncementsPanel from "./AnnouncementsPanel";
+import BugReportsPanel from "./BugReportsPanel";
+import { markBugReportRead } from "./bugReportActions";
 import {
   TemplateEditorGuardContext,
   type TemplateEditorGuard,
@@ -31,6 +34,7 @@ type Tab =
   | "templates"
   | "avatar"
   | "announcements"
+  | "bug_reports"
   | "accounts"
   | "security";
 
@@ -42,6 +46,7 @@ export default function MasterDashboard({
   templates,
   accounts,
   announcements,
+  bugReports,
   maintenance,
   showAdminLink,
   showRoomsLink,
@@ -56,6 +61,7 @@ export default function MasterDashboard({
   templates: MapTemplate[];
   accounts: AccountSummary[];
   announcements: Announcement[];
+  bugReports: (BugReport & { unread: boolean })[];
   maintenance: MaintenanceSettings;
   showAdminLink: boolean;
   showRoomsLink: boolean;
@@ -66,6 +72,22 @@ export default function MasterDashboard({
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // 不具合報告の既読管理(お知らせのannouncementItemsと同じ方針。
+  // サーバーから受け取った初期状態をローカルで保持し、項目を開いた瞬間に
+  // 即座にバッジを消す。実際の既読記録はBugReportsPanel経由で永続化する)。
+  const [bugReportItems, setBugReportItems] = useState(bugReports);
+  const unreadBugReportCount = bugReportItems.filter((r) => r.unread).length;
+
+  const handleReadBugReport = (id: string) => {
+    setBugReportItems((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, unread: false } : r)),
+    );
+    markBugReportRead(id).catch(() => {
+      // 既読マークの失敗は表示上は無視する(次に開いた時にまた
+      // 未読バッジが出るだけで、閲覧自体は既にできている)。
+    });
+  };
 
   // 多重ログイン検知(2026-09追加。手順9)。別のタブ/デバイスで同じ
   // アカウントが後からログインしてきた場合、このマスター画面セッションを
@@ -209,6 +231,24 @@ export default function MasterDashboard({
             お知らせ
           </button>
           <button
+            onClick={() => selectTab("bug_reports")}
+            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
+              tab === "bug_reports"
+                ? "bg-red-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            <span>不具合報告</span>
+            {unreadBugReportCount > 0 && (
+              <span
+                aria-label="未読の不具合報告があります"
+                className="flex h-4 min-w-[1rem] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white"
+              >
+                {unreadBugReportCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => selectTab("accounts")}
             className={`w-full rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
               tab === "accounts"
@@ -319,6 +359,13 @@ export default function MasterDashboard({
           <AnnouncementsPanel
             announcements={announcements}
             maintenance={maintenance}
+          />
+        )}
+
+        {tab === "bug_reports" && (
+          <BugReportsPanel
+            bugReports={bugReportItems}
+            onReadBugReport={handleReadBugReport}
           />
         )}
 
