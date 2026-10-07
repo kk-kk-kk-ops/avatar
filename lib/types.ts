@@ -235,6 +235,40 @@ export type Announcement = {
   publishedAt: string;
 };
 
+// 設定(歯車)メニューの「不具合報告」から、ログイン中の全ユーザーが
+// 送信できる不具合報告。マスター画面でのみ閲覧・既読管理する(2026-10)。
+export const BUG_REPORT_CATEGORIES = [
+  "会議(音声・映像)",
+  "画面共有",
+  "文字起こし",
+  "録画・録音",
+  "ログイン",
+  "その他",
+] as const;
+
+export const BUG_REPORT_ISSUE_TYPES = [
+  "動かない・止まる",
+  "音声が途切れる",
+  "文字起こしが間違う・抜ける",
+  "表示がおかしい",
+  "遅い・重い",
+  "その他",
+] as const;
+
+export const BUG_REPORT_REPRODUCIBILITY = ["毎回", "ときどき", "1回だけ"] as const;
+
+export type BugReport = {
+  id: string;
+  reporterName: string | null;
+  category: string;
+  issueType: string;
+  description: string;
+  occurredAt: string;
+  reproducibility: string;
+  reproSteps: string;
+  createdAt: string;
+};
+
 // マップのひな形。Supabaseのtemplatesテーブルの行に対応する。
 // マップ編集はマスターがテンプレートに対して行い、個々のルームは常に
 // 紐づくテンプレートのレイアウトを参照する(ルーム自身は編集不可)。
