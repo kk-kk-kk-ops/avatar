@@ -149,7 +149,7 @@ export default async function MasterPage() {
 
   const { count: totalProfiles } = await supabase
     .from("profiles")
-    .select("id", { count: "exact", head: true });
+    .select("user_id", { count: "exact", head: true });
 
   // アカウント一覧(サーバー割り当て変更UI用)。ownerのメールアドレスは
   // profiles側にしかないため、accounts.owner_user_id経由で別途取得して
