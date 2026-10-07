@@ -41,6 +41,7 @@ type Tab =
 
 export default function MasterDashboard({
   planCounts,
+  trialCount,
   totalProfiles,
   subscriptionTotalYen,
   rooms,
@@ -56,6 +57,7 @@ export default function MasterDashboard({
   avatarSizePx,
 }: {
   planCounts: Record<PlanId, number>;
+  trialCount: number;
   totalProfiles: number;
   subscriptionTotalYen: number;
   rooms: Room[];
@@ -346,6 +348,10 @@ export default function MasterDashboard({
                       <span>{planCounts[plan] ?? 0}件</span>
                     </li>
                   ))}
+                <li className="flex justify-between">
+                  <span>トライアル</span>
+                  <span>{trialCount}件</span>
+                </li>
               </ul>
             </div>
 
