@@ -69,7 +69,9 @@ export default async function MasterPage() {
 
   const { data: accountRows } = await supabase
     .from("accounts")
-    .select("id, name, plan, owner_user_id, livekit_server_id, created_at")
+    .select(
+      "id, name, plan, owner_user_id, livekit_server_id, created_at, trial_ends_at",
+    )
     .order("created_at", { ascending: false });
 
   const masterAccountIds = new Set(
@@ -92,6 +94,16 @@ export default async function MasterPage() {
     if (masterAccountIds.has(a.id)) return;
     if (a.plan === "free") planCounts.free += 1;
   });
+
+  // トライアル中(無料30日間、plan='standard'・trial_ends_atが未来)の
+  // アカウント数。トライアル中はplanが'standard'になるが実際にStripeの
+  // 契約があるわけではない(app/plan/actions.ts参照)ため、上のfree集計にも
+  // 下のStripeベースの有料プラン集計にも元から含まれない。別枠で数える。
+  const now = Date.now();
+  const trialCount = (accountRows ?? []).filter((a) => {
+    if (masterAccountIds.has(a.id)) return false;
+    return !!a.trial_ends_at && new Date(a.trial_ends_at).getTime() > now;
+  }).length;
 
   // 有料3プラン(light/standard/pro)は、DBのaccounts.plan(Webhook経由の
   // 反映で多少ラグがありうる)ではなく、Stripe上の実際に有効な契約を正として
@@ -305,6 +317,7 @@ export default async function MasterPage() {
   return (
     <MasterDashboard
       planCounts={planCounts}
+      trialCount={trialCount}
       totalProfiles={totalProfiles ?? 0}
       subscriptionTotalYen={subscriptionTotalYen}
       rooms={rooms}
