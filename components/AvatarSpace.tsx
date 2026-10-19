@@ -735,7 +735,7 @@ export default function AvatarSpace({
   // マウント時に一度だけ生成する。
   const [supabase] = useState(() => createClient());
 
-  const { locale, setLocale } = useLocale();
+  const { locale, setLocale, t } = useLocale();
   // ログイン前にブラウザのクッキーで選んだ言語より、アカウントに保存済みの
   // 言語設定(profiles.locale)を優先する。ただしクッキー側が既にenの場合
   // (この場で選んだ、あるいは別タブで既に切り替えた直後など)まで強制的に
@@ -9790,25 +9790,28 @@ export default function AvatarSpace({
                   {room.name}
                 </p>
                 <span className="shrink-0 text-[10px] font-semibold text-slate-500">
-                  {roomOnlineCounts[room.id] ?? 0}/{maxPeoplePerRoom}名
+                  {t("lobby.onlineCount", {
+                    count: String(roomOnlineCounts[room.id] ?? 0),
+                    max: String(maxPeoplePerRoom),
+                  })}
                 </span>
               </div>
             </div>
           ) : (
             <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              まだルームがありません。管理画面からルームを作成してください。
+              {t("lobby.noRoomYet")}
             </p>
           )}
 
           <p className="mb-4 text-sm text-slate-500">
-            アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)
+            {t("lobby.selectAvatarPrompt")}
           </p>
 
           {maintenancePublished && maintenance.startsAt && maintenance.endsAt && (
             <p className="mb-4 rounded-lg border border-red-300 px-3 py-2 text-xs font-semibold text-red-600">
-              【メンテナンスのお知らせ】
+              {t("lobby.maintenanceNotice")}
               <br />
-              期間:{formatMaintenanceDateTime(maintenance.startsAt)} 〜{" "}
+              {t("lobby.maintenancePeriod")}{formatMaintenanceDateTime(maintenance.startsAt)} 〜{" "}
               {formatMaintenanceDateTime(maintenance.endsAt)}
             </p>
           )}
@@ -9831,7 +9834,7 @@ export default function AvatarSpace({
             value={nameInput}
             onChange={(e) => setNameInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleJoin()}
-            placeholder="例:みく"
+            placeholder={t("lobby.namePlaceholder")}
             className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
           <button
@@ -9840,10 +9843,10 @@ export default function AvatarSpace({
             className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
             {maintenanceBlocking
-              ? "メンテナンス中"
+              ? t("lobby.maintenanceInProgress")
               : isJoining
-                ? "確認中..."
-                : "入室"}
+                ? t("lobby.checking")
+                : t("lobby.enterRoom")}
           </button>
 
           {/* ログインフロー統一(2026-08-24): 管理者は/adminへ自動転送
@@ -9858,7 +9861,7 @@ export default function AvatarSpace({
               href="/admin"
               className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
             >
-              管理画面へ
+              {t("lobby.goToAdmin")}
             </Link>
           )}
         </div>
