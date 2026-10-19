@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
-import { getStripe, planIdForPriceId, isPaidPlanId } from "@/lib/stripe";
 import {
   PLANS,
   NEW_ITEM_SIZE,
@@ -88,79 +87,49 @@ export default async function MasterPage() {
   };
   let subscriptionTotalYen = 0;
 
-  // Freeプランはstripeを一切経由しないため、これだけはDB(accounts.plan)を
-  // そのまま数える(マスター自身のアカウントは運用担当者のものなので除外)。
-  (accountRows ?? []).forEach((a) => {
-    if (masterAccountIds.has(a.id)) return;
-    if (a.plan === "free") planCounts.free += 1;
-  });
-
   // トライアル中(無料30日間、plan='standard'・trial_ends_atが未来)の
-  // アカウント数。トライアル中はplanが'standard'になるが実際にStripeの
-  // 契約があるわけではない(app/plan/actions.ts参照)ため、上のfree集計にも
-  // 下のStripeベースの有料プラン集計にも元から含まれない。別枠で数える。
+  // アカウント数。トライアル中はplanが'standard'になるが実際の契約が
+  // あるわけではない(app/plan/actions.ts参照)ため、下の有料プラン集計
+  // には含めず別枠で数える。
   const now = Date.now();
   const trialCount = (accountRows ?? []).filter((a) => {
     if (masterAccountIds.has(a.id)) return false;
     return !!a.trial_ends_at && new Date(a.trial_ends_at).getTime() > now;
   }).length;
 
-  // 有料3プラン(light/standard/pro)は、DBのaccounts.plan(Webhook経由の
-  // 反映で多少ラグがありうる)ではなく、Stripe上の実際に有効な契約を正として
-  // 集計する。値上げ後も旧価格のまま据え置かれた契約者がいる場合、
-  // 「サブスク合計金額」もその契約者が実際に支払っている金額(契約時点の
-  // Price)を反映する必要があるため、PLANS[plan].priceYen(＝現在の
-  // 新規契約時の価格)は使わない。
-  try {
-    const stripe = getStripe();
-    let startingAfter: string | undefined;
-    do {
-      const page = await stripe.subscriptions.list({
-        status: "active",
-        limit: 100,
-        starting_after: startingAfter,
-      });
-      for (const sub of page.data) {
-        const accountId = sub.metadata?.accountId;
-        if (accountId && masterAccountIds.has(accountId)) continue;
-        const item = sub.items.data[0];
-        const priceId = item?.price?.id;
-        if (!priceId) continue;
-        const planId = planIdForPriceId(priceId);
-        if (!planId || !isPaidPlanId(planId)) continue;
-        planCounts[planId] += 1;
-        subscriptionTotalYen += (item.price.unit_amount ?? 0) * (item.quantity ?? 1);
-      }
-      startingAfter = page.has_more ? page.data[page.data.length - 1]?.id : undefined;
-    } while (startingAfter);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("Stripeの契約情報取得に失敗しました", err);
-    // フォールバック: 取得に失敗した場合はDB(accounts.plan)ベースの
-    // 簡易集計に戻す(表示が完全に壊れるよりはマシ、実額とはズレうる)。
-    (accountRows ?? []).forEach((a) => {
-      if (masterAccountIds.has(a.id)) return;
-      const plan = a.plan as PlanId;
-      if (plan === "free" || !(plan in planCounts)) return;
-      planCounts[plan] += 1;
+  // プランごとの登録者数(Free/Light/Standard/Pro)は、DB(accounts.plan)を
+  // 正として数える(マスター自身のアカウントは運用担当者のものなので除外、
+  // トライアル中のアカウントは上のtrialCountで別枠集計のためここでは除く)。
+  // 「サブスク合計金額」は現行料金(PLANS[plan].priceYen)ベースの概算であり、
+  // 値上げ前の旧価格のまま据え置かれている契約者がいる場合は実額とズレうる。
+  (accountRows ?? []).forEach((a) => {
+    if (masterAccountIds.has(a.id)) return;
+    const isTrialing =
+      !!a.trial_ends_at && new Date(a.trial_ends_at).getTime() > now;
+    if (isTrialing) return;
+    const plan = a.plan as PlanId;
+    if (!(plan in planCounts)) return;
+    planCounts[plan] += 1;
+    if (plan !== "free") {
       subscriptionTotalYen += PLANS[plan]?.priceYen ?? 0;
-    });
-  }
-
-  const { count: totalProfiles } = await supabase
-    .from("profiles")
-    .select("user_id", { count: "exact", head: true });
+    }
+  });
 
   // アカウント一覧(サーバー割り当て変更UI用)。ownerのメールアドレスは
   // profiles側にしかないため、accounts.owner_user_id経由で別途取得して
   // JS側で突き合わせる(accounts→profilesの向きにFKが無くPostgRESTの
-  // ネストselectが使えないため)。
+  // ネストselectが使えないため)。同じ取得結果を使って、マスター保有
+  // アカウント(masterAccountIds)に属するプロフィール(管理者・ゲスト問わず)
+  // を「登録者数」から除外する。
   const { data: ownerProfileRows } = await supabase
     .from("profiles")
-    .select("user_id, email");
+    .select("user_id, email, account_id");
   const ownerEmailByUserId = new Map(
     (ownerProfileRows ?? []).map((p) => [p.user_id, p.email ?? ""]),
   );
+  const totalProfiles = (ownerProfileRows ?? []).filter(
+    (p) => !p.account_id || !masterAccountIds.has(p.account_id),
+  ).length;
   const accounts: AccountSummary[] = (accountRows ?? []).map((a) => ({
     id: a.id,
     name: a.name,
