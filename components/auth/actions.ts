@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
+import { translate, type Locale } from "@/lib/i18n/translations";
 
 // 通常ログイン(メール/パスワード)への総当たり対策。うちのログイン画面
 // (このServer Action)を経由した試行だけが対象で、anonキーでSupabaseの
@@ -73,10 +74,14 @@ async function recordSuccess(service: ServiceClient, key: string): Promise<void>
 export async function loginWithPassword(
   email: string,
   password: string,
+  locale: Locale = "ja",
 ): Promise<LoginResult> {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail || !password) {
-    return { ok: false, error: "メールアドレスとパスワードを入力してください。" };
+    return {
+      ok: false,
+      error: translate(locale, "error.emailPasswordRequired"),
+    };
   }
 
   const service = createServiceRoleClient();
@@ -86,8 +91,7 @@ export async function loginWithPassword(
   if ((await isLocked(service, emailKey)) || (await isLocked(service, ipKey))) {
     return {
       ok: false,
-      error:
-        "ログイン試行回数が多いため、しばらく時間をおいてから再度お試しください。",
+      error: translate(locale, "error.loginTooManyAttempts"),
     };
   }
 
@@ -100,7 +104,10 @@ export async function loginWithPassword(
   if (error) {
     await recordFailure(service, emailKey);
     await recordFailure(service, ipKey);
-    return { ok: false, error: "メールアドレスまたはパスワードが正しくありません。" };
+    return {
+      ok: false,
+      error: translate(locale, "error.loginInvalidCredentials"),
+    };
   }
 
   await recordSuccess(service, emailKey);

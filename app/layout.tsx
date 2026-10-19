@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { LocaleProvider } from "@/lib/i18n/LocaleContext";
+import { getServerLocale } from "@/lib/i18n/getServerLocale";
 
 // og:image等の相対パスを絶対URLへ解決するために必要(未設定だとLINE等の
 // 外部サービスがプレビュー画像を取得できない)。本番のVercel URL固定。
@@ -43,9 +45,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const locale = getServerLocale();
   return (
-    <html lang="ja">
-      <body>{children}</body>
+    <html lang={locale}>
+      <body>
+        <LocaleProvider initialLocale={locale}>{children}</LocaleProvider>
+      </body>
     </html>
   );
 }

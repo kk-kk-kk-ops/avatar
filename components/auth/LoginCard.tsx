@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { loginWithPassword } from "./actions";
 import GoogleLoginButton from "./GoogleLoginButton";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 type Props = {
   inviteToken: string | null;
@@ -31,6 +33,7 @@ export default function LoginCard({
   errorMessage,
 }: Props) {
   const searchParams = useSearchParams();
+  const { t, locale } = useLocale();
   // props のinviteTokenは初回描画時点のものなので、フォーム操作中に
   // URLが変わることは無い前提だが念のためsearchParamsからも取れるように
   // しておく(GoogleLoginButtonと同じ取得元)。
@@ -57,7 +60,7 @@ export default function LoginCard({
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
-      setFormError("メールアドレスとパスワードを入力してください。");
+      setFormError(t("error.emailPasswordRequired"));
       return;
     }
     setSubmitting(true);
@@ -66,7 +69,7 @@ export default function LoginCard({
       // ログイン失敗回数によるロック(components/auth/actions.ts)を
       // 効かせるため、ブラウザから直接signInWithPasswordを呼ばず
       // Server Action経由にする。
-      const result = await loginWithPassword(email.trim(), password);
+      const result = await loginWithPassword(email.trim(), password, locale);
       if (!result.ok) {
         setFormError(result.error);
         setSubmitting(false);
@@ -77,7 +80,7 @@ export default function LoginCard({
       // (サーバーコンポーネント)に最新のログイン状態で振り分け直させる。
       window.location.reload();
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
@@ -95,15 +98,15 @@ export default function LoginCard({
 
   const handleSignup = async () => {
     if (!email.trim() || !password) {
-      setFormError("メールアドレスとパスワードを入力してください。");
+      setFormError(t("error.emailPasswordRequired"));
       return;
     }
     if (password.length < 6) {
-      setFormError("パスワードは6文字以上で入力してください。");
+      setFormError(t("error.passwordTooShort"));
       return;
     }
     if (password !== confirmPassword) {
-      setFormError("パスワードが一致しません。");
+      setFormError(t("error.passwordMismatch"));
       return;
     }
     setSubmitting(true);
@@ -122,9 +125,7 @@ export default function LoginCard({
       });
       const checkJson = await checkRes.json().catch(() => ({}));
       if (checkJson.registeredWithPassword) {
-        setFormError(
-          "このメールアドレスは既に登録済みです。ログインをお試しいただくか、パスワードをお忘れの場合は再設定してください。",
-        );
+        setFormError(t("error.alreadyRegistered"));
         setSubmitting(false);
         return;
       }
@@ -139,9 +140,7 @@ export default function LoginCard({
         },
       });
       if (error) {
-        setFormError(
-          "登録に失敗しました。入力内容をご確認のうえ、時間をおいて再度お試しください。",
-        );
+        setFormError(t("error.signupFailed"));
         setSubmitting(false);
         return;
       }
@@ -149,14 +148,14 @@ export default function LoginCard({
       setMode("signup-code");
       setSubmitting(false);
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
 
   const handleVerifySignupCode = async () => {
     if (!otpCode.trim()) {
-      setFormError("確認コードを入力してください。");
+      setFormError(t("error.codeRequired"));
       return;
     }
     setSubmitting(true);
@@ -169,9 +168,7 @@ export default function LoginCard({
         type: "signup",
       });
       if (error) {
-        setFormError(
-          "コードが正しくないか、有効期限が切れています。再送信してもう一度お試しください。",
-        );
+        setFormError(t("error.codeInvalid"));
         setSubmitting(false);
         return;
       }
@@ -180,7 +177,7 @@ export default function LoginCard({
       // 共通処理(Googleログインと共用)を行わせる。
       window.location.href = "/auth/callback";
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
@@ -197,22 +194,22 @@ export default function LoginCard({
         email: email.trim(),
       });
       if (error) {
-        setFormError("再送信に失敗しました。時間をおいて再度お試しください。");
+        setFormError(t("error.resendFailed"));
         setSubmitting(false);
         return;
       }
       setFormError(null);
-      setSuccessMessage("確認コードを再送信しました。");
+      setSuccessMessage(t("success.codeResent"));
       setSubmitting(false);
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
 
   const handleRequestPasswordReset = async () => {
     if (!email.trim()) {
-      setFormError("メールアドレスを入力してください。");
+      setFormError(t("error.emailRequired"));
       return;
     }
     setSubmitting(true);
@@ -225,9 +222,7 @@ export default function LoginCard({
       // 登録の有無に関わらず同じ案内・同じ次の画面で統一する
       // (アカウントの有無を外部から探られないようにするため)。
       if (error) {
-        setFormError(
-          "送信に失敗しました。時間をおいて再度お試しください。",
-        );
+        setFormError(t("error.sendFailed"));
         setSubmitting(false);
         return;
       }
@@ -235,14 +230,14 @@ export default function LoginCard({
       setMode("forgot-code");
       setSubmitting(false);
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
 
   const handleVerifyResetCode = async () => {
     if (!otpCode.trim()) {
-      setFormError("確認コードを入力してください。");
+      setFormError(t("error.codeRequired"));
       return;
     }
     setSubmitting(true);
@@ -255,9 +250,7 @@ export default function LoginCard({
         type: "recovery",
       });
       if (error) {
-        setFormError(
-          "コードが正しくないか、有効期限が切れています。再送信してもう一度お試しください。",
-        );
+        setFormError(t("error.codeInvalid"));
         setSubmitting(false);
         return;
       }
@@ -268,7 +261,7 @@ export default function LoginCard({
       setMode("forgot-new-password");
       setSubmitting(false);
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
@@ -283,26 +276,26 @@ export default function LoginCard({
         email.trim(),
       );
       if (error) {
-        setFormError("再送信に失敗しました。時間をおいて再度お試しください。");
+        setFormError(t("error.resendFailed"));
         setSubmitting(false);
         return;
       }
       setFormError(null);
-      setSuccessMessage("確認コードを再送信しました。");
+      setSuccessMessage(t("success.codeResent"));
       setSubmitting(false);
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
 
   const handleSetNewPassword = async () => {
     if (password.length < 6) {
-      setFormError("パスワードは6文字以上で入力してください。");
+      setFormError(t("error.passwordTooShort"));
       return;
     }
     if (password !== confirmPassword) {
-      setFormError("パスワードが一致しません。");
+      setFormError(t("error.passwordMismatch"));
       return;
     }
     setSubmitting(true);
@@ -311,15 +304,15 @@ export default function LoginCard({
       const supabase = createClient();
       const { error } = await supabase.auth.updateUser({ password });
       if (error) {
-        setFormError("更新に失敗しました。時間をおいて再度お試しください。");
+        setFormError(t("error.updateFailed"));
         setSubmitting(false);
         return;
       }
-      setSuccessMessage("パスワードを更新しました。");
+      setSuccessMessage(t("success.passwordUpdated"));
       setSubmitting(false);
       setTimeout(() => window.location.reload(), 1200);
     } catch {
-      setFormError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setFormError(t("common.networkError"));
       setSubmitting(false);
     }
   };
@@ -346,20 +339,23 @@ export default function LoginCard({
   const showTabs = mode === "login" || mode === "signup";
 
   return (
-    <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-xl">
+    <div className="relative w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-xl">
+      <div className="absolute right-4 top-4">
+        <LanguageSwitcher />
+      </div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/logo.png"
-        alt="ロゴ"
+        alt={t("login.logoAlt")}
         className="mx-auto mb-4 h-14 w-14 object-contain"
       />
       <h1 className="mb-2 text-lg font-bold text-slate-800">Globy</h1>
       <p className="mb-6 text-xs text-slate-500">
         {currentInviteToken
           ? inviterName
-            ? `${inviterName}さんからの招待`
-            : "招待されたルームにゲストとして参加します"
-          : "ログインしてください"}
+            ? t("login.invitedBy", { name: inviterName })
+            : t("login.joinAsGuest")
+          : t("login.pleaseLogin")}
       </p>
 
       {errorMessage && (
@@ -373,7 +369,7 @@ export default function LoginCard({
           <GoogleLoginButton />
           <div className="my-4 flex items-center gap-3">
             <div className="h-px flex-1 bg-slate-200" />
-            <span className="text-[11px] text-slate-400">または</span>
+            <span className="text-[11px] text-slate-400">{t("common.or")}</span>
             <div className="h-px flex-1 bg-slate-200" />
           </div>
         </>
@@ -390,7 +386,7 @@ export default function LoginCard({
                 : "text-slate-500"
             }`}
           >
-            ログイン
+            {t("login.tabLogin")}
           </button>
           <button
             type="button"
@@ -401,31 +397,29 @@ export default function LoginCard({
                 : "text-slate-500"
             }`}
           >
-            新規登録
+            {t("login.tabSignup")}
           </button>
         </div>
       )}
 
       {mode === "signup-code" && (
         <p className="mb-3 text-left text-xs text-slate-600">
-          <span className="font-semibold">{email}</span>{" "}
-          宛に確認コードを送信しました。メールに記載の確認コードを入力してください。
+          {t("login.codeSentTo", { email })}
         </p>
       )}
       {mode === "forgot" && (
         <p className="mb-3 text-left text-xs font-semibold text-slate-600">
-          パスワード再設定
+          {t("login.resetPasswordTitle")}
         </p>
       )}
       {mode === "forgot-code" && (
         <p className="mb-3 text-left text-xs text-slate-600">
-          <span className="font-semibold">{email}</span>{" "}
-          宛に確認コードを送信しました。メールに記載の確認コードを入力してください。
+          {t("login.codeSentTo", { email })}
         </p>
       )}
       {mode === "forgot-new-password" && (
         <p className="mb-3 text-left text-xs font-semibold text-slate-600">
-          新しいパスワードを設定
+          {t("login.setNewPasswordTitle")}
         </p>
       )}
 
@@ -434,7 +428,7 @@ export default function LoginCard({
           <input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="表示名(任意)"
+            placeholder={t("login.displayNamePlaceholder")}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
         )}
@@ -444,7 +438,7 @@ export default function LoginCard({
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="メールアドレス"
+            placeholder={t("login.emailPlaceholder")}
             autoComplete="email"
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
@@ -455,7 +449,7 @@ export default function LoginCard({
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="パスワード"
+            placeholder={t("login.passwordPlaceholder")}
             autoComplete={mode === "signup" ? "new-password" : "current-password"}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
@@ -465,7 +459,7 @@ export default function LoginCard({
             type="password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            placeholder="パスワード(確認用)"
+            placeholder={t("login.passwordConfirmPlaceholder")}
             autoComplete="new-password"
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
@@ -475,7 +469,7 @@ export default function LoginCard({
           <input
             value={otpCode}
             onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ""))}
-            placeholder="確認コード"
+            placeholder={t("login.codePlaceholder")}
             inputMode="numeric"
             // Supabase側のOTP桁数設定(プロジェクトの作成時期により6桁/
             // 8桁いずれかがデフォルトになる)にコード側が依存しすぎない
@@ -494,7 +488,7 @@ export default function LoginCard({
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="新しいパスワード"
+              placeholder={t("login.newPasswordPlaceholder")}
               autoComplete="new-password"
               autoFocus
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
@@ -503,7 +497,7 @@ export default function LoginCard({
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="新しいパスワード(確認用)"
+              placeholder={t("login.newPasswordConfirmPlaceholder")}
               autoComplete="new-password"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
             />
@@ -527,16 +521,16 @@ export default function LoginCard({
           className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
         >
           {submitting
-            ? "処理中..."
+            ? t("common.processing")
             : mode === "login"
-              ? "ログイン"
+              ? t("login.tabLogin")
               : mode === "signup"
-                ? "登録する"
+                ? t("login.submitSignup")
                 : mode === "signup-code" || mode === "forgot-code"
-                  ? "確認する"
+                  ? t("login.submitVerify")
                   : mode === "forgot"
-                    ? "送信する"
-                    : "更新する"}
+                    ? t("login.submitSend")
+                    : t("login.submitUpdate")}
         </button>
 
         {mode === "login" && (
@@ -545,7 +539,7 @@ export default function LoginCard({
             onClick={() => resetFormState("forgot")}
             className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
           >
-            パスワードをお忘れですか?
+            {t("login.forgotPassword")}
           </button>
         )}
         {mode === "signup-code" && (
@@ -555,7 +549,7 @@ export default function LoginCard({
             disabled={submitting}
             className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
           >
-            コードが届かない場合は再送信
+            {t("login.resendCode")}
           </button>
         )}
         {mode === "forgot-code" && (
@@ -565,7 +559,7 @@ export default function LoginCard({
             disabled={submitting}
             className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
           >
-            コードが届かない場合は再送信
+            {t("login.resendCode")}
           </button>
         )}
         {(mode === "forgot" ||
@@ -576,7 +570,7 @@ export default function LoginCard({
             onClick={() => resetFormState("login")}
             className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
           >
-            ログインに戻る
+            {t("login.backToLogin")}
           </button>
         )}
       </form>

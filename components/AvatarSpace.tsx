@@ -15,6 +15,9 @@ import {
 } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
 import BugReportModal from "@/components/BugReportModal";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { useLocale } from "@/lib/i18n/LocaleContext";
+import type { Locale } from "@/lib/i18n/translations";
 import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import {
@@ -701,6 +704,10 @@ type Props = {
   maintenanceEnabled?: boolean;
   maintenanceStartsAt?: string | null;
   maintenanceEndsAt?: string | null;
+  // アカウントに保存されている言語設定(profiles.locale)。ログイン画面の
+  // クッキーとズレている場合、この値(アカウント側)を優先して同期する
+  // (下の言語設定の同期effect参照)。
+  initialProfileLocale?: Locale;
 };
 
 export default function AvatarSpace({
@@ -719,6 +726,7 @@ export default function AvatarSpace({
   maintenanceEnabled: initialMaintenanceEnabled,
   maintenanceStartsAt: initialMaintenanceStartsAt,
   maintenanceEndsAt: initialMaintenanceEndsAt,
+  initialProfileLocale,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -726,6 +734,19 @@ export default function AvatarSpace({
   // auth.uid()がRLS側で常にnullになっていた)。useStateの遅延初期化で
   // マウント時に一度だけ生成する。
   const [supabase] = useState(() => createClient());
+
+  const { locale, setLocale } = useLocale();
+  // ログイン前にブラウザのクッキーで選んだ言語より、アカウントに保存済みの
+  // 言語設定(profiles.locale)を優先する。ただしクッキー側が既にenの場合
+  // (この場で選んだ、あるいは別タブで既に切り替えた直後など)まで強制的に
+  // jaへ戻すと不自然なため、「アカウント側がenの場合だけ適用する」非対称な
+  // ルールにしている。
+  useEffect(() => {
+    if (initialProfileLocale === "en" && locale !== "en") {
+      setLocale("en");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 一時的なモバイルデバッグ用。URLに?debugConsole=1が付いている場合のみ、
   // erudaという軽量なオンページデバッグコンソール(コンソールログ・
@@ -4783,6 +4804,27 @@ export default function AvatarSpace({
           if (error) {
             // eslint-disable-next-line no-console
             console.error("表示名の保存に失敗しました", error);
+          }
+        });
+    },
+    [supabase],
+  );
+
+  // 設定パネルの言語ボタンで選んだ言語を、次回ログイン時・別デバイスでも
+  // 引き継げるようprofiles.locale(アカウント単位)へ保存する。
+  // display_nameの保存(saveDisplayName)と同じ方式(RLS: update own)。
+  const saveLocale = useCallback(
+    (next: Locale) => {
+      const userId = authUserIdRef.current;
+      if (!userId) return;
+      supabase
+        .from("profiles")
+        .update({ locale: next })
+        .eq("user_id", userId)
+        .then(({ error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error("言語設定の保存に失敗しました", error);
           }
         });
     },
@@ -12333,16 +12375,22 @@ export default function AvatarSpace({
                       <p className="mb-2 text-xs font-semibold text-slate-400">
                         マイク
                       </p>
-                      <label className="flex items-center gap-2 text-sm text-slate-200">
-                        <input
-                          type="checkbox"
-                          checked={noiseFilterEnabled}
-                          onChange={(e) =>
-                            setNoiseFilterEnabled(e.target.checked)
-                          }
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="flex items-center gap-2 text-sm text-slate-200">
+                          <input
+                            type="checkbox"
+                            checked={noiseFilterEnabled}
+                            onChange={(e) =>
+                              setNoiseFilterEnabled(e.target.checked)
+                            }
+                          />
+                          ノイズ抑制
+                        </label>
+                        <LanguageSwitcher
+                          variant="dark"
+                          onChange={saveLocale}
                         />
-                        ノイズ抑制
-                      </label>
+                      </div>
                     </div>
                   </div>
 
