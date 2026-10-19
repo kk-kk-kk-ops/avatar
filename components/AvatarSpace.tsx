@@ -11109,7 +11109,7 @@ export default function AvatarSpace({
           {/* サイドバー本体:ヘッダー+タブ(参加者/チャット/設定)+
               選択中タブの中身。中身はタブごとに排他的に描画するため、
               表示中のタブがflex-1で残り高さを使い切る。 */}
-          <div className="flex min-h-0 flex-1 flex-col pl-4 pr-4 pb-3 sm:pt-2">
+          <div className="flex min-h-0 flex-1 flex-col pl-4 pr-1 pb-3 sm:pt-2">
             {/* ヘッダー:アイコン(左上)+閉じるボタン(右上)。スマホの
                 ドロワー表示専用(PC版は常設サイドバーなので、上部の
                 メインヘッダーのロゴと重複するため非表示にする)。
@@ -11209,7 +11209,7 @@ export default function AvatarSpace({
                 <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
                   {t("tabs.participants")}
                 </h2>
-                <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+                <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-3">
                   {playerList
                     .filter((p) => p.id !== selfId.current)
                     .map((p) => (
@@ -11289,7 +11289,7 @@ export default function AvatarSpace({
                         {t("chat.selectParticipantPrompt")}
                       </div>
                     ) : (
-                      <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+                      <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-3">
                         {chatThreads.map((thread) => (
                           <li
                             key={`${thread.isGroup ? "group" : "dm"}-${thread.threadId}`}
@@ -12307,7 +12307,7 @@ export default function AvatarSpace({
             )}
 
             {sidebarTab === "notifications" && (
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2 pr-3">
                 {mentionsLoading && mentions.length === 0 ? (
                   <p className="mt-4 text-center text-[11px] text-slate-500">
                     {t("notifications.loading")}
@@ -12368,7 +12368,7 @@ export default function AvatarSpace({
             )}
 
             {sidebarTab === "settings" && (
-              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-2">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-2 pr-3">
                 <div>
                   <p className="mb-2 text-xs font-semibold text-slate-400">
                     {t("settings.avatarLabel")}
