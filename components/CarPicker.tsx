@@ -1,6 +1,7 @@
 "use client";
 
 import { CAR_IMAGES, getCarThumbnail } from "@/lib/types";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 type Props = {
   selected: string;
@@ -12,6 +13,7 @@ type Props = {
 const USE_SCROLL_LAYOUT = CAR_IMAGES.length > 8;
 
 export default function CarPicker({ selected, onSelect }: Props) {
+  const { t } = useLocale();
   return (
     <div
       className={
@@ -37,7 +39,7 @@ export default function CarPicker({ selected, onSelect }: Props) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={getCarThumbnail(image)}
-            alt="車"
+            alt={t("room.carAlt")}
             className="h-full w-full object-contain"
           />
         </button>

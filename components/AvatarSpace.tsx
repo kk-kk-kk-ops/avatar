@@ -15,9 +15,8 @@ import {
 } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
 import BugReportModal from "@/components/BugReportModal";
-import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLocale } from "@/lib/i18n/LocaleContext";
-import type { Locale } from "@/lib/i18n/translations";
+import { translate, type Locale } from "@/lib/i18n/translations";
 import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import {
@@ -578,10 +577,13 @@ function randomColor() {
 }
 
 // 画面共有・ビデオ通話の残り時間(秒)を「◯分◯秒」表示に整形する。
-function formatRemainingTime(remainingSeconds: number): string {
+function formatRemainingTime(remainingSeconds: number, locale: Locale): string {
   const minutes = Math.floor(remainingSeconds / 60);
   const seconds = remainingSeconds % 60;
-  return `${minutes}分${seconds}秒`;
+  return translate(locale, "common.minutesSeconds", {
+    minutes: String(minutes),
+    seconds: String(seconds),
+  });
 }
 
 // DMメッセージ一覧のスクロール位置が最下部付近(閾値px以内)かどうかを判定する。
@@ -590,9 +592,10 @@ function isDmScrollNearBottom(el: HTMLDivElement, thresholdPx = 80): boolean {
 }
 
 // 参加者一覧の最終メッセージ時刻表示用に「HH:MM」形式へ整形する。
-function formatDmClockTime(iso: string): string {
+const INTL_LOCALE: Record<Locale, string> = { ja: "ja-JP", en: "en-US" };
+function formatDmClockTime(iso: string, locale: Locale): string {
   const date = new Date(iso);
-  return date.toLocaleTimeString("ja-JP", {
+  return date.toLocaleTimeString(INTL_LOCALE[locale], {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -601,32 +604,38 @@ function formatDmClockTime(iso: string): string {
 // チャットタブの一覧用。当日なら時刻のみ、それ以前は日付(M/D)を表示する
 // (ログインをまたいで数日〜数ヶ月前の履歴も並ぶため、時刻だけでは
 // いつのやり取りか分からなくなるのを防ぐ)。
-function formatDmListTime(iso: string): string {
+function formatDmListTime(iso: string, locale: Locale): string {
   const date = new Date(iso);
   const now = new Date();
   const isSameDay =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
-  if (isSameDay) return formatDmClockTime(iso);
-  return date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
+  if (isSameDay) return formatDmClockTime(iso, locale);
+  return date.toLocaleDateString(INTL_LOCALE[locale], {
+    month: "numeric",
+    day: "numeric",
+  });
 }
 
 // 個々のトーク(メッセージ吹き出し)の送信時刻表示用。当日なら今まで通り
 // 時刻のみ、それより前の日付なら「9/1(火) 23:30」のように日付・曜日を
 // 添える(2026-09報告: 日付をまたいだ履歴を見返す際、時刻だけだと
 // いつのメッセージか分からなかったため)。
-const WEEKDAY_LABELS_JA = ["日", "月", "火", "水", "木", "金", "土"];
-function formatDmMessageTime(iso: string): string {
+const WEEKDAY_LABELS: Record<Locale, string[]> = {
+  ja: ["日", "月", "火", "水", "木", "金", "土"],
+  en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+};
+function formatDmMessageTime(iso: string, locale: Locale): string {
   const date = new Date(iso);
   const now = new Date();
   const isSameDay =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
-  if (isSameDay) return formatDmClockTime(iso);
-  const weekday = WEEKDAY_LABELS_JA[date.getDay()];
-  return `${date.getMonth() + 1}/${date.getDate()}(${weekday}) ${formatDmClockTime(iso)}`;
+  if (isSameDay) return formatDmClockTime(iso, locale);
+  const weekday = WEEKDAY_LABELS[locale][date.getDay()];
+  return `${date.getMonth() + 1}/${date.getDate()}(${weekday}) ${formatDmClockTime(iso, locale)}`;
 }
 
 // 通知一覧のメンション本文プレビュー用。30文字を超える場合は30文字+「...」
@@ -1992,7 +2001,9 @@ export default function AvatarSpace({
           // eslint-disable-next-line no-console
           console.error("チャット履歴の取得に失敗しました", error);
           setDmError(
-            `チャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+            t("chat.historyFetchFailedWithReason", {
+              reason: error.message ?? error.code ?? t("common.unknownError"),
+            }),
           );
           return;
         }
@@ -2027,7 +2038,7 @@ export default function AvatarSpace({
             "チャット履歴の取得に失敗しました",
             beforeRes.error ?? afterRes.error,
           );
-          setDmError("チャット履歴の取得に失敗しました。");
+          setDmError(t("chat.historyFetchFailed"));
           return;
         }
         rows = [
@@ -2047,7 +2058,9 @@ export default function AvatarSpace({
           // eslint-disable-next-line no-console
           console.error("チャット履歴の取得に失敗しました", error);
           setDmError(
-            `チャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+            t("chat.historyFetchFailedWithReason", {
+              reason: error.message ?? error.code ?? t("common.unknownError"),
+            }),
           );
           return;
         }
@@ -2243,7 +2256,7 @@ export default function AvatarSpace({
             "グループチャット履歴の取得に失敗しました",
             beforeRes.error ?? afterRes.error,
           );
-          setGroupError("グループチャット履歴の取得に失敗しました。");
+          setGroupError(t("chat.groupHistoryFetchFailed"));
           return;
         }
         rows = [
@@ -2263,7 +2276,9 @@ export default function AvatarSpace({
           // eslint-disable-next-line no-console
           console.error("グループチャット履歴の取得に失敗しました", error);
           setGroupError(
-            `グループチャット履歴の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+            t("chat.groupHistoryFetchFailedWithReason", {
+              reason: error.message ?? error.code ?? t("common.unknownError"),
+            }),
           );
           return;
         }
@@ -2424,7 +2439,9 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("チャット一覧の取得に失敗しました", error);
         setChatThreadsError(
-          `チャット一覧の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+          t("chat.threadListFetchFailedWithReason", {
+            reason: error.message ?? error.code ?? t("common.unknownError"),
+          }),
         );
         return;
       }
@@ -2488,7 +2505,9 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("通知の取得に失敗しました", error);
         setMentionsError(
-          `通知の取得に失敗しました(${error.message ?? error.code ?? "不明なエラー"})`,
+          t("notifications.fetchFailedWithReason", {
+            reason: error.message ?? error.code ?? t("common.unknownError"),
+          }),
         );
         return;
       }
@@ -2573,7 +2592,7 @@ export default function AvatarSpace({
             id: row.id,
             messageId: row.message_id,
             groupId: row.group_id,
-            groupName: row.chat_groups?.[0]?.name ?? "グループ",
+            groupName: row.chat_groups?.[0]?.name ?? t("group.fallbackName"),
             mentionerUserId: row.mentioner_user_id,
             mentionerName:
               mentionerNameById.get(row.mentioner_user_id) ??
@@ -2728,7 +2747,7 @@ export default function AvatarSpace({
         if (error || !data || !myUserId) {
           // eslint-disable-next-line no-console
           console.error("チャットメッセージの送信に失敗しました", error);
-          setDmError("送信に失敗しました。時間をおいて再度お試しください。");
+          setDmError(t("common.sendFailedRetry"));
           return false;
         }
         dmForceScrollRef.current = true;
@@ -2810,7 +2829,7 @@ export default function AvatarSpace({
         // 復元されない経路があった。
         // eslint-disable-next-line no-console
         console.error("チャットメッセージの送信に失敗しました", err);
-        setDmError("送信に失敗しました。時間をおいて再度お試しください。");
+        setDmError(t("common.sendFailedRetry"));
         return false;
       } finally {
         setDmSending(false);
@@ -2864,7 +2883,7 @@ export default function AvatarSpace({
         if (error || !data) {
           // eslint-disable-next-line no-console
           console.error("グループメッセージの送信に失敗しました", error);
-          setGroupError("送信に失敗しました。時間をおいて再度お試しください。");
+          setGroupError(t("common.sendFailedRetry"));
           return false;
         }
         groupForceScrollRef.current = true;
@@ -2937,7 +2956,7 @@ export default function AvatarSpace({
         // 例外発生時にエラー表示なしで入力内容が失われるのを防ぐ)。
         // eslint-disable-next-line no-console
         console.error("グループメッセージの送信に失敗しました", err);
-        setGroupError("送信に失敗しました。時間をおいて再度お試しください。");
+        setGroupError(t("common.sendFailedRetry"));
         return false;
       } finally {
         setGroupSending(false);
@@ -2979,13 +2998,13 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("グループチャットの作成に失敗しました", error);
         setCreateGroupError(
-          "作成に失敗しました。時間をおいて再度お試しください。",
+          t("group.createFailedRetry"),
         );
         return;
       }
       const result = data as { group_id: string; already_existed: boolean };
       if (result.already_existed) {
-        setCreateGroupError("選択メンバーとのチャットはすでに作成済です");
+        setCreateGroupError(t("group.alreadyExists"));
         return;
       }
       const newGroupId = result.group_id;
@@ -3032,7 +3051,7 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("グループ名の変更に失敗しました", error);
         setRenameGroupError(
-          "変更に失敗しました。時間をおいて再度お試しください。",
+          t("group.renameFailedRetry"),
         );
         return;
       }
@@ -3079,7 +3098,7 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("グループからの退出に失敗しました", error);
         setLeaveGroupError(
-          "退出に失敗しました。時間をおいて再度お試しください。",
+          t("group.leaveFailedRetry"),
         );
         return;
       }
@@ -3204,7 +3223,7 @@ export default function AvatarSpace({
           break;
         }
         if (remaining <= 0) {
-          setDmError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
+          setDmError(t("chat.imageUploadLimitReached", { limit: String(DAILY_IMAGE_UPLOAD_LIMIT) }));
           break;
         }
         const previewUrl = URL.createObjectURL(file);
@@ -3280,7 +3299,7 @@ export default function AvatarSpace({
           break;
         }
         if (remaining <= 0) {
-          setGroupError(`1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです`);
+          setGroupError(t("chat.imageUploadLimitReached", { limit: String(DAILY_IMAGE_UPLOAD_LIMIT) }));
           break;
         }
         const previewUrl = URL.createObjectURL(file);
@@ -3381,7 +3400,7 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("リアクションの更新に失敗しました", error);
         applyLocally(previousEmoji);
-        setGroupError("リアクションの更新に失敗しました。");
+        setGroupError(t("chat.reactionUpdateFailed"));
         return;
       }
 
@@ -3589,7 +3608,7 @@ export default function AvatarSpace({
           });
           const json = await res.json();
           if (!res.ok) {
-            setGroupError(json.error ?? "画像のアップロードに失敗しました");
+            setGroupError(json.error ?? t("chat.imageUploadFailed"));
             setGroupInput(text);
             return;
           }
@@ -3599,7 +3618,7 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("画像添付メッセージの送信に失敗しました", err);
         setGroupError(
-          "画像のアップロードに失敗しました。時間をおいて再度お試しください。",
+          t("chat.imageUploadFailedRetry"),
         );
         setGroupInput(text);
         return;
@@ -3696,7 +3715,7 @@ export default function AvatarSpace({
           });
           const json = await res.json();
           if (!res.ok) {
-            setDmError(json.error ?? "画像のアップロードに失敗しました");
+            setDmError(json.error ?? t("chat.imageUploadFailed"));
             setDmInput(trimmed);
             return;
           }
@@ -3705,7 +3724,7 @@ export default function AvatarSpace({
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error("画像添付メッセージの送信に失敗しました", err);
-        setDmError("画像のアップロードに失敗しました。時間をおいて再度お試しください。");
+        setDmError(t("chat.imageUploadFailedRetry"));
         setDmInput(trimmed);
         return;
       } finally {
@@ -3769,12 +3788,12 @@ export default function AvatarSpace({
       }
       const res = await fetch(`/api/chat/image-url?${params.toString()}`);
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "画像の保存に失敗しました");
+      if (!res.ok) throw new Error(json.error ?? t("chat.imageSaveFailed"));
       window.location.href = json.url;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("画像の保存に失敗しました", err);
-      setDmError("画像の保存に失敗しました。時間をおいて再度お試しください。");
+      setDmError(t("chat.imageSaveFailedRetry"));
     } finally {
       setDmLightboxDownloading(false);
     }
@@ -3977,7 +3996,7 @@ export default function AvatarSpace({
       if (error) {
         // eslint-disable-next-line no-console
         console.error("メッセージの編集に失敗しました", error);
-        setDmError("編集に失敗しました。時間をおいて再度お試しください。");
+        setDmError(t("chat.editFailedRetry"));
         return;
       }
       setDmThreads((prev) => ({
@@ -4030,7 +4049,7 @@ export default function AvatarSpace({
       if (error) {
         // eslint-disable-next-line no-console
         console.error("メッセージの削除に失敗しました", error);
-        setDmError("削除に失敗しました。時間をおいて再度お試しください。");
+        setDmError(t("chat.deleteFailedRetry"));
         return;
       }
       // 画像添付メッセージの場合、保管期間を待たず即座に実ファイルも削除する。
@@ -4130,7 +4149,7 @@ export default function AvatarSpace({
         // eslint-disable-next-line no-console
         console.error("リアクションの更新に失敗しました", error);
         applyLocally(previousEmoji);
-        setDmError("リアクションの更新に失敗しました。");
+        setDmError(t("chat.reactionUpdateFailed"));
         return;
       }
 
@@ -4629,9 +4648,7 @@ export default function AvatarSpace({
             selfState.current.sharingScreen = false;
             channelRef.current?.track(selfState.current);
           }
-          setShareError(
-            "画面共有が切断されました。お手数ですが再度共有を開始してください。",
-          );
+          setShareError(t("screenShare.disconnected"));
         }
         connect();
       });
@@ -4701,9 +4718,7 @@ export default function AvatarSpace({
         }
       } catch {
         if (!cancelled) {
-          setMicError(
-            "音声サーバーへの接続に失敗しました。しばらくしてから再度お試しください。",
-          );
+          setMicError(t("mic.connectionFailed"));
         }
       }
     };
@@ -4853,7 +4868,9 @@ export default function AvatarSpace({
       return;
     }
     setIsJoining(false);
-    const name = nameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
+    const name =
+      nameInput.trim() ||
+      t("room.guestDefaultName", { id: selfId.current.slice(0, 4) });
     // マップ中央が障害物と重なっていたら、その障害物の上端のすぐ上へ押し出す
     const spawn = resolveSpawnPosition(
       mapSizeRef.current.width / 2,
@@ -5173,7 +5190,7 @@ export default function AvatarSpace({
     setShareError(null);
 
     if (isInWorkZone()) {
-      setShareError("作業エリア内では画面共有を利用できません。");
+      setShareError(t("screenShare.disabledInWorkArea"));
       return;
     }
 
@@ -5181,9 +5198,7 @@ export default function AvatarSpace({
       screenShareRemainingRef.current !== null &&
       screenShareRemainingRef.current <= 0
     ) {
-      setShareError(
-        "本日の画面共有可能時間の上限に達しています(4:00にリセットされます)。",
-      );
+      setShareError(t("screenShare.dailyLimitReached"));
       return;
     }
 
@@ -5194,17 +5209,13 @@ export default function AvatarSpace({
       !navigator.mediaDevices ||
       typeof navigator.mediaDevices.getDisplayMedia !== "function"
     ) {
-      setShareError(
-        "この端末・ブラウザは画面共有に対応していません。PCのブラウザからお試しください。",
-      );
+      setShareError(t("screenShare.unsupportedDevice"));
       return;
     }
 
     const room = livekitRoomRef.current;
     if (!room) {
-      setShareError(
-        "音声サーバーに接続していません。少し待ってから再度お試しください。",
-      );
+      setShareError(t("screenShare.notConnected"));
       return;
     }
 
@@ -5226,7 +5237,7 @@ export default function AvatarSpace({
         },
       );
       const track = publication?.track;
-      if (!track) throw new Error("画面共有トラックを取得できませんでした");
+      if (!track) throw new Error(t("screenShare.trackUnavailable"));
       screenStreamRef.current = new MediaStream([track.mediaStreamTrack]);
       setScreenSharing(true);
 
@@ -5324,23 +5335,19 @@ export default function AvatarSpace({
   const startVideoCall = useCallback(async () => {
     setCallError(null);
     if (isInWorkZone()) {
-      setCallError("作業エリア内ではビデオ通話を利用できません。");
+      setCallError(t("videoCall.disabledInWorkArea"));
       return;
     }
     if (
       videoCallRemainingRef.current !== null &&
       videoCallRemainingRef.current <= 0
     ) {
-      setCallError(
-        "本日のビデオ通話可能時間の上限に達しています(4:00にリセットされます)。",
-      );
+      setCallError(t("videoCall.dailyLimitReached"));
       return;
     }
     const room = livekitRoomRef.current;
     if (!room) {
-      setCallError(
-        "音声サーバーに接続していません。少し待ってから再度お試しください。",
-      );
+      setCallError(t("videoCall.notConnected"));
       return;
     }
     try {
@@ -5358,7 +5365,7 @@ export default function AvatarSpace({
         },
       );
       const track = publication?.track;
-      if (!track) throw new Error("カメラトラックを取得できませんでした");
+      if (!track) throw new Error(t("videoCall.trackUnavailable"));
       cameraStreamRef.current = new MediaStream([track.mediaStreamTrack]);
       setInCall(true);
 
@@ -5373,9 +5380,7 @@ export default function AvatarSpace({
       // 不具合があった(2026-09報告)。画面共有中もビデオ通話はONのまま
       // 維持したいとの要望のため、この自動OFFの仕組み自体を廃止した。
     } catch {
-      setCallError(
-        "カメラを使用できませんでした。ブラウザのカメラ許可設定を確認してください。",
-      );
+      setCallError(t("videoCall.cameraUnavailable"));
     }
   }, [isInWorkZone]);
 
@@ -6063,10 +6068,10 @@ export default function AvatarSpace({
           if (targetId && targetId !== selfId.current) return;
           setForceLeaveMessage(
             reason === "admin-kicked"
-              ? "管理者により退出させられました。まもなく退出します..."
+              ? t("room.kickedByAdmin")
               : reason === "room-changed"
-                ? "管理者がルームを変更しました。強制退出されます"
-                : "管理者がプランを変更したため、まもなく退出します...",
+                ? t("room.roomChangedByAdmin")
+                : t("room.planChangedByAdmin"),
           );
           setTimeout(() => window.location.reload(), 1500);
         })
@@ -6084,7 +6089,7 @@ export default function AvatarSpace({
               channel.unsubscribe();
               if (channelRef.current === channel) channelRef.current = null;
               setRoomJoinError(
-                `このルームは満員です(最大${maxPeoplePerRoom}人)。しばらくしてから再度お試しください。`,
+                t("room.roomFull", { max: String(maxPeoplePerRoom) }),
               );
               setJoined(false);
               return;
@@ -6230,7 +6235,7 @@ export default function AvatarSpace({
       };
       setMaintenance(next);
       if (!isMaster && isMaintenanceActive(next)) {
-        setForceLeaveMessage("メンテナンスのため、まもなく退出します...");
+        setForceLeaveMessage(t("room.maintenanceForceLeave"));
         setTimeout(() => window.location.reload(), 1500);
       }
     };
@@ -7204,7 +7209,7 @@ export default function AvatarSpace({
     setMicError(null);
     const next = !micEnabled;
     if (next && isInWorkZone()) {
-      setMicError("作業エリア内では音声通話を利用できません。");
+      setMicError(t("mic.disabledInWorkArea"));
       return;
     }
     if (
@@ -7212,16 +7217,12 @@ export default function AvatarSpace({
       voiceCallRemainingRef.current !== null &&
       voiceCallRemainingRef.current <= 0
     ) {
-      setMicError(
-        "本日の音声通話可能時間の上限に達しています(4:00にリセットされます)。",
-      );
+      setMicError(t("mic.dailyLimitReached"));
       return;
     }
     const room = livekitRoomRef.current;
     if (!room) {
-      setMicError(
-        "音声サーバーに接続していません。少し待ってから再度お試しください。",
-      );
+      setMicError(t("mic.notConnected"));
       return;
     }
     micToggleInFlightRef.current = true;
@@ -7256,9 +7257,7 @@ export default function AvatarSpace({
         });
       }
     } catch {
-      setMicError(
-        "マイクを使用できませんでした。ブラウザのアドレスバー付近のマイク許可設定を確認してください。",
-      );
+      setMicError(t("mic.permissionDenied"));
     } finally {
       micToggleInFlightRef.current = false;
     }
@@ -7292,7 +7291,7 @@ export default function AvatarSpace({
       return;
     }
     if (isInWorkZone()) {
-      setMicError("作業エリア内では利用できません。");
+      setMicError(t("mic.disabledInWorkAreaShort"));
       return;
     }
     const zoneId = selfState.current?.meetingZoneId;
@@ -7301,7 +7300,7 @@ export default function AvatarSpace({
       meetingZonesRef.current.find((z) => z.id === zoneId)?.kind ===
         "conference";
     if (inConferenceZone) {
-      setMicError("会議室内では利用できません。");
+      setMicError(t("mic.disabledInMeetingRoom"));
       return;
     }
     setShowAnnouncementConfirm(true);
@@ -9067,9 +9066,7 @@ export default function AvatarSpace({
         );
         setScreenShareRemainingSeconds(remaining);
         if (remaining <= 0) {
-          setShareError(
-            "本日の画面共有可能時間の上限に達したため、共有を終了しました。",
-          );
+          setShareError(t("screenShare.dailyLimitReachedAutoStop"));
           stopScreenShare();
         }
       });
@@ -9155,9 +9152,7 @@ export default function AvatarSpace({
         );
         setVideoCallRemainingSeconds(remaining);
         if (remaining <= 0) {
-          setCallError(
-            "本日のビデオ通話可能時間の上限に達したため、通話を終了しました。",
-          );
+          setCallError(t("videoCall.dailyLimitReachedAutoStop"));
           stopVideoCall();
         }
       });
@@ -9526,9 +9521,7 @@ export default function AvatarSpace({
         );
         setVoiceCallRemainingSeconds(remaining);
         if (remaining <= 0) {
-          setMicError(
-            "本日の音声通話可能時間の上限に達したため、マイクをオフにしました。",
-          );
+          setMicError(t("mic.dailyLimitReachedAutoOff"));
           forceMuteMic();
         }
       });
@@ -9634,7 +9627,8 @@ export default function AvatarSpace({
   const saveSettings = useCallback(() => {
     if (!selfState.current) return;
     const name =
-      settingsNameInput.trim() || `ゲスト${selfId.current.slice(0, 4)}`;
+      settingsNameInput.trim() ||
+      t("room.guestDefaultName", { id: selfId.current.slice(0, 4) });
     selfState.current.name = name;
     selfState.current.avatarImage = settingsAvatar;
     selfState.current.carImage = settingsCar;
@@ -9951,7 +9945,7 @@ export default function AvatarSpace({
     ? selfId.current
     : (visibleScreenShares[0]?.id ?? null);
   const activeSharerName = screenSharing
-    ? "あなた"
+    ? t("videoCall.you")
     : (visibleScreenShares[0]?.name ?? "");
   const activeSharerStream = screenSharing
     ? screenStreamRef.current
@@ -10029,7 +10023,7 @@ export default function AvatarSpace({
       {!assetsReady && (
         <div className="pointer-events-auto absolute inset-0 z-[9999] flex flex-col items-center justify-center gap-3 bg-slate-900/90 text-white">
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/30 border-t-white" />
-          <p className="text-sm">読み込み中…</p>
+          <p className="text-sm">{t("room.assetsLoading")}</p>
         </div>
       )}
       {/* ヘッダー */}
@@ -10061,9 +10055,11 @@ export default function AvatarSpace({
             {recordingStopProgressPercent !== null && (
               <span
                 className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white shadow"
-                title="録画・文字起こしをローカルに保存中です"
+                title={t("recording.savingLocallyTitle")}
               >
-                文字起こし保存中:{recordingStopProgressPercent}%
+                {t("recording.savingProgress", {
+                  percent: String(recordingStopProgressPercent),
+                })}
               </span>
             )}
             <div className="flex shrink-0 flex-col items-center">
@@ -10086,9 +10082,11 @@ export default function AvatarSpace({
                       ? "text-red-400"
                       : "text-slate-400"
                   }`}
-                  title="音声通話の本日の残り利用可能時間(4:00にリセット)"
+                  title={t("recording.remainingVoiceTitle")}
                 >
-                  残{formatRemainingTime(voiceCallRemainingSeconds)}
+                  {t("recording.remainingVoice", {
+                    time: formatRemainingTime(voiceCallRemainingSeconds, locale),
+                  })}
                 </span>
               )}
             </div>
@@ -10105,9 +10103,11 @@ export default function AvatarSpace({
                       ? "text-red-400"
                       : "text-slate-400"
                   }`}
-                  title="画面共有の本日の残り利用可能時間(4:00にリセット)"
+                  title={t("recording.remainingScreenShareTitle")}
                 >
-                  残{formatRemainingTime(screenShareRemainingSeconds)}
+                  {t("recording.remainingVoice", {
+                    time: formatRemainingTime(screenShareRemainingSeconds, locale),
+                  })}
                 </span>
               )}
             </div>
@@ -10124,9 +10124,11 @@ export default function AvatarSpace({
                       ? "text-red-400"
                       : "text-slate-400"
                   }`}
-                  title="ビデオ通話の本日の残り利用可能時間(4:00にリセット)"
+                  title={t("recording.remainingVideoCallTitle")}
                 >
-                  残{formatRemainingTime(videoCallRemainingSeconds)}
+                  {t("recording.remainingVoice", {
+                    time: formatRemainingTime(videoCallRemainingSeconds, locale),
+                  })}
                 </span>
               )}
             </div>
@@ -10141,7 +10143,7 @@ export default function AvatarSpace({
               <button
                 onClick={() => setShowParticipants((v) => !v)}
                 className="rounded p-1.5 hover:bg-white/10"
-                aria-label="参加者一覧を開く"
+                aria-label={t("room.hangerAria")}
               >
                 <span className="mb-1 block h-0.5 w-5 bg-white" />
                 <span className="mb-1 block h-0.5 w-5 bg-white" />
@@ -10191,7 +10193,7 @@ export default function AvatarSpace({
               このオーバーレイで覆って見せないようにする。 */}
           {!templateLoaded && (
             <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-800">
-              <p className="text-sm text-slate-300">読み込み中...</p>
+              <p className="text-sm text-slate-300">{t("room.mapLoading")}</p>
             </div>
           )}
 
@@ -10215,7 +10217,7 @@ export default function AvatarSpace({
                 }}
                 className="shrink-0 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
               >
-                会議モード
+                {t("recording.meetingMode")}
               </button>
             </div>
           )}
@@ -10247,8 +10249,16 @@ export default function AvatarSpace({
                     type="button"
                     onClick={() => handleLockIconClick(selfConferenceZone.id)}
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                    aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                    title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                    aria-label={
+                      selfConferenceZoneLocker
+                        ? t("recording.lockAria")
+                        : t("recording.unlockAria")
+                    }
+                    title={
+                      selfConferenceZoneLocker
+                        ? t("recording.lockAria")
+                        : t("recording.unlockAria")
+                    }
                   >
                     {selfConferenceZoneLocker ? "🔒" : "🔓"}
                   </button>
@@ -10269,21 +10279,23 @@ export default function AvatarSpace({
                     }
                     disabledReason={
                       !recordingEnabled
-                        ? "現在のプランでは画面録画・文字起こしをご利用いただけません"
+                        ? t("recording.planNotEligible")
                         : !isScreenRecordingSupported()
-                        ? "このブラウザでは画面録画を利用できません"
+                        ? t("recording.browserUnsupported")
                         : isStoppingRecording
-                          ? "停止処理中です(文字起こしの完了を待っています)"
+                          ? t("recording.stoppingInProgress")
                           : isPreparingRecording
-                            ? "文字起こしの準備中です…"
+                            ? t("recording.preparing")
                             : recordingOwnerName
-                              ? `${recordingOwnerName}さんが録画中です`
+                              ? t("recording.ownerRecording", {
+                                  name: recordingOwnerName,
+                                })
                               : undefined
                     }
                     warning={sherpaStatus === "error"}
                     warningReason={
                       sherpaStatus === "error"
-                        ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                        ? t("recording.transcriptionLoadFailed")
                         : undefined
                     }
                   />
@@ -10306,21 +10318,21 @@ export default function AvatarSpace({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={screenPreviewImages[selfId.current]}
-                      alt="あなたの画面共有プレビュー"
+                      alt={t("screenShare.yourPreviewAlt")}
                       className="h-[140px] w-[210px] rounded-md border border-emerald-400 bg-black object-contain"
                     />
                   ) : (
                     <div className="flex h-[140px] w-[210px] items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
-                      共有中...
+                      {t("screenShare.sharing")}
                     </div>
                   )}
                   <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                    あなたの画面
+                    {t("screenShare.yourScreen")}
                   </span>
                   <button
                     onClick={stopScreenShare}
                     className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                    aria-label="画面共有を終了"
+                    aria-label={t("screenShare.stopAria")}
                   >
                     ✕
                   </button>
@@ -10335,22 +10347,22 @@ export default function AvatarSpace({
                     setExpandedMedia({ peerId: p.id, kind: "screen" });
                   }}
                   className="relative shrink-0"
-                  aria-label={`${p.name}の画面を全画面表示`}
+                  aria-label={t("screenShare.fullscreenAria", { name: p.name })}
                 >
                   {screenPreviewImages[p.id] ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={screenPreviewImages[p.id]}
-                      alt={`${p.name}の画面共有プレビュー`}
+                      alt={t("screenShare.peerPreviewAlt", { name: p.name })}
                       className="h-[140px] w-[210px] rounded-md border border-slate-500 bg-black object-contain"
                     />
                   ) : (
                     <div className="flex h-[140px] w-[210px] items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
-                      入室中...
+                      {t("screenShare.joining")}
                     </div>
                   )}
                   <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                    {p.name}の画面
+                    {t("screenShare.peerScreen", { name: p.name })}
                   </span>
                 </button>
               ))}
@@ -10359,7 +10371,7 @@ export default function AvatarSpace({
                   黒背景+名前)。 */}
               <div className="relative shrink-0">
                 <VideoTile
-                  name="あなた"
+                  name={t("videoCall.you")}
                   stream={inCall ? cameraStreamRef.current : null}
                   widthPx={210}
                   heightPx={140}
@@ -10372,7 +10384,7 @@ export default function AvatarSpace({
                   <button
                     onClick={stopVideoCall}
                     className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                    aria-label="ビデオ通話を終了"
+                    aria-label={t("videoCall.endAria")}
                   >
                     ✕
                   </button>
@@ -10434,21 +10446,21 @@ export default function AvatarSpace({
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={screenPreviewImages[selfId.current]}
-                        alt="あなたの画面共有プレビュー"
+                        alt={t("screenShare.yourPreviewAlt")}
                         className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-contain"
                       />
                     ) : (
                       <div className="flex h-20 w-32 items-center justify-center rounded-md border border-emerald-400 bg-black text-[10px] text-slate-300">
-                        共有中...
+                        {t("screenShare.sharing")}
                       </div>
                     )}
                     <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                      あなたの画面
+                      {t("screenShare.yourScreen")}
                     </span>
                     <button
                       onClick={stopScreenShare}
                       className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                      aria-label="画面共有を終了"
+                      aria-label={t("screenShare.stopAria")}
                     >
                       ✕
                     </button>
@@ -10468,22 +10480,22 @@ export default function AvatarSpace({
                       setExpandedMedia({ peerId: p.id, kind: "screen" });
                     }}
                     className="relative shrink-0"
-                    aria-label={`${p.name}の画面を全画面表示`}
+                    aria-label={t("screenShare.fullscreenAria", { name: p.name })}
                   >
                     {screenPreviewImages[p.id] ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={screenPreviewImages[p.id]}
-                        alt={`${p.name}の画面共有プレビュー`}
+                        alt={t("screenShare.peerPreviewAlt", { name: p.name })}
                         className="h-20 w-32 rounded-md border border-slate-500 bg-black object-contain"
                       />
                     ) : (
                       <div className="flex h-20 w-32 items-center justify-center rounded-md border border-slate-500 bg-black text-[10px] text-slate-300">
-                        入室中...
+                        {t("screenShare.joining")}
                       </div>
                     )}
                     <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                      {p.name}の画面
+                      {t("screenShare.peerScreen", { name: p.name })}
                     </span>
                   </button>
                 ))}
@@ -10497,12 +10509,12 @@ export default function AvatarSpace({
                       className="h-20 w-32 rounded-md border border-emerald-400 bg-black object-cover"
                     />
                     <span className="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-white">
-                      あなたのカメラ
+                      {t("videoCall.yourCamera")}
                     </span>
                     <button
                       onClick={stopVideoCall}
                       className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-[10px] text-white shadow hover:bg-red-500"
-                      aria-label="ビデオ通話を終了"
+                      aria-label={t("videoCall.endAria")}
                     >
                       ✕
                     </button>
@@ -10541,7 +10553,7 @@ export default function AvatarSpace({
                   setScreenAreaZoom(1);
                 }}
                 className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
-                aria-label="会議画面を閉じる"
+                aria-label={t("recording.closeMeetingViewAria")}
               >
                 ✕
               </button>
@@ -10553,7 +10565,9 @@ export default function AvatarSpace({
               {(sherpaStatus === "downloading" ||
                 sherpaStatus === "initializing") && (
                 <div className="absolute bottom-3 right-3 z-10 rounded-md bg-black/70 px-3 py-1.5 text-xs text-white">
-                  文字起こしの準備中…{sherpaLoadPercent}%
+                  {t("recording.modelPreparing", {
+                    percent: String(sherpaLoadPercent),
+                  })}
                 </div>
               )}
               {/* リアルタイム字幕(テロップ)表示(2026-10再追加)。直近5件
@@ -10598,8 +10612,16 @@ export default function AvatarSpace({
                           type="button"
                           onClick={() => handleLockIconClick(selfConferenceZone.id)}
                           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                          aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                          title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                          aria-label={
+                            selfConferenceZoneLocker
+                              ? t("recording.lockAria")
+                              : t("recording.unlockAria")
+                          }
+                          title={
+                            selfConferenceZoneLocker
+                              ? t("recording.lockAria")
+                              : t("recording.unlockAria")
+                          }
                         >
                           {selfConferenceZoneLocker ? "🔒" : "🔓"}
                         </button>
@@ -10622,21 +10644,23 @@ export default function AvatarSpace({
                           }
                           disabledReason={
                             !recordingEnabled
-                              ? "現在のプランでは画面録画・文字起こしをご利用いただけません"
+                              ? t("recording.planNotEligible")
                               : !isScreenRecordingSupported()
-                              ? "このブラウザでは画面録画を利用できません"
+                              ? t("recording.browserUnsupported")
                               : isStoppingRecording
-                                ? "停止処理中です(文字起こしの完了を待っています)"
+                                ? t("recording.stoppingInProgress")
                                 : isPreparingRecording
-                                  ? "文字起こしの準備中です…"
+                                  ? t("recording.preparing")
                                   : recordingOwnerName
-                                    ? `${recordingOwnerName}さんが録画中です`
+                                    ? t("recording.ownerRecording", {
+                                        name: recordingOwnerName,
+                                      })
                                     : undefined
                           }
                           warning={sherpaStatus === "error"}
                           warningReason={
                             sherpaStatus === "error"
-                              ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                              ? t("recording.transcriptionLoadFailed")
                               : undefined
                           }
                         />
@@ -10651,7 +10675,7 @@ export default function AvatarSpace({
                       </div>
                     )}
                     <VideoTile
-                      name="あなた"
+                      name={t("videoCall.you")}
                       stream={inCall ? cameraStreamRef.current : null}
                       widthPx={210}
                       heightPx={140}
@@ -10675,7 +10699,9 @@ export default function AvatarSpace({
                   <div className="min-h-0 flex-1 px-3 pb-3">
                     <div className="relative h-full w-full rounded-md bg-black">
                       <span className="absolute left-2 top-2 z-10 rounded bg-black/70 px-2 py-1 text-xs text-white">
-                        {activeSharerName}が画面共有中
+                        {t("screenShare.activeSharerBanner", {
+                          name: activeSharerName,
+                        })}
                       </span>
                       <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
                         <button
@@ -10683,7 +10709,7 @@ export default function AvatarSpace({
                             setScreenAreaZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))
                           }
                           className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                          aria-label="画面共有エリアを縮小"
+                          aria-label={t("screenShare.shrinkAria")}
                         >
                           −
                         </button>
@@ -10692,7 +10718,7 @@ export default function AvatarSpace({
                             setScreenAreaZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))
                           }
                           className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                          aria-label="画面共有エリアを拡大"
+                          aria-label={t("screenShare.expandAria")}
                         >
                           ＋
                         </button>
@@ -10706,9 +10732,9 @@ export default function AvatarSpace({
                             });
                           }}
                           className="rounded-full bg-black/60 px-2.5 py-1 text-xs text-white hover:bg-black/80"
-                          aria-label="全画面表示"
+                          aria-label={t("screenShare.fullscreenButtonAria")}
                         >
-                          全画面
+                          {t("screenShare.fullscreenButtonLabel")}
                         </button>
                       </div>
                       {/* 拡大時にはみ出した部分もスクロールして見られるように、
@@ -10739,12 +10765,14 @@ export default function AvatarSpace({
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={activeSharerPreviewImage}
-                              alt={`${activeSharerName}の画面共有プレビュー`}
+                              alt={t("screenShare.peerPreviewAlt", {
+                                name: activeSharerName,
+                              })}
                               className="h-full w-full object-contain"
                             />
                           ) : (
                             <div className="flex h-full w-full items-center justify-center text-sm text-slate-300">
-                              共有中...
+                              {t("screenShare.sharing")}
                             </div>
                           )}
                         </div>
@@ -10773,8 +10801,16 @@ export default function AvatarSpace({
                         type="button"
                         onClick={() => handleLockIconClick(selfConferenceZone.id)}
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/60 text-sm text-white hover:bg-black/80"
-                        aria-label={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
-                        title={selfConferenceZoneLocker ? "施錠を解除する" : "施錠する"}
+                        aria-label={
+                          selfConferenceZoneLocker
+                            ? t("recording.lockAria")
+                            : t("recording.unlockAria")
+                        }
+                        title={
+                          selfConferenceZoneLocker
+                            ? t("recording.lockAria")
+                            : t("recording.unlockAria")
+                        }
                       >
                         {selfConferenceZoneLocker ? "🔒" : "🔓"}
                       </button>
@@ -10796,21 +10832,23 @@ export default function AvatarSpace({
                         }
                         disabledReason={
                           !recordingEnabled
-                            ? "現在のプランでは画面録画・文字起こしをご利用いただけません"
+                            ? t("recording.planNotEligible")
                             : !isScreenRecordingSupported()
-                            ? "このブラウザでは画面録画を利用できません"
+                            ? t("recording.browserUnsupported")
                             : isStoppingRecording
-                              ? "停止処理中です(文字起こしの完了を待っています)"
+                              ? t("recording.stoppingInProgress")
                               : isPreparingRecording
-                                ? "文字起こしの準備中です…"
+                                ? t("recording.preparing")
                                 : recordingOwnerName
-                                  ? `${recordingOwnerName}さんが録画中です`
+                                  ? t("recording.ownerRecording", {
+                                      name: recordingOwnerName,
+                                    })
                                   : undefined
                         }
                         warning={sherpaStatus === "error"}
                         warningReason={
                           sherpaStatus === "error"
-                            ? "文字起こしの読み込みに失敗しました(発言は保存されません)"
+                            ? t("recording.transcriptionLoadFailed")
                             : undefined
                         }
                       />
@@ -10835,7 +10873,7 @@ export default function AvatarSpace({
                       }}
                     >
                       <VideoTile
-                        name="あなた"
+                        name={t("videoCall.you")}
                         stream={inCall ? cameraStreamRef.current : null}
                         widthPx={meetingTileWidth}
                         heightPx={meetingTileHeight}
@@ -11042,7 +11080,7 @@ export default function AvatarSpace({
                 sizePx={avatarSizePx}
                 noticeText={
                   p.id === selfId.current && lockedZoneNotice
-                    ? "鍵がかかっています"
+                    ? t("room.lockedZoneNotice")
                     : undefined
                 }
                 ref={getAvatarRefCallback(p.id)}
@@ -11071,7 +11109,7 @@ export default function AvatarSpace({
           {/* サイドバー本体:ヘッダー+タブ(参加者/チャット/設定)+
               選択中タブの中身。中身はタブごとに排他的に描画するため、
               表示中のタブがflex-1で残り高さを使い切る。 */}
-          <div className="flex min-h-0 flex-1 flex-col pl-4 pr-3 pb-3 sm:pt-2">
+          <div className="flex min-h-0 flex-1 flex-col pl-4 pr-4 pb-3 sm:pt-2">
             {/* ヘッダー:アイコン(左上)+閉じるボタン(右上)。スマホの
                 ドロワー表示専用(PC版は常設サイドバーなので、上部の
                 メインヘッダーのロゴと重複するため非表示にする)。
@@ -11091,7 +11129,7 @@ export default function AvatarSpace({
               <button
                 onClick={() => setShowParticipants(false)}
                 className="flex h-9 w-9 items-center justify-center rounded-full text-2xl text-slate-300 hover:bg-slate-800 hover:text-white sm:hidden"
-                aria-label="閉じる"
+                aria-label={t("room.closeAria")}
               >
                 ✕
               </button>
@@ -11104,25 +11142,25 @@ export default function AvatarSpace({
                 [
                   {
                     key: "participants" as const,
-                    label: "参加者",
+                    label: t("tabs.participants"),
                     Icon: TabIconPerson,
                     unread: 0,
                   },
                   {
                     key: "chat" as const,
-                    label: "チャット",
+                    label: t("tabs.chat"),
                     Icon: TabIconChat,
                     unread: chatThreadsTotalUnreadCount,
                   },
                   {
                     key: "notifications" as const,
-                    label: "通知",
+                    label: t("tabs.notifications"),
                     Icon: TabIconBell,
                     unread: mentionsUnreadCount,
                   },
                   {
                     key: "settings" as const,
-                    label: "設定",
+                    label: t("tabs.settings"),
                     Icon: TabIconGear,
                     unread: 0,
                   },
@@ -11153,7 +11191,7 @@ export default function AvatarSpace({
             {sidebarTab === "participants" && (
               <>
                 <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
-                  自分
+                  {t("room.yourself")}
                 </h2>
                 {selfPlayer && (
                   <div className="mb-3 flex shrink-0 items-center gap-2 text-sm">
@@ -11169,7 +11207,7 @@ export default function AvatarSpace({
                 )}
 
                 <h2 className="mb-2 shrink-0 text-xs font-semibold text-slate-400">
-                  参加者
+                  {t("tabs.participants")}
                 </h2>
                 <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
                   {playerList
@@ -11240,7 +11278,7 @@ export default function AvatarSpace({
                   <>
                     {chatThreadsLoading ? (
                       <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
-                        読み込み中...
+                        {t("notifications.loading")}
                       </div>
                     ) : chatThreadsError ? (
                       <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-red-500">
@@ -11248,12 +11286,14 @@ export default function AvatarSpace({
                       </div>
                     ) : chatThreads.length === 0 ? (
                       <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-slate-500">
-                        参加者を選んでチャットを開始してください
+                        {t("chat.selectParticipantPrompt")}
                       </div>
                     ) : (
                       <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-                        {chatThreads.map((t) => (
-                          <li key={`${t.isGroup ? "group" : "dm"}-${t.threadId}`}>
+                        {chatThreads.map((thread) => (
+                          <li
+                            key={`${thread.isGroup ? "group" : "dm"}-${thread.threadId}`}
+                          >
                             <button
                               type="button"
                               onClick={() => {
@@ -11264,26 +11304,26 @@ export default function AvatarSpace({
                                   groupLongPressFiredRef.current = false;
                                   return;
                                 }
-                                if (t.isGroup) {
+                                if (thread.isGroup) {
                                   setSelectedPeerUserId(null);
-                                  setSelectedGroupId(t.threadId);
+                                  setSelectedGroupId(thread.threadId);
                                 } else {
                                   setSelectedGroupId(null);
-                                  setSelectedPeerUserId(t.threadId);
+                                  setSelectedPeerUserId(thread.threadId);
                                 }
                               }}
                               onContextMenu={(e) => {
-                                if (!t.isGroup) return;
+                                if (!thread.isGroup) return;
                                 e.preventDefault();
                                 setGroupContextMenu({
-                                  groupId: t.threadId,
+                                  groupId: thread.threadId,
                                   x: e.clientX,
                                   y: e.clientY,
                                 });
                               }}
                               onTouchStart={(e) => {
-                                if (!t.isGroup) return;
-                                handleGroupTouchStart(e, t.threadId);
+                                if (!thread.isGroup) return;
+                                handleGroupTouchStart(e, thread.threadId);
                               }}
                               onTouchMove={handleGroupTouchMove}
                               onTouchEnd={handleGroupTouchEnd}
@@ -11293,23 +11333,25 @@ export default function AvatarSpace({
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center justify-between gap-2">
                                   <span className="min-w-0 truncate text-sm">
-                                    {t.isGroup ? "👥 " : ""}
-                                    {t.threadName}
+                                    {thread.isGroup ? "👥 " : ""}
+                                    {thread.threadName}
                                   </span>
                                   <span className="shrink-0 text-[10px] leading-none text-slate-400">
-                                    {formatDmListTime(t.lastMessageAt)}
+                                    {formatDmListTime(thread.lastMessageAt, locale)}
                                   </span>
                                 </div>
                                 <div className="mt-0.5 flex items-center justify-between gap-2">
                                   <span className="min-w-0 truncate text-xs text-slate-400">
-                                    {t.lastMessage}
+                                    {thread.lastMessage}
                                   </span>
-                                  {t.unreadCount > 0 && (
+                                  {thread.unreadCount > 0 && (
                                     <span
                                       className="flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold leading-none text-white"
-                                      title="未読メッセージがあります"
+                                      title={t("chat.unreadBadgeTitle")}
                                     >
-                                      {t.unreadCount > 99 ? "99+" : t.unreadCount}
+                                      {thread.unreadCount > 99
+                                        ? "99+"
+                                        : thread.unreadCount}
                                     </span>
                                   )}
                                 </div>
@@ -11327,7 +11369,7 @@ export default function AvatarSpace({
                       }}
                       className="mt-2 shrink-0 rounded-lg border border-dashed border-slate-600 py-2 text-xs font-semibold text-slate-300 hover:bg-white/5"
                     >
-                      ＋ グループチャット作成
+                      {t("chat.createGroupChat")}
                     </button>
                   </>
                 ) : null}
@@ -11365,12 +11407,12 @@ export default function AvatarSpace({
                 <>
                   <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
                     <h2 className="truncate text-xs font-semibold text-slate-300">
-                      {peer?.name ?? threadSummary?.threadName ?? "退出したユーザー"}
+                      {peer?.name ?? threadSummary?.threadName ?? t("chat.leftUser")}
                     </h2>
                     <button
                       onClick={() => setSelectedPeerUserId(null)}
                       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base text-slate-300 hover:bg-slate-800 hover:text-white"
-                      aria-label="チャットを閉じる"
+                      aria-label={t("chat.closeChatAria")}
                     >
                       ✕
                     </button>
@@ -11388,7 +11430,7 @@ export default function AvatarSpace({
                     >
                       {thread.length === 0 && (
                         <p className="mt-4 text-center text-[11px] text-slate-500">
-                          まだメッセージはありません
+                          {t("chat.noMessagesYet")}
                         </p>
                       )}
                       {thread.map((m) => {
@@ -11503,15 +11545,15 @@ export default function AvatarSpace({
                                 m.message ? "mb-1" : ""
                               }`}
                             >
-                              <span>読み込めません</span>
-                              <span className="underline">タップで再試行</span>
+                              <span>{t("chat.imageLoadFailed")}</span>
+                              <span className="underline">{t("chat.tapToRetry")}</span>
                             </button>
                           )}
                           {m.imagePath && !dmImageLoadFailed[m.id] && (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={dmImageUrls[m.id]}
-                              alt="添付画像"
+                              alt={t("chat.attachedImageAlt")}
                               onClick={() => {
                                 const url = dmImageUrls[m.id];
                                 if (url) setDmLightbox({ messageId: m.id, url });
@@ -11553,8 +11595,8 @@ export default function AvatarSpace({
                         </div>
                           </div>
                           <p className="mt-0.5 text-[10px] text-slate-400">
-                            {m.editedAt && "(編集済み) "}
-                            {formatDmMessageTime(m.createdAt)}
+                            {m.editedAt && t("chat.editedLabel")}
+                            {formatDmMessageTime(m.createdAt, locale)}
                           </p>
                           {groupedReactions.length > 0 && (
                             <div className="mt-0.5 flex flex-wrap gap-1">
@@ -11590,8 +11632,8 @@ export default function AvatarSpace({
                           if (el) el.scrollTop = el.scrollHeight;
                           setShowDmScrollButton(false);
                         }}
-                        aria-label="最新メッセージへ移動"
-                        title="最新メッセージへ移動"
+                        aria-label={t("chat.jumpToLatestAria")}
+                        title={t("chat.jumpToLatestAria")}
                         className="absolute bottom-2 left-1/2 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full bg-slate-600 text-white shadow-lg hover:bg-slate-500"
                       >
                         ↓
@@ -11605,13 +11647,13 @@ export default function AvatarSpace({
                   )}
                   {dmEditingMessageId && (
                     <div className="flex items-center justify-between border-t border-slate-700 bg-slate-800/60 px-3 py-1.5 text-[11px] text-slate-300">
-                      <span>編集中</span>
+                      <span>{t("chat.editing")}</span>
                       <button
                         type="button"
                         onClick={cancelEditDmMessage}
                         className="text-slate-400 hover:text-white"
                       >
-                        キャンセル
+                        {t("common.cancel")}
                       </button>
                     </div>
                   )}
@@ -11628,7 +11670,7 @@ export default function AvatarSpace({
                               setDmLightbox({ messageId: null, url: p.previewUrl })
                             }
                             className="shrink-0"
-                            aria-label="添付画像を拡大表示"
+                            aria-label={t("chat.expandImageAria")}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
@@ -11649,7 +11691,7 @@ export default function AvatarSpace({
                             type="button"
                             onClick={() => cancelDmPendingImage(p.id)}
                             disabled={dmImageUploading}
-                            aria-label="添付を取り消す"
+                            aria-label={t("chat.removeAttachmentAria")}
                             className="shrink-0 text-slate-400 hover:text-white disabled:opacity-30"
                           >
                             ✕
@@ -11663,8 +11705,15 @@ export default function AvatarSpace({
                       <div className="mb-1 flex items-center justify-between text-[10px] text-slate-300">
                         <span>
                           {dmUploadProgress.phase === "uploading"
-                            ? `アップロード中 (${dmUploadProgress.index + 1}/${dmUploadProgress.total}) ${dmUploadProgress.percent}%`
-                            : `圧縮中… (${dmUploadProgress.index + 1}/${dmUploadProgress.total})`}
+                            ? t("chat.uploadingProgress", {
+                                index: String(dmUploadProgress.index + 1),
+                                total: String(dmUploadProgress.total),
+                                percent: String(dmUploadProgress.percent),
+                              })
+                            : t("chat.compressingProgress", {
+                                index: String(dmUploadProgress.index + 1),
+                                total: String(dmUploadProgress.total),
+                              })}
                         </span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
@@ -11701,8 +11750,8 @@ export default function AvatarSpace({
                       type="button"
                       onClick={() => dmImageInputRef.current?.click()}
                       disabled={dmImageUploading || dmSending}
-                      title="画像を添付"
-                      aria-label="画像を添付"
+                      title={t("chat.attachImageTitle")}
+                      aria-label={t("chat.attachImageTitle")}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-sm font-semibold leading-none text-slate-300 hover:bg-slate-800 disabled:opacity-50"
                     >
                       {dmImageUploading ? "…" : "+"}
@@ -11787,7 +11836,7 @@ export default function AvatarSpace({
                         }}
                         maxLength={500}
                         rows={1}
-                        placeholder="メッセージを入力"
+                        placeholder={t("chat.messagePlaceholder")}
                         className="relative w-full resize-none overflow-hidden rounded-lg border border-slate-600 bg-transparent px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
                       />
                     </div>
@@ -11803,10 +11852,10 @@ export default function AvatarSpace({
                       className="flex h-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold leading-none text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
                       {dmEditingMessageId
-                        ? "更新"
+                        ? t("chat.update")
                         : dmImageUploading
-                          ? "送信中..."
-                          : "送信"}
+                          ? t("chat.sending")
+                          : t("chat.send")}
                     </button>
                   </div>
                 </>
@@ -11822,12 +11871,12 @@ export default function AvatarSpace({
                     <>
                       <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
                         <h2 className="truncate text-xs font-semibold text-slate-300">
-                          👥 {threadSummary?.threadName ?? "グループ"}
+                          👥 {threadSummary?.threadName ?? t("group.fallbackName")}
                         </h2>
                         <button
                           onClick={() => setSelectedGroupId(null)}
                           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base text-slate-300 hover:bg-slate-800 hover:text-white"
-                          aria-label="チャットを閉じる"
+                          aria-label={t("chat.closeChatAria")}
                         >
                           ✕
                         </button>
@@ -11839,7 +11888,7 @@ export default function AvatarSpace({
                         >
                           {thread.length === 0 && (
                             <p className="mt-4 text-center text-[11px] text-slate-500">
-                              まだメッセージはありません
+                              {t("chat.noMessagesYet")}
                             </p>
                           )}
                           {thread.map((m) => {
@@ -11957,9 +12006,9 @@ export default function AvatarSpace({
                                       m.message ? "mb-1" : ""
                                     }`}
                                   >
-                                    <span>読み込めません</span>
+                                    <span>{t("chat.imageLoadFailed")}</span>
                                     <span className="underline">
-                                      タップで再試行
+                                      {t("chat.tapToRetry")}
                                     </span>
                                   </button>
                                 )}
@@ -11967,7 +12016,7 @@ export default function AvatarSpace({
                                   // eslint-disable-next-line @next/next/no-img-element
                                   <img
                                     src={dmImageUrls[m.id]}
-                                    alt="添付画像"
+                                    alt={t("chat.attachedImageAlt")}
                                     onClick={() => {
                                       const url = dmImageUrls[m.id];
                                       if (url)
@@ -12005,7 +12054,7 @@ export default function AvatarSpace({
                               </div>
                               </div>
                               <p className="mt-0.5 text-[10px] text-slate-400">
-                                {formatDmMessageTime(m.createdAt)}
+                                {formatDmMessageTime(m.createdAt, locale)}
                               </p>
                               {groupedReactions.length > 0 && (
                                 <div className="mt-0.5 flex flex-wrap gap-1">
@@ -12058,7 +12107,7 @@ export default function AvatarSpace({
                                   })
                                 }
                                 className="shrink-0"
-                                aria-label="添付画像を拡大表示"
+                                aria-label={t("chat.expandImageAria")}
                               >
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
@@ -12081,7 +12130,7 @@ export default function AvatarSpace({
                                 type="button"
                                 onClick={() => cancelGroupPendingImage(p.id)}
                                 disabled={groupImageUploading}
-                                aria-label="添付を取り消す"
+                                aria-label={t("chat.removeAttachmentAria")}
                                 className="shrink-0 text-slate-400 hover:text-white disabled:opacity-30"
                               >
                                 ✕
@@ -12095,8 +12144,15 @@ export default function AvatarSpace({
                           <div className="mb-1 flex items-center justify-between text-[10px] text-slate-300">
                             <span>
                               {groupUploadProgress.phase === "uploading"
-                                ? `アップロード中 (${groupUploadProgress.index + 1}/${groupUploadProgress.total}) ${groupUploadProgress.percent}%`
-                                : `圧縮中… (${groupUploadProgress.index + 1}/${groupUploadProgress.total})`}
+                                ? t("chat.uploadingProgress", {
+                                    index: String(groupUploadProgress.index + 1),
+                                    total: String(groupUploadProgress.total),
+                                    percent: String(groupUploadProgress.percent),
+                                  })
+                                : t("chat.compressingProgress", {
+                                    index: String(groupUploadProgress.index + 1),
+                                    total: String(groupUploadProgress.total),
+                                  })}
                             </span>
                           </div>
                           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
@@ -12133,8 +12189,8 @@ export default function AvatarSpace({
                           type="button"
                           onClick={() => groupImageInputRef.current?.click()}
                           disabled={groupImageUploading || groupSending}
-                          title="画像を添付"
-                          aria-label="画像を添付"
+                          title={t("chat.attachImageTitle")}
+                          aria-label={t("chat.attachImageTitle")}
                           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-600 text-sm font-semibold leading-none text-slate-300 hover:bg-slate-800 disabled:opacity-50"
                         >
                           {groupImageUploading ? "…" : "+"}
@@ -12227,7 +12283,7 @@ export default function AvatarSpace({
                             }}
                             maxLength={500}
                             rows={1}
-                            placeholder="メッセージを入力"
+                            placeholder={t("chat.messagePlaceholder")}
                             className="relative w-full resize-none overflow-hidden rounded-lg border border-slate-600 bg-transparent px-2.5 py-1.5 text-xs text-transparent caret-white outline-none placeholder:text-slate-400 focus:border-slate-400"
                           />
                         </div>
@@ -12241,7 +12297,7 @@ export default function AvatarSpace({
                           }
                           className="flex h-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 px-3 text-xs font-semibold leading-none text-white hover:bg-emerald-500 disabled:opacity-50"
                         >
-                          {groupImageUploading ? "送信中..." : "送信"}
+                          {groupImageUploading ? t("chat.sending") : t("chat.send")}
                         </button>
                       </div>
                     </>
@@ -12254,7 +12310,7 @@ export default function AvatarSpace({
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-2">
                 {mentionsLoading && mentions.length === 0 ? (
                   <p className="mt-4 text-center text-[11px] text-slate-500">
-                    読み込み中...
+                    {t("notifications.loading")}
                   </p>
                 ) : mentionsError ? (
                   <p className="mt-4 text-center text-[11px] text-red-400">
@@ -12262,7 +12318,7 @@ export default function AvatarSpace({
                   </p>
                 ) : mentions.length === 0 ? (
                   <p className="mt-4 text-center text-[11px] text-slate-500">
-                    通知はありません
+                    {t("notifications.none")}
                   </p>
                 ) : (
                   mentions.map((mention) => (
@@ -12278,9 +12334,13 @@ export default function AvatarSpace({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="min-w-0 truncate font-semibold">
-                          {mention.mentionerName}さんから
-                          {mention.isEveryone ? "全員宛て" : ""}
-                          メンションされました
+                          {mention.isEveryone
+                            ? t("notifications.mentionedByNameEveryone", {
+                                name: mention.mentionerName,
+                              })
+                            : t("notifications.mentionedByName", {
+                                name: mention.mentionerName,
+                              })}
                         </span>
                         {!mention.readAt && (
                           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-purple-400" />
@@ -12295,10 +12355,10 @@ export default function AvatarSpace({
                         <span className="min-w-0 truncate">
                           {mention.groupId
                             ? `👥 ${mention.groupName}`
-                            : "📝 個人チャット"}
+                            : t("notifications.groupChatLabel")}
                         </span>
                         <span className="shrink-0">
-                          {formatDmListTime(mention.createdAt)}
+                          {formatDmListTime(mention.createdAt, locale)}
                         </span>
                       </div>
                     </button>
@@ -12311,7 +12371,7 @@ export default function AvatarSpace({
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-2">
                 <div>
                   <p className="mb-2 text-xs font-semibold text-slate-400">
-                    アバター
+                    {t("settings.avatarLabel")}
                   </p>
                   <AvatarPicker
                     selected={settingsAvatar}
@@ -12321,20 +12381,20 @@ export default function AvatarSpace({
 
                 <div>
                   <p className="mb-2 text-xs font-semibold text-slate-400">
-                    車(shift + x)
+                    {t("settings.carLabel")}
                   </p>
                   <CarPicker selected={settingsCar} onSelect={setSettingsCar} />
                 </div>
 
                 <div>
                   <p className="mb-2 text-xs font-semibold text-slate-400">
-                    表示名
+                    {t("settings.displayNameLabel")}
                   </p>
                   <input
                     value={settingsNameInput}
                     onChange={(e) => setSettingsNameInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && saveSettings()}
-                    placeholder="例:みく"
+                    placeholder={t("lobby.namePlaceholder")}
                     className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-slate-400"
                   />
                 </div>
@@ -12342,7 +12402,7 @@ export default function AvatarSpace({
                 <div className="flex gap-4">
                   <div>
                     <p className="mb-2 text-xs font-semibold text-slate-400">
-                      ステータス
+                      {t("settings.statusLabel")}
                     </p>
                     <div className="flex flex-col gap-2">
                       {(
@@ -12365,7 +12425,7 @@ export default function AvatarSpace({
                               backgroundColor: PRESENCE_STATUS_COLORS[status],
                             }}
                           />
-                          {PRESENCE_STATUS_LABELS[status]}
+                          {t(`presence.${status}`)}
                         </label>
                       ))}
                     </div>
@@ -12376,30 +12436,24 @@ export default function AvatarSpace({
                         ボタンを待たず、チェックした瞬間に反映される)。 */}
                     <div className="mt-4">
                       <p className="mb-2 text-xs font-semibold text-slate-400">
-                        マイク
+                        {t("settings.micLabel")}
                       </p>
-                      <div className="flex items-center justify-between gap-3">
-                        <label className="flex items-center gap-2 text-sm text-slate-200">
-                          <input
-                            type="checkbox"
-                            checked={noiseFilterEnabled}
-                            onChange={(e) =>
-                              setNoiseFilterEnabled(e.target.checked)
-                            }
-                          />
-                          ノイズ抑制
-                        </label>
-                        <LanguageSwitcher
-                          variant="dark"
-                          onChange={saveLocale}
+                      <label className="flex items-center gap-2 text-sm text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={noiseFilterEnabled}
+                          onChange={(e) =>
+                            setNoiseFilterEnabled(e.target.checked)
+                          }
                         />
-                      </div>
+                        {t("settings.noiseSuppressionLabel")}
+                      </label>
                     </div>
                   </div>
 
                   <div className="min-w-0 flex-1">
                     <p className="mb-2 text-xs font-semibold text-slate-400">
-                      吹き出し
+                      {t("settings.speechBubbleLabel")}
                     </p>
                     <label className="mb-2 flex items-center gap-2 text-sm text-slate-200">
                       <input
@@ -12409,7 +12463,7 @@ export default function AvatarSpace({
                           setSettingsShowMessage(e.target.checked)
                         }
                       />
-                      表示する
+                      {t("settings.showLabel")}
                     </label>
                     <input
                       value={settingsMessageInput}
@@ -12419,12 +12473,33 @@ export default function AvatarSpace({
                         )
                       }
                       maxLength={MESSAGE_MAX_LENGTH}
-                      placeholder="吹き出しの内容"
+                      placeholder={t("settings.bubbleContentPlaceholder")}
                       className="w-full rounded-lg border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-slate-400"
                     />
                     <p className="mt-1 text-[10px] text-slate-400">
-                      {settingsMessageInput.length}/{MESSAGE_MAX_LENGTH}文字
+                      {t("settings.charCount", {
+                        count: String(settingsMessageInput.length),
+                        max: String(MESSAGE_MAX_LENGTH),
+                      })}
                     </p>
+
+                    <div className="mt-4">
+                      <p className="mb-2 text-xs font-semibold text-slate-400">
+                        言語/Language
+                      </p>
+                      <select
+                        value={locale}
+                        onChange={(e) => {
+                          const next = e.target.value as Locale;
+                          setLocale(next);
+                          saveLocale(next);
+                        }}
+                        className="w-full rounded-lg border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-slate-400"
+                      >
+                        <option value="ja">{t("lang.japanese")}</option>
+                        <option value="en">{t("lang.english")}</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -12432,14 +12507,14 @@ export default function AvatarSpace({
                   onClick={saveSettings}
                   className="w-full rounded-lg bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
                 >
-                  保存する
+                  {t("common.save")}
                 </button>
 
                 <button
                   onClick={() => setShowBugReportModal(true)}
                   className="w-full rounded-lg bg-slate-800 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700"
                 >
-                  不具合報告
+                  {t("bugReport.title")}
                 </button>
 
                 {(isAccountAdmin || isMaster) && (
@@ -12449,7 +12524,7 @@ export default function AvatarSpace({
                         href="/admin"
                         className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
                       >
-                        管理画面へ
+                        {t("lobby.goToAdmin")}
                       </Link>
                     )}
                     {isMaster && (
@@ -12457,7 +12532,7 @@ export default function AvatarSpace({
                         href="/master"
                         className="block w-full rounded-lg bg-emerald-900/40 py-2 text-center text-sm font-semibold text-emerald-300 hover:bg-emerald-900/60"
                       >
-                        マスター画面へ
+                        {t("room.goToMasterPanel")}
                       </Link>
                     )}
                   </div>
@@ -12472,7 +12547,7 @@ export default function AvatarSpace({
         <div
           role="separator"
           aria-orientation="vertical"
-          aria-label="サイドバーの幅を変更"
+          aria-label={t("room.sidebarResizeAria")}
           onPointerDown={handleSidebarResizeStart}
           onPointerMove={handleSidebarResizeMove}
           onPointerUp={handleSidebarResizeEnd}
@@ -12493,7 +12568,7 @@ export default function AvatarSpace({
           <button
             type="button"
             onClick={() => setDmLightbox(null)}
-            aria-label="閉じる"
+            aria-label={t("room.closeAria")}
             className="absolute right-4 top-4 text-2xl text-white hover:text-slate-300"
           >
             ✕
@@ -12501,7 +12576,7 @@ export default function AvatarSpace({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={dmLightbox.url}
-            alt="添付画像"
+            alt={t("chat.attachedImageAlt")}
             onClick={(e) => e.stopPropagation()}
             className="max-h-[80vh] max-w-full rounded-lg object-contain"
           />
@@ -12515,7 +12590,7 @@ export default function AvatarSpace({
               disabled={dmLightboxDownloading}
               className="mt-4 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-50"
             >
-              {dmLightboxDownloading ? "保存中..." : "画像を保存"}
+              {dmLightboxDownloading ? t("chat.imageSaving") : t("chat.saveImage")}
             </button>
           )}
         </div>
@@ -12583,7 +12658,7 @@ export default function AvatarSpace({
                   }}
                   className="block w-full px-3 py-2 text-left hover:bg-slate-700"
                 >
-                  選択範囲をコピー
+                  {t("chat.selectionCopy")}
                 </button>
               ) : (
                 <>
@@ -12595,7 +12670,7 @@ export default function AvatarSpace({
                     }}
                     className="block w-full px-3 py-2 text-left hover:bg-slate-700"
                   >
-                    コピー
+                    {t("common.copy")}
                   </button>
                   {dmContextMenu.source === "touch" && (
                     // スマホの長押しには「事前選択」が無いため、部分選択に
@@ -12608,7 +12683,7 @@ export default function AvatarSpace({
                       }}
                       className="block w-full border-t border-slate-700 px-3 py-2 text-left hover:bg-slate-700"
                     >
-                      部分コピー
+                      {t("chat.partialCopy")}
                     </button>
                   )}
                 </>
@@ -12624,24 +12699,20 @@ export default function AvatarSpace({
                     }}
                     className="block w-full border-t border-slate-700 px-3 py-2 text-left hover:bg-slate-700"
                   >
-                    編集
+                    {t("common.edit")}
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       const target = dmContextMenu.message;
                       closeDmCopyUi();
-                      if (
-                        window.confirm(
-                          "このメッセージを削除します。よろしいですか?",
-                        )
-                      ) {
+                      if (window.confirm(t("chat.deleteConfirm"))) {
                         deleteDmMessage(target);
                       }
                     }}
                     className="block w-full border-t border-slate-700 px-3 py-2 text-left text-red-300 hover:bg-slate-700"
                   >
-                    削除
+                    {t("common.delete")}
                   </button>
                 </>
               )}
@@ -12666,7 +12737,9 @@ export default function AvatarSpace({
         <button
           type="button"
           onClick={toggleCar}
-          aria-label={selfPlayer?.carVisible ? "車を降りる" : "車に乗る"}
+          aria-label={
+            selfPlayer?.carVisible ? t("room.carOnAria") : t("room.carOffAria")
+          }
           className={`fixed bottom-8 left-8 z-50 flex h-14 w-14 items-center justify-center rounded-full text-2xl backdrop-blur-sm select-none active:bg-white/50 sm:hidden ${
             selfPlayer?.carVisible ? "bg-emerald-500/70" : "bg-white/25"
           }`}
@@ -12727,7 +12800,7 @@ export default function AvatarSpace({
                         setFullscreenZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))
                       }
                       className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
-                      aria-label="縮小"
+                      aria-label={t("screenShare.shrinkFullscreenAria")}
                     >
                       −
                     </button>
@@ -12736,7 +12809,7 @@ export default function AvatarSpace({
                         setFullscreenZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10))
                       }
                       className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
-                      aria-label="拡大"
+                      aria-label={t("screenShare.expandFullscreenAria")}
                     >
                       ＋
                     </button>
@@ -12754,7 +12827,7 @@ export default function AvatarSpace({
                     }
                   }}
                   className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-lg text-white hover:bg-black/80"
-                  aria-label="全画面表示を閉じる"
+                  aria-label={t("screenShare.closeFullscreenAria")}
                 >
                   ✕
                 </button>
@@ -12768,7 +12841,7 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-[260px] rounded-xl bg-white p-6 text-center shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
-              会議室に入室しますか?
+              {t("meeting.joinConfirmTitle")}
             </p>
             <div className="flex justify-center gap-3">
               <button
@@ -12776,14 +12849,14 @@ export default function AvatarSpace({
                 onClick={() => declineMeetingEntry(pendingMeetingEntry.zoneId)}
                 className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                いいえ
+                {t("common.no")}
               </button>
               <button
                 type="button"
                 onClick={() => confirmMeetingEntry(pendingMeetingEntry.zoneId)}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
               >
-                はい
+                {t("common.yes")}
                 <br />
                 (Enter)
               </button>
@@ -12798,10 +12871,10 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
-              全体アナウンス機能をオンにしますか?
+              {t("announcement.enableConfirmTitle")}
               <br />
               <span className="text-xs font-normal text-slate-500">
-                ※マイクONにするとルーム参加者全員に音声が届きます
+                {t("announcement.enableConfirmBody")}
               </span>
             </p>
             <div className="flex justify-center gap-3">
@@ -12810,14 +12883,14 @@ export default function AvatarSpace({
                 onClick={declineAnnouncementOn}
                 className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                いいえ
+                {t("common.no")}
               </button>
               <button
                 type="button"
                 onClick={confirmAnnouncementOn}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
               >
-                はい
+                {t("common.yes")}
               </button>
             </div>
           </div>
@@ -12839,14 +12912,12 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="max-w-2xl rounded-xl bg-white p-6 text-left shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
-              画面録画を開始しますか?
+              {t("recording.startConfirmTitle")}
               <br />
               <span className="text-xs font-normal text-slate-500">
-                ※停止後、録画開始者のローカルに【動画データ】と【文字起こし
-                テキスト】が保存されます
+                {t("recording.startConfirmBodyLine1")}
                 <br />
-                (文字起こしテキストは参加者がPC版Chrome・Edgeの方の音声のみ
-                変換されます)
+                {t("recording.startConfirmBodyLine2")}
               </span>
             </p>
             <div className="flex justify-center gap-3">
@@ -12855,14 +12926,14 @@ export default function AvatarSpace({
                 onClick={declineStartRecording}
                 className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                いいえ
+                {t("common.no")}
               </button>
               <button
                 type="button"
                 onClick={confirmStartRecording}
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
               >
-                はい
+                {t("common.yes")}
               </button>
             </div>
           </div>
@@ -12874,10 +12945,10 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
-              録画中ですが会議エリアから退出しますか?
+              {t("recording.leaveWhileRecordingTitle")}
               <br />
               <span className="text-xs font-normal text-slate-500">
-                (録画は停止しローカルに保存されます)
+                {t("recording.leaveWhileRecordingBody")}
               </span>
             </p>
             <div className="flex justify-center gap-3">
@@ -12886,14 +12957,14 @@ export default function AvatarSpace({
                 onClick={declineExitZoneWhileRecording}
                 className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                いいえ
+                {t("common.no")}
               </button>
               <button
                 type="button"
                 onClick={confirmExitZoneWhileRecording}
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
               >
-                はい
+                {t("common.yes")}
               </button>
             </div>
           </div>
@@ -12906,10 +12977,10 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="max-w-sm rounded-xl bg-white p-6 text-left shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
-              録画中ですが退室しますか?
+              {t("recording.exitRoomWhileRecordingTitle")}
               <br />
               <span className="text-xs font-normal text-slate-500">
-                (録画は停止しローカルに保存されます)
+                {t("recording.leaveWhileRecordingBody")}
               </span>
             </p>
             <div className="flex justify-center gap-3">
@@ -12918,14 +12989,14 @@ export default function AvatarSpace({
                 onClick={declineLeaveRoomWhileRecording}
                 className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                いいえ
+                {t("common.no")}
               </button>
               <button
                 type="button"
                 onClick={confirmLeaveRoomWhileRecording}
                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
               >
-                はい
+                {t("common.yes")}
               </button>
             </div>
           </div>
@@ -12936,7 +13007,7 @@ export default function AvatarSpace({
       {lockPermissionError && (
         <div className="pointer-events-none fixed inset-x-0 top-6 z-[60] flex justify-center px-4">
           <div className="rounded-lg bg-black/80 px-4 py-2 text-center text-sm text-white shadow-xl">
-            鍵を閉めた人しか開けることはできません
+            {t("recording.lockErrorMessage")}
           </div>
         </div>
       )}
@@ -12968,18 +13039,18 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
             <h2 className="text-base font-bold text-slate-800">
-              グループチャット作成
+              {t("group.createModalTitle")}
             </h2>
             <hr className="mb-4 mt-2 border-slate-200" />
 
             <p className="mb-2 text-xs font-semibold text-slate-500">
-              参加者(現在ルームに入室中の人のみ選べます)
+              {t("group.participantsHint")}
             </p>
             <div className="mb-4 max-h-64 space-y-1 overflow-y-auto">
               {playerList.filter((p) => p.id !== selfId.current && p.userId)
                 .length === 0 && (
                 <p className="text-xs text-slate-500">
-                  現在、他に入室中の参加者がいません。
+                  {t("group.noOtherParticipants")}
                 </p>
               )}
               {playerList
@@ -13021,14 +13092,14 @@ export default function AvatarSpace({
                 }}
                 className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                キャンセル
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleCreateGroup}
                 disabled={createGroupSelectedIds.size === 0 || creatingGroup}
                 className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
               >
-                {creatingGroup ? "作成中..." : "作成"}
+                {creatingGroup ? t("group.creating") : t("group.create")}
               </button>
             </div>
           </div>
@@ -13064,7 +13135,7 @@ export default function AvatarSpace({
             }}
             className="block w-full px-3 py-2 text-left hover:bg-slate-700"
           >
-            グループ名変更
+            {t("group.renameMenuItem")}
           </button>
           <button
             type="button"
@@ -13075,7 +13146,7 @@ export default function AvatarSpace({
             }}
             className="block w-full border-t border-slate-700 px-3 py-2 text-left text-red-300 hover:bg-slate-700"
           >
-            このチャットから退出
+            {t("group.leaveMenuItem")}
           </button>
         </div>
       )}
@@ -13135,7 +13206,7 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
             <h2 className="text-base font-bold text-slate-800">
-              グループ名変更
+              {t("group.renameModalTitle")}
             </h2>
             <hr className="mb-4 mt-2 border-slate-200" />
             <input
@@ -13143,7 +13214,7 @@ export default function AvatarSpace({
               onChange={(e) => setRenameGroupInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleRenameGroupSave()}
               maxLength={100}
-              placeholder="グループ名"
+              placeholder={t("group.namePlaceholder")}
               className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
             />
             {renameGroupError && (
@@ -13156,14 +13227,14 @@ export default function AvatarSpace({
                 onClick={() => setRenamingGroupId(null)}
                 className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                キャンセル
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleRenameGroupSave}
                 disabled={renamingGroupSaving}
                 className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
               >
-                {renamingGroupSaving ? "保存中..." : "保存する"}
+                {renamingGroupSaving ? t("common.saving") : t("common.save")}
               </button>
             </div>
           </div>
@@ -13175,10 +13246,9 @@ export default function AvatarSpace({
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
             <p className="mb-4 text-sm font-semibold text-slate-800">
-              このチャットから退出しますか?
+              {t("group.leaveConfirmTitle")}
               <br />
-              自分の画面からは履歴が消え、以後の通知も届かなくなります。
-              他のメンバーには退出したことが通知されます。
+              {t("group.leaveConfirmBody")}
             </p>
             {leaveGroupError && (
               <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
@@ -13190,14 +13260,14 @@ export default function AvatarSpace({
                 onClick={() => setLeavingGroupId(null)}
                 className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
               >
-                キャンセル
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleLeaveGroupConfirm}
                 disabled={leavingGroupBusy}
                 className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
               >
-                {leavingGroupBusy ? "退出中..." : "退出する"}
+                {leavingGroupBusy ? t("group.leaving") : t("group.leave")}
               </button>
             </div>
           </div>

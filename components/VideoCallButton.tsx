@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/lib/i18n/LocaleContext";
+
 type Props = {
   enabled: boolean;
   onClick: () => void;
@@ -39,18 +41,21 @@ export default function VideoCallButton({
   onClick,
   disabled,
 }: Props) {
+  const { t } = useLocale();
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={
         disabled
-          ? "作業エリア内では利用できません"
+          ? t("room.disabledInWorkArea")
           : enabled
-            ? "ビデオ通話: 中(クリックで終了)"
-            : "ビデオ通話を開始する"
+            ? t("room.videoCall.activeTitle")
+            : t("room.videoCall.startTitle")
       }
-      aria-label={enabled ? "ビデオ通話を終了する" : "ビデオ通話を開始する"}
+      aria-label={
+        enabled ? t("room.videoCall.stopAria") : t("room.videoCall.startAria")
+      }
       className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-slate-700 text-slate-300"
       } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}

@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/lib/i18n/LocaleContext";
+
 type Props = {
   enabled: boolean;
   onClick: () => void;
@@ -31,18 +33,21 @@ export default function ScreenShareButton({
   onClick,
   disabled,
 }: Props) {
+  const { t } = useLocale();
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={
         disabled
-          ? "作業エリア内では利用できません"
+          ? t("room.disabledInWorkArea")
           : enabled
-            ? "画面共有: 中(クリックで終了)"
-            : "画面を共有する"
+            ? t("room.screenShare.activeTitle")
+            : t("room.screenShare.startTitle")
       }
-      aria-label={enabled ? "画面共有を終了する" : "画面共有を開始する"}
+      aria-label={
+        enabled ? t("room.screenShare.stopAria") : t("room.screenShare.startAria")
+      }
       className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-slate-700 text-slate-300"
       } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}
