@@ -5,7 +5,6 @@ import Link from "next/link";
 import type { Announcement, PlanId, Room } from "@/lib/types";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import LogoutButton from "@/components/auth/LogoutButton";
-import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import OnlineCount from "./OnlineCount";
 import RoomManager from "./RoomManager";
@@ -169,9 +168,6 @@ export default function AdminDashboard({
         </nav>
 
         <div className="space-y-2 border-t border-slate-800 p-3">
-          <div className="flex justify-center">
-            <LanguageSwitcher variant="dark" />
-          </div>
           {showMasterLink && (
             <Link
               href="/master"
