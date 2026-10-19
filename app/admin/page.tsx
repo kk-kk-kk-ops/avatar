@@ -122,7 +122,7 @@ export default async function AdminPage() {
   // (supabase/consolidated_setup.sql参照。INSERT/UPDATE/DELETEはマスターのみ)。
   const { data: announcementRows } = await supabase
     .from("announcements")
-    .select("id, title, body, published_at, created_at")
+    .select("id, title, body, title_en, body_en, published_at, created_at")
     .order("published_at", { ascending: false })
     .order("created_at", { ascending: false });
 
@@ -142,6 +142,8 @@ export default async function AdminPage() {
     id: a.id,
     title: a.title,
     body: a.body,
+    titleEn: a.title_en,
+    bodyEn: a.body_en,
     publishedAt: a.published_at,
     unread: !readAnnouncementIds.has(a.id),
   }));

@@ -232,6 +232,10 @@ export type Announcement = {
   id: string;
   title: string;
   body: string;
+  // 管理画面(/admin)を英語表示中のときだけ使う任意の英語版(2026-10追加)。
+  // マスターが入力した場合のみ入っており、無ければtitle/bodyにフォールバックする。
+  titleEn?: string | null;
+  bodyEn?: string | null;
   publishedAt: string;
 };
 

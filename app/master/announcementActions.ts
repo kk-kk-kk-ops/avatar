@@ -19,6 +19,8 @@ export async function createAnnouncement(
   title: string,
   body: string,
   publishedAt: string,
+  titleEn?: string,
+  bodyEn?: string,
 ): Promise<ActionResult> {
   const { supabase } = await requireMaster();
   const trimmedTitle = title.trim();
@@ -33,12 +35,15 @@ export async function createAnnouncement(
   const { error } = await supabase.from("announcements").insert({
     title: trimmedTitle,
     body: trimmedBody,
+    title_en: titleEn?.trim() || null,
+    body_en: bodyEn?.trim() || null,
     published_at: toTimestamp(publishedAt),
     created_by: user?.id ?? null,
   });
   if (error) return { ok: false, error: "お知らせの作成に失敗しました" };
 
   revalidatePath("/master");
+  revalidatePath("/admin");
   return { ok: true };
 }
 
@@ -47,6 +52,8 @@ export async function updateAnnouncement(
   title: string,
   body: string,
   publishedAt: string,
+  titleEn?: string,
+  bodyEn?: string,
 ): Promise<ActionResult> {
   const { supabase } = await requireMaster();
   const trimmedTitle = title.trim();
@@ -59,6 +66,8 @@ export async function updateAnnouncement(
     .update({
       title: trimmedTitle,
       body: trimmedBody,
+      title_en: titleEn?.trim() || null,
+      body_en: bodyEn?.trim() || null,
       published_at: toTimestamp(publishedAt),
       updated_at: new Date().toISOString(),
     })
@@ -66,6 +75,7 @@ export async function updateAnnouncement(
   if (error) return { ok: false, error: "お知らせの更新に失敗しました" };
 
   revalidatePath("/master");
+  revalidatePath("/admin");
   return { ok: true };
 }
 

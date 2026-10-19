@@ -24,6 +24,9 @@ type Entry = {
   primary: string; // お知らせ: title / アップデート情報: version
   body: string;
   date: string; // ISO文字列
+  // 管理画面(/admin)を英語表示中のときだけ使う任意の英語版(2026-10追加)。
+  primaryEn: string;
+  bodyEn: string;
 };
 
 type Category = "announcements" | "maintenance";
@@ -60,12 +63,20 @@ function EntryListSection({
   bodyLabel: string;
   dateLabel: string;
   entries: Entry[];
-  onCreate: (primary: string, body: string, date: string) => Promise<ActionResult>;
+  onCreate: (
+    primary: string,
+    body: string,
+    date: string,
+    primaryEn?: string,
+    bodyEn?: string,
+  ) => Promise<ActionResult>;
   onUpdate: (
     id: string,
     primary: string,
     body: string,
     date: string,
+    primaryEn?: string,
+    bodyEn?: string,
   ) => Promise<ActionResult>;
   onDelete: (id: string) => Promise<ActionResult>;
 }) {
@@ -76,6 +87,8 @@ function EntryListSection({
   );
   const [primaryInput, setPrimaryInput] = useState("");
   const [bodyInput, setBodyInput] = useState("");
+  const [primaryEnInput, setPrimaryEnInput] = useState("");
+  const [bodyEnInput, setBodyEnInput] = useState("");
   const [dateInput, setDateInput] = useState(todayInputValue());
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +99,8 @@ function EntryListSection({
     setEditingId(null);
     setPrimaryInput("");
     setBodyInput("");
+    setPrimaryEnInput("");
+    setBodyEnInput("");
     setDateInput(todayInputValue());
     setError(null);
   };
@@ -100,6 +115,8 @@ function EntryListSection({
     setEditingId(entry.id);
     setPrimaryInput(entry.primary);
     setBodyInput(entry.body);
+    setPrimaryEnInput(entry.primaryEn);
+    setBodyEnInput(entry.bodyEn);
     setDateInput(toDateInputValue(entry.date));
     setError(null);
   };
@@ -108,8 +125,21 @@ function EntryListSection({
     setError(null);
     startTransition(async () => {
       const result = editingId
-        ? await onUpdate(editingId, primaryInput, bodyInput, dateInput)
-        : await onCreate(primaryInput, bodyInput, dateInput);
+        ? await onUpdate(
+            editingId,
+            primaryInput,
+            bodyInput,
+            dateInput,
+            primaryEnInput,
+            bodyEnInput,
+          )
+        : await onCreate(
+            primaryInput,
+            bodyInput,
+            dateInput,
+            primaryEnInput,
+            bodyEnInput,
+          );
       if (!result.ok) {
         setError(result.error);
         return;
@@ -224,6 +254,30 @@ function EntryListSection({
                   value={bodyInput}
                   onChange={(e) => setBodyInput(e.target.value)}
                   className="w-full flex-1 resize-none rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+                />
+              </div>
+              {/* 英語版(任意、2026-10追加)。管理画面(/admin)を英語表示中の
+                  メンバーにはこちらを優先表示する。未入力の場合は上の日本語
+                  版がそのまま表示される(マスター画面自体は英語対応しない)。 */}
+              <div className="shrink-0">
+                <label className="mb-1 block text-[11px] font-semibold text-slate-500">
+                  {primaryLabel}(英語版・任意)
+                </label>
+                <input
+                  value={primaryEnInput}
+                  onChange={(e) => setPrimaryEnInput(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
+                />
+              </div>
+              <div className="shrink-0">
+                <label className="mb-1 block text-[11px] font-semibold text-slate-500">
+                  {bodyLabel}(英語版・任意)
+                </label>
+                <textarea
+                  value={bodyEnInput}
+                  onChange={(e) => setBodyEnInput(e.target.value)}
+                  rows={3}
+                  className="w-full resize-none rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
                 />
               </div>
               {error && (
@@ -358,6 +412,8 @@ export default function AnnouncementsPanel({
             id: a.id,
             primary: a.title,
             body: a.body,
+            primaryEn: a.titleEn ?? "",
+            bodyEn: a.bodyEn ?? "",
             date: a.publishedAt,
           }))}
           onCreate={createAnnouncement}
