@@ -12,15 +12,18 @@ import {
 } from "@/lib/types";
 import LogoutButton from "@/components/auth/LogoutButton";
 import AdminDashboard from "./AdminDashboard";
+import { translate } from "@/lib/i18n/translations";
+import { getServerLocale } from "@/lib/i18n/getServerLocale";
 
 // メンテナンス期間中、マスター以外の管理者を管理画面から締め出す際に
 // 表示する画面(app/page.tsxのBannedNoticeと同じ考え方)。
 function MaintenanceNotice({ maintenance }: { maintenance: MaintenanceSettings }) {
+  const locale = getServerLocale();
   return (
     <div className="flex h-screen w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
       <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
         <h1 className="mb-2 text-lg font-bold text-slate-800">
-          メンテナンス中
+          {translate(locale, "admin.maintenanceTitle")}
         </h1>
         <p className="mb-2 text-sm text-red-600">
           {maintenance.startsAt && formatMaintenanceDateTime(maintenance.startsAt)}
@@ -28,8 +31,7 @@ function MaintenanceNotice({ maintenance }: { maintenance: MaintenanceSettings }
           {maintenance.endsAt && formatMaintenanceDateTime(maintenance.endsAt)}
         </p>
         <p className="mb-6 text-sm text-slate-500">
-          ただいまメンテナンス中のため、管理画面をご利用いただけません。
-          終了までしばらくお待ちください。
+          {translate(locale, "admin.maintenanceBody")}
         </p>
         <LogoutButton className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700" />
       </div>
