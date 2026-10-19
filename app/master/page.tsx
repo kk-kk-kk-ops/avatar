@@ -160,13 +160,15 @@ export default async function MasterPage() {
 
   const { data: announcementRows } = await supabase
     .from("announcements")
-    .select("id, title, body, published_at")
+    .select("id, title, body, title_en, body_en, published_at")
     .order("published_at", { ascending: false })
     .order("created_at", { ascending: false });
   const announcements: Announcement[] = (announcementRows ?? []).map((a) => ({
     id: a.id,
     title: a.title,
     body: a.body,
+    titleEn: a.title_en,
+    bodyEn: a.body_en,
     publishedAt: a.published_at,
   }));
 

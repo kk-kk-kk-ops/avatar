@@ -44,11 +44,13 @@ export default function AnnouncementsView({
   announcements: (Announcement & { unread: boolean })[];
   onReadAnnouncement: (id: string) => void;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  // 英語表示中は、マスターが英語版(title_en/body_en)を入力していれば
+  // そちらを優先する。未入力の項目は従来通り日本語のまま表示する。
   const entries: Entry[] = announcements.map((a) => ({
     id: a.id,
-    primary: a.title,
-    body: a.body,
+    primary: (locale === "en" && a.titleEn) || a.title,
+    body: (locale === "en" && a.bodyEn) || a.body,
     date: a.publishedAt,
     unread: a.unread,
   }));
