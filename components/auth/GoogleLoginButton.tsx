@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 export default function GoogleLoginButton() {
+  const { t } = useLocale();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // TOPページに招待リンク(?invite=トークン)経由で来た場合、OAuthの
@@ -40,12 +42,12 @@ export default function GoogleLoginButton() {
         },
       });
       if (signInError) {
-        setError("ログインの開始に失敗しました。時間をおいて再度お試しください。");
+        setError(t("error.googleLoginFailed"));
         setLoading(false);
       }
       // 成功時はGoogleの認証画面へリダイレクトされるため、ここでは何もしない
     } catch {
-      setError("ネットワークエラーが発生しました。通信環境をご確認ください。");
+      setError(t("common.networkError"));
       setLoading(false);
     }
   };
@@ -75,7 +77,7 @@ export default function GoogleLoginButton() {
             d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.2 5.5l6.5 5.5C41.5 35.9 44 30.5 44 24c0-1.3-.1-2.7-.4-3.5z"
           />
         </svg>
-        {loading ? "接続中..." : "Googleでログイン"}
+        {loading ? t("google.connecting") : t("google.signIn")}
       </button>
       {error && <p className="mt-2 text-center text-xs text-red-600">{error}</p>}
     </div>

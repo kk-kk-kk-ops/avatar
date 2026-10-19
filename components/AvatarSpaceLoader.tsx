@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { Room } from "@/lib/types";
+import type { Locale } from "@/lib/i18n/translations";
 
 // canvasやwindow/keyboardイベントを使うためSSRを無効化
 const AvatarSpace = dynamic(() => import("@/components/AvatarSpace"), {
@@ -24,6 +25,7 @@ type Props = {
   maintenanceEnabled?: boolean;
   maintenanceStartsAt?: string | null;
   maintenanceEndsAt?: string | null;
+  initialProfileLocale?: Locale;
 };
 
 export default function AvatarSpaceLoader({
@@ -42,6 +44,7 @@ export default function AvatarSpaceLoader({
   maintenanceEnabled,
   maintenanceStartsAt,
   maintenanceEndsAt,
+  initialProfileLocale,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -68,6 +71,7 @@ export default function AvatarSpaceLoader({
         maintenanceEnabled={maintenanceEnabled}
         maintenanceStartsAt={maintenanceStartsAt}
         maintenanceEndsAt={maintenanceEndsAt}
+        initialProfileLocale={initialProfileLocale}
       />
     </div>
   );

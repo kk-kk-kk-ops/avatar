@@ -4,7 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
 import { startFreeTrial } from "@/app/plan/actions";
-import { AUTH_ERROR_MESSAGES } from "@/lib/authErrorMessages";
+import { translateAuthError, type Locale } from "@/lib/i18n/translations";
+import { getServerLocale } from "@/lib/i18n/getServerLocale";
 import { PLANS, type PlanId, type Room } from "@/lib/types";
 import LoginCard from "@/components/auth/LoginCard";
 import AvatarSpaceLoader from "@/components/AvatarSpaceLoader";
@@ -86,7 +87,7 @@ async function renderRoomJoin(
   ] = await Promise.all([
     supabase
       .from("profiles")
-      .select("display_name")
+      .select("display_name, locale")
       .eq("user_id", user.id)
       .maybeSingle(),
     supabase
@@ -173,6 +174,7 @@ async function renderRoomJoin(
       maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
       maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
+      initialProfileLocale={(profile?.locale as Locale) ?? undefined}
     />
   );
 }
@@ -215,7 +217,7 @@ async function renderViewOnlyRoomJoin(
     await Promise.all([
       supabase
         .from("profiles")
-        .select("display_name")
+        .select("display_name, locale")
         .eq("user_id", user.id)
         .maybeSingle(),
       supabase
@@ -274,6 +276,7 @@ async function renderViewOnlyRoomJoin(
       // profiles.account_idを書き換えていないため、通常のRLS経由では
       // ルームアクセスを証明できず、これが無いと音声/映像に参加できない。
       viewOnlyInviteToken={inviteToken}
+      initialProfileLocale={(profile?.locale as Locale) ?? undefined}
     />
   );
 }
@@ -397,9 +400,7 @@ export default async function Home({
     return renderRoomJoin(supabase, user, state);
   }
 
-  const errorMessage = searchParams.error
-    ? AUTH_ERROR_MESSAGES[searchParams.error]
-    : null;
+  const errorMessage = translateAuthError(getServerLocale(), searchParams.error);
 
   // 未ログインで招待URL経由の場合、ログイン画面に「〇〇〇さんからの招待」
   // と表示するため、招待者名だけ先に取得しておく(実際にゲストとして
