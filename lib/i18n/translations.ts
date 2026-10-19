@@ -469,6 +469,9 @@ const ja: Record<string, string> = {
   "admin.announcementsNone": "まだ登録されていません",
   "admin.announcementUnread": "未読",
   "admin.announcementSelectPrompt": "左の一覧から選択してください",
+
+  "admin.logout": "ログアウト",
+  "admin.loggingOut": "ログアウト中...",
 };
 
 const en: Record<string, string> = {
@@ -930,6 +933,9 @@ const en: Record<string, string> = {
   "admin.announcementsNone": "Nothing posted yet",
   "admin.announcementUnread": "Unread",
   "admin.announcementSelectPrompt": "Select an item from the list on the left",
+
+  "admin.logout": "Log out",
+  "admin.loggingOut": "Logging out...",
 };
 
 export const translations: Record<Locale, Record<string, string>> = { ja, en };

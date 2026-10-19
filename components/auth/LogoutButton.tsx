@@ -15,6 +15,11 @@ type Props = {
   // "/?invite=トークン"を渡すことで、ログアウト後も同じ招待URLの
   // ゲスト用ログイン画面に戻れるようにする。
   redirectTo?: string;
+  // ボタン文言の上書き(管理画面など、言語設定が英語表示に対応している
+  // 画面からのみ渡す。マスター画面等、日本語固定のまま使う呼び出し元は
+  // 省略すればよい)。
+  label?: string;
+  loadingLabel?: string;
 };
 
 // 同じアカウントを開いている他のタブ/デバイスにも、このタブでの
@@ -46,7 +51,12 @@ async function notifyOtherTabs(
   supabase.removeChannel(channel);
 }
 
-export default function LogoutButton({ className, redirectTo }: Props) {
+export default function LogoutButton({
+  className,
+  redirectTo,
+  label,
+  loadingLabel,
+}: Props) {
   const [loading, setLoading] = useState(false);
 
   const handleLogout = async () => {
@@ -77,7 +87,7 @@ export default function LogoutButton({ className, redirectTo }: Props) {
         "rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-60"
       }
     >
-      {loading ? "ログアウト中..." : "ログアウト"}
+      {loading ? (loadingLabel ?? "ログアウト中...") : (label ?? "ログアウト")}
     </button>
   );
 }

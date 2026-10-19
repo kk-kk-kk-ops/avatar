@@ -33,7 +33,11 @@ function MaintenanceNotice({ maintenance }: { maintenance: MaintenanceSettings }
         <p className="mb-6 text-sm text-slate-500">
           {translate(locale, "admin.maintenanceBody")}
         </p>
-        <LogoutButton className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700" />
+        <LogoutButton
+          className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+          label={translate(locale, "admin.logout")}
+          loadingLabel={translate(locale, "admin.loggingOut")}
+        />
       </div>
     </div>
   );
