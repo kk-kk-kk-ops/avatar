@@ -122,7 +122,7 @@ export default function BugReportModal({
               <option value="">{t("bugReport.selectPlaceholder")}</option>
               {BUG_REPORT_CATEGORIES.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {t(`bugReportOption.category.${c}`)}
                 </option>
               ))}
             </select>
@@ -138,9 +138,9 @@ export default function BugReportModal({
               className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-slate-500"
             >
               <option value="">{t("bugReport.selectPlaceholder")}</option>
-              {BUG_REPORT_ISSUE_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+              {BUG_REPORT_ISSUE_TYPES.map((it) => (
+                <option key={it} value={it}>
+                  {t(`bugReportOption.issueType.${it}`)}
                 </option>
               ))}
             </select>
@@ -183,7 +183,7 @@ export default function BugReportModal({
               <option value="">{t("bugReport.selectPlaceholder")}</option>
               {BUG_REPORT_REPRODUCIBILITY.map((r) => (
                 <option key={r} value={r}>
-                  {r}
+                  {t(`bugReportOption.reproducibility.${r}`)}
                 </option>
               ))}
             </select>

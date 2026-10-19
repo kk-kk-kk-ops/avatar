@@ -147,7 +147,7 @@ const ja: Record<string, string> = {
   "common.saving": "保存中...",
   "common.yes": "はい",
   "common.no": "いいえ",
-  "common.loading": "読み込み中...",
+  "common.loading": "Loading...",
   "common.edit": "編集",
   "common.delete": "削除",
   "common.copy": "コピー",
@@ -199,7 +199,7 @@ const ja: Record<string, string> = {
   "chat.imageSaving": "保存中...",
   "chat.saveImage": "画像を保存",
 
-  "notifications.loading": "読み込み中...",
+  "notifications.loading": "Loading...",
   "notifications.fetchFailedWithReason": "通知の取得に失敗しました({reason})",
   "notifications.none": "通知はありません",
   "notifications.mentionedByName": "{name}さんからメンションされました",
@@ -321,8 +321,8 @@ const ja: Record<string, string> = {
   "room.sidebarResizeAria": "サイドバーの幅を変更",
   "room.carOnAria": "車を降りる",
   "room.carOffAria": "車に乗る",
-  "room.assetsLoading": "読み込み中…",
-  "room.mapLoading": "読み込み中...",
+  "room.assetsLoading": "Loading…",
+  "room.mapLoading": "Loading...",
   "room.kickedByAdmin": "管理者により退出させられました。まもなく退出します...",
   "room.roomChangedByAdmin": "管理者がルームを変更しました。強制退出されます",
   "room.planChangedByAdmin": "管理者がプランを変更したため、まもなく退出します...",
@@ -354,6 +354,22 @@ const ja: Record<string, string> = {
   "settings.bubbleContentPlaceholder": "吹き出しの内容",
   "settings.charCount": "{count}/{max}文字",
   "common.minutesSeconds": "{minutes}分{seconds}秒",
+
+  "bugReportOption.category.会議(音声・映像)": "会議(音声・映像)",
+  "bugReportOption.category.画面共有": "画面共有",
+  "bugReportOption.category.文字起こし": "文字起こし",
+  "bugReportOption.category.録画・録音": "録画・録音",
+  "bugReportOption.category.ログイン": "ログイン",
+  "bugReportOption.category.その他": "その他",
+  "bugReportOption.issueType.動かない・止まる": "動かない・止まる",
+  "bugReportOption.issueType.音声が途切れる": "音声が途切れる",
+  "bugReportOption.issueType.文字起こしが間違う・抜ける": "文字起こしが間違う・抜ける",
+  "bugReportOption.issueType.表示がおかしい": "表示がおかしい",
+  "bugReportOption.issueType.遅い・重い": "遅い・重い",
+  "bugReportOption.issueType.その他": "その他",
+  "bugReportOption.reproducibility.毎回": "毎回",
+  "bugReportOption.reproducibility.ときどき": "ときどき",
+  "bugReportOption.reproducibility.1回だけ": "1回だけ",
 };
 
 const en: Record<string, string> = {
@@ -698,6 +714,23 @@ const en: Record<string, string> = {
   "settings.bubbleContentPlaceholder": "Speech bubble text",
   "settings.charCount": "{count}/{max} characters",
   "common.minutesSeconds": "{minutes}m {seconds}s",
+
+  "bugReportOption.category.会議(音声・映像)": "Meeting (audio/video)",
+  "bugReportOption.category.画面共有": "Screen sharing",
+  "bugReportOption.category.文字起こし": "Transcription",
+  "bugReportOption.category.録画・録音": "Recording",
+  "bugReportOption.category.ログイン": "Login",
+  "bugReportOption.category.その他": "Other",
+  "bugReportOption.issueType.動かない・止まる": "Not working / frozen",
+  "bugReportOption.issueType.音声が途切れる": "Audio cutting out",
+  "bugReportOption.issueType.文字起こしが間違う・抜ける":
+    "Transcription is wrong or missing text",
+  "bugReportOption.issueType.表示がおかしい": "Display looks wrong",
+  "bugReportOption.issueType.遅い・重い": "Slow / laggy",
+  "bugReportOption.issueType.その他": "Other",
+  "bugReportOption.reproducibility.毎回": "Every time",
+  "bugReportOption.reproducibility.ときどき": "Sometimes",
+  "bugReportOption.reproducibility.1回だけ": "Just once",
 };
 
 export const translations: Record<Locale, Record<string, string>> = { ja, en };
