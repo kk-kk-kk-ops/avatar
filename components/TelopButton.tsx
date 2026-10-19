@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/lib/i18n/LocaleContext";
+
 // 文字起こしテロップ(字幕)の表示/非表示切り替えボタン(2026-10追加)。
 // デザイン・ホバー挙動はMicButton/VideoCallButtonと統一する
 // (2026-10報告: 独自のhover:bg-black/80だと、スマホでタップ後に
@@ -36,21 +38,15 @@ function TelopIcon({ enabled }: { enabled: boolean }) {
 }
 
 export default function TelopButton({ enabled, onClick, disabled }: Props) {
+  const { t } = useLocale();
+  const label = enabled ? t("room.telop.hide") : t("room.telop.show");
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      title={
-        enabled
-          ? "文字起こしテロップを非表示にする"
-          : "文字起こしテロップを表示する"
-      }
-      aria-label={
-        enabled
-          ? "文字起こしテロップを非表示にする"
-          : "文字起こしテロップを表示する"
-      }
+      title={label}
+      aria-label={label}
       className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-black/60 text-white"
       } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}

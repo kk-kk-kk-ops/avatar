@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/lib/i18n/LocaleContext";
+
 type Props = {
   enabled: boolean;
   onClick: () => void;
@@ -39,18 +41,19 @@ export function MicIcon({
 }
 
 export default function MicButton({ enabled, onClick, disabled }: Props) {
+  const { t } = useLocale();
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={
         disabled
-          ? "作業エリア内では利用できません"
+          ? t("room.disabledInWorkArea")
           : enabled
-            ? "マイク: ON(クリックでミュート)"
-            : "マイク: OFF(クリックで解除)"
+            ? t("room.mic.onTitle")
+            : t("room.mic.offTitle")
       }
-      aria-label={enabled ? "マイクをオフにする" : "マイクをオンにする"}
+      aria-label={enabled ? t("room.mic.turnOffAria") : t("room.mic.turnOnAria")}
       className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-slate-700 text-slate-300"
       } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}

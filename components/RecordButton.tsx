@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/lib/i18n/LocaleContext";
+
 // 文字起こし専用ボタン(CaptionButton)を廃止し、画面録画(音声・文字起こし
 // テキストも含めてローカル保存)の開始/停止ボタンに変更した(2026-10)。
 // 会議室の施錠アイコンの真下に設置し、会議室内でのみ表示する。
@@ -50,6 +52,7 @@ export default function RecordButton({
   warning?: boolean;
   warningReason?: string;
 }) {
+  const { t } = useLocale();
   return (
     <div className="relative shrink-0">
       <button
@@ -58,12 +61,14 @@ export default function RecordButton({
         disabled={disabled}
         title={
           disabled
-            ? (disabledReason ?? "現在この操作はできません")
+            ? (disabledReason ?? t("room.record.disabledDefault"))
             : recording
-              ? "録画を停止する"
-              : "画面録画を開始する"
+              ? t("room.record.stopTitle")
+              : t("room.record.startTitle")
         }
-        aria-label={recording ? "録画を停止する" : "画面録画を開始する"}
+        aria-label={
+          recording ? t("room.record.stopTitle") : t("room.record.startTitle")
+        }
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
           recording
             ? "bg-red-600 text-white hover:bg-red-500"
@@ -74,8 +79,8 @@ export default function RecordButton({
       </button>
       {recording && warning && (
         <span
-          title={warningReason ?? "文字起こしが一時的に失敗しています"}
-          aria-label={warningReason ?? "文字起こしが一時的に失敗しています"}
+          title={warningReason ?? t("room.record.transcriptionWarning")}
+          aria-label={warningReason ?? t("room.record.transcriptionWarning")}
           className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-[10px] font-bold leading-none text-black ring-2 ring-slate-900"
         >
           !

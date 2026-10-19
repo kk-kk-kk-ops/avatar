@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/lib/i18n/LocaleContext";
+
 type Props = {
   enabled: boolean;
   onClick: () => void;
@@ -37,18 +39,23 @@ export function AnnouncementIcon({
 }
 
 export default function AnnouncementButton({ enabled, onClick, disabled }: Props) {
+  const { t } = useLocale();
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={
         disabled
-          ? "作業エリア・会議室内では利用できません"
+          ? t("room.announcement.disabled")
           : enabled
-            ? "全体アナウンス: ON(クリックでOFF)"
-            : "全体アナウンス: OFF(クリックでON)"
+            ? t("room.announcement.onTitle")
+            : t("room.announcement.offTitle")
       }
-      aria-label={enabled ? "全体アナウンスをオフにする" : "全体アナウンスをオンにする"}
+      aria-label={
+        enabled
+          ? t("room.announcement.turnOffAria")
+          : t("room.announcement.turnOnAria")
+      }
       className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
         enabled ? "bg-emerald-600 text-white" : "bg-slate-700 text-slate-300"
       } hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40`}

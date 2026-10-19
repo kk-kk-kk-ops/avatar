@@ -1,6 +1,7 @@
 "use client";
 
 import { AVATAR_IMAGES, getAvatarThumbnail } from "@/lib/types";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 type Props = {
   selected: string;
@@ -15,6 +16,7 @@ type Props = {
 const USE_SCROLL_LAYOUT = AVATAR_IMAGES.length > 8;
 
 export default function AvatarPicker({ selected, onSelect }: Props) {
+  const { t } = useLocale();
   return (
     <div
       className={
@@ -40,7 +42,7 @@ export default function AvatarPicker({ selected, onSelect }: Props) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={getAvatarThumbnail(image)}
-            alt="アバター"
+            alt={t("room.avatarAlt")}
             className="h-full w-full object-contain"
           />
         </button>

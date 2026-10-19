@@ -1,5 +1,7 @@
 "use client";
 
+import { useLocale } from "@/lib/i18n/LocaleContext";
+
 type Props = {
   onClick: () => void;
 };
@@ -24,11 +26,12 @@ function ExitIcon() {
 }
 
 export default function LeaveRoomButton({ onClick }: Props) {
+  const { t } = useLocale();
   return (
     <button
       onClick={onClick}
-      title="ルームから退出する"
-      aria-label="ルームから退出する"
+      title={t("room.leave")}
+      aria-label={t("room.leave")}
       className="flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-white transition-colors hover:opacity-80"
     >
       <ExitIcon />
