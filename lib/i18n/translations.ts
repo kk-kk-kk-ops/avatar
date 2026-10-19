@@ -76,6 +76,18 @@ const ja: Record<string, string> = {
   "lang.buttonLabel": "言語/Language",
   "lang.japanese": "Japanese",
   "lang.english": "English",
+
+  "lobby.noRoomYet": "まだルームがありません。管理画面からルームを作成してください。",
+  "lobby.onlineCount": "{count}/{max}名",
+  "lobby.selectAvatarPrompt":
+    "アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)",
+  "lobby.maintenanceNotice": "【メンテナンスのお知らせ】",
+  "lobby.maintenancePeriod": "期間:",
+  "lobby.namePlaceholder": "例:みく",
+  "lobby.maintenanceInProgress": "メンテナンス中",
+  "lobby.checking": "確認中...",
+  "lobby.enterRoom": "入室",
+  "lobby.goToAdmin": "管理画面へ",
 };
 
 const en: Record<string, string> = {
@@ -146,6 +158,18 @@ const en: Record<string, string> = {
   "lang.buttonLabel": "言語/Language",
   "lang.japanese": "Japanese",
   "lang.english": "English",
+
+  "lobby.noRoomYet": "There's no room yet. Please create one from the admin screen.",
+  "lobby.onlineCount": "{count}/{max}",
+  "lobby.selectAvatarPrompt":
+    "Choose an avatar and enter the name to display (leave it blank to join as a guest).",
+  "lobby.maintenanceNotice": "[Maintenance Notice]",
+  "lobby.maintenancePeriod": "Period:",
+  "lobby.namePlaceholder": "e.g. Mike",
+  "lobby.maintenanceInProgress": "Under maintenance",
+  "lobby.checking": "Checking...",
+  "lobby.enterRoom": "Enter",
+  "lobby.goToAdmin": "Go to admin screen",
 };
 
 export const translations: Record<Locale, Record<string, string>> = { ja, en };
