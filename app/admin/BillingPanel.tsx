@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { PLANS, formatPlanDailyLimit, type PlanId } from "@/lib/types";
+import { PLANS, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
 import { createCheckoutSession } from "@/app/billing/checkout/actions";
 import { createPortalSession } from "@/app/billing/portal/actions";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 const PLAN_DISPLAY_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
 
@@ -21,6 +22,20 @@ export default function BillingPanel({
   hasStripeCustomer: boolean;
   hasActiveSubscription: boolean;
 }) {
+  const { t, locale } = useLocale();
+  // 管理画面の英語対応(2026-10)にあたり、lib/types.tsのPLANS.priceLabel/
+  // historyRetentionLabelは他画面(app/plan, app/billing/checkout、master画面)
+  // でも共有されているため直接は変更せず、この画面専用にpriceYen等の
+  // 数値からローカルで文言を組み立てる。
+  const priceLabel = (id: PlanId) =>
+    t("admin.priceLabel", { yen: PLANS[id].priceYen.toLocaleString() });
+  const historyRetentionLabel = (id: PlanId) =>
+    t(`admin.historyRetention.${PLANS[id].historyRetentionLabel}`);
+  const dailyLimitLabel = (minutes: number | null) =>
+    minutes === null
+      ? t("admin.voiceCallUnlimited")
+      : t("admin.dailyLimitPerPerson", { minutes: String(minutes) });
+
   // 契約プランカード・支払い方法ボタンの両方から共有するpending/error状態。
   // "portal"は「支払い方法を管理」ボタン、プランIDはそのプランカードの
   // クリックを表す。
@@ -87,13 +102,15 @@ export default function BillingPanel({
     setDebugError(null);
     setDebugPendingPlan(targetPlan);
     startDebugTransition(async () => {
-      const result = await debugSetPlan(targetPlan);
+      const result = await debugSetPlan(targetPlan, locale);
       setDebugPendingPlan(null);
       if (!result.ok) {
         setDebugError(result.error);
         return;
       }
-      setToastMessage(`プランを「${PLANS[targetPlan].label}」に切り替えました`);
+      setToastMessage(
+        t("admin.planSwitchedToast", { label: PLANS[targetPlan].label }),
+      );
       setTimeout(() => setToastMessage(null), 3000);
     });
   };
@@ -101,7 +118,7 @@ export default function BillingPanel({
   return (
     <div className="space-y-6">
       <div>
-        <p className="mb-1 text-xs font-semibold text-slate-500">契約プラン</p>
+        <p className="mb-1 text-xs font-semibold text-slate-500">{t("admin.contractPlan")}</p>
         {trialEndsAt && (() => {
           const daysRemaining = Math.max(
             0,
@@ -109,9 +126,12 @@ export default function BillingPanel({
           );
           return (
             <p className="mb-3 text-xs text-amber-600">
-              無料トライアル期間:残り{daysRemaining}日
-              ({new Date(trialEndsAt).toLocaleDateString("ja-JP")}まで)。
-              期間終了後は自動的に無料プランに戻ります。
+              {t("admin.trialRemaining", {
+                days: String(daysRemaining),
+                date: new Date(trialEndsAt).toLocaleDateString(
+                  locale === "en" ? "en-US" : "ja-JP",
+                ),
+              })}
             </p>
           );
         })()}
@@ -132,20 +152,20 @@ export default function BillingPanel({
                   </p>
                   {isCurrent && (
                     <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                      現在のプラン
+                      {t("admin.currentPlanBadge")}
                     </span>
                   )}
                 </div>
                 <p className="mb-3 text-lg font-bold text-slate-900">
-                  {info.priceLabel}
+                  {priceLabel(id)}
                 </p>
                 <ul className="mb-4 flex-1 space-y-1 text-[11px] text-slate-600">
-                  <li>同時入室: {info.maxPeoplePerRoom}人</li>
-                  <li>画面共有: {formatPlanDailyLimit(info.screenShareDailyMinutes)}</li>
-                  <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
-                  <li>音声通話: {formatPlanDailyLimit(info.voiceCallDailyMinutes)}</li>
-                  <li>チャット履歴保管期間: {info.historyRetentionLabel}</li>
-                  <li>画面録画・文字起こし: {info.recordingEnabled ? "利用可" : "利用不可"}</li>
+                  <li>{t("admin.simultaneousCapacity", { count: String(info.maxPeoplePerRoom) })}</li>
+                  <li>{t("admin.screenShareLabel")} {dailyLimitLabel(info.screenShareDailyMinutes)}</li>
+                  <li>{t("admin.videoCallLabel")} {dailyLimitLabel(info.videoCallDailyMinutes)}</li>
+                  <li>{t("admin.voiceCallLabel")} {dailyLimitLabel(info.voiceCallDailyMinutes)}</li>
+                  <li>{t("admin.historyRetentionLabel")} {historyRetentionLabel(id)}</li>
+                  <li>{t("admin.recordingLabel")} {info.recordingEnabled ? t("admin.available") : t("admin.unavailable")}</li>
                 </ul>
                 <button
                   onClick={() => handlePlanCardClick(id)}
@@ -161,14 +181,14 @@ export default function BillingPanel({
                   }
                 >
                   {isCurrent
-                    ? "利用中"
+                    ? t("admin.inUse")
                     : billingPending === id
-                      ? "処理中..."
+                      ? t("common.processing")
                       : id === "free"
-                        ? "解約する"
+                        ? t("admin.cancelPlan")
                         : hasActiveSubscription
-                          ? "プランを変更する"
-                          : "このプランで契約する"}
+                          ? t("admin.changePlan")
+                          : t("admin.subscribeThisPlan")}
                 </button>
               </div>
             );
@@ -187,35 +207,32 @@ export default function BillingPanel({
           disabled={billingPending !== null}
           className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
         >
-          {billingPending === "payment_method" ? "処理中..." : "支払い情報変更"}
+          {billingPending === "payment_method" ? t("common.processing") : t("admin.paymentMethodChange")}
         </button>
       </div>
 
       <div>
-        <p className="mb-1 text-xs font-semibold text-slate-500">請求履歴</p>
+        <p className="mb-1 text-xs font-semibold text-slate-500">{t("admin.billingHistory")}</p>
         {hasStripeCustomer ? (
           <button
             onClick={handlePortalClick}
             disabled={billingPending !== null}
             className="text-xs font-semibold text-slate-700 underline hover:text-slate-900 disabled:opacity-50"
           >
-            お支払い方法・請求履歴の確認はこちらから
+            {t("admin.billingHistoryLink")}
           </button>
         ) : (
-          <p className="text-xs text-slate-400">請求履歴はまだありません。</p>
+          <p className="text-xs text-slate-400">{t("admin.billingHistoryNone")}</p>
         )}
       </div>
 
       {isDebugPlanSwitcherAllowed && (
         <div className="rounded-xl border border-dashed border-amber-400 bg-amber-50 p-4">
           <p className="mb-1 text-xs font-semibold text-amber-700">
-            🛠️ デバッグ用プラン切り替え(このアカウントのみ表示)
+            {t("admin.debugSwitcherTitle")}
           </p>
           <p className="mb-3 text-[11px] text-amber-700">
-            ボタンを押すと即座にこのアカウントの契約プランが切り替わります
-            (人数上限・画面共有/ビデオ通話の日次制限に即反映され、この
-            アカウントのルームに入室中の全員が強制的に退出します)。
-            動作確認用の機能です。
+            {t("admin.debugSwitcherBody")}
           </p>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -235,20 +252,20 @@ export default function BillingPanel({
                     </p>
                     {isCurrent && (
                       <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                        現在のプラン
+                        {t("admin.currentPlanBadge")}
                       </span>
                     )}
                   </div>
                   <p className="mb-3 text-lg font-bold text-slate-900">
-                    {info.priceLabel}
+                    {priceLabel(id)}
                   </p>
                   <ul className="mb-4 flex-1 space-y-1 text-[11px] text-slate-600">
-                    <li>同時入室: {info.maxPeoplePerRoom}人</li>
-                    <li>画面共有: {formatPlanDailyLimit(info.screenShareDailyMinutes)}</li>
-                    <li>ビデオ通話: {formatPlanDailyLimit(info.videoCallDailyMinutes)}</li>
-                    <li>音声通話: 無制限</li>
-                    <li>チャット履歴保管期間: {info.historyRetentionLabel}</li>
-                    <li>画面録画・文字起こし: {info.recordingEnabled ? "利用可" : "利用不可"}</li>
+                    <li>{t("admin.simultaneousCapacity", { count: String(info.maxPeoplePerRoom) })}</li>
+                    <li>{t("admin.screenShareLabel")} {dailyLimitLabel(info.screenShareDailyMinutes)}</li>
+                    <li>{t("admin.videoCallLabel")} {dailyLimitLabel(info.videoCallDailyMinutes)}</li>
+                    <li>{t("admin.voiceCallLabel")} {t("admin.voiceCallUnlimited")}</li>
+                    <li>{t("admin.historyRetentionLabel")} {historyRetentionLabel(id)}</li>
+                    <li>{t("admin.recordingLabel")} {info.recordingEnabled ? t("admin.available") : t("admin.unavailable")}</li>
                   </ul>
                   <button
                     onClick={() => handleDebugSwitch(id)}
@@ -256,10 +273,10 @@ export default function BillingPanel({
                     className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
                   >
                     {debugPendingPlan === id
-                      ? "切り替え中..."
+                      ? t("admin.debugSwitching")
                       : isCurrent
-                        ? "適用中"
-                        : "このプランに切り替える"}
+                        ? t("admin.currentlyApplied")
+                        : t("admin.debugSwitchTo")}
                   </button>
                 </div>
               );

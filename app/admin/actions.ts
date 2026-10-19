@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { broadcastForceLeaveForAccount } from "@/lib/broadcastForceLeave";
 import { PLANS, type PlanId } from "@/lib/types";
+import { translate, type Locale } from "@/lib/i18n/translations";
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
 // 差し替えられてしまう(Next.jsの仕様)ため、debugSetPlanだけは
@@ -177,6 +178,7 @@ export async function kickParticipant(
   roomId: string,
   participantId: string,
   participantUserId: string | null,
+  locale: Locale = "ja",
 ): Promise<ActionResult> {
   const { supabase, account, user } = await requireAdminAccount();
 
@@ -188,7 +190,7 @@ export async function kickParticipant(
     .eq("id", roomId)
     .eq("account_id", account.id)
     .maybeSingle();
-  if (!room) return { ok: false, error: "ルームが見つかりません" };
+  if (!room) return { ok: false, error: translate(locale, "admin.roomNotFound") };
 
   // 管理者自身(オーナー)を誤ってBANし、自分自身のルームに入れなくなる
   // 事故を防ぐ(誰も解除できなくなってしまうため)。
@@ -217,22 +219,24 @@ export async function kickParticipant(
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("強制退出の送信に失敗しました", err);
-    return { ok: false, error: "退出処理に失敗しました" };
+    return { ok: false, error: translate(locale, "admin.forceLeaveFailed") };
   }
 
   revalidatePath("/admin");
   if (banFailed) {
     return {
       ok: true,
-      warning:
-        "退出させましたが、再入室防止(BAN)の登録に失敗しました。データベースの設定を確認してください。",
+      warning: translate(locale, "admin.banFailedWarning"),
     };
   }
   return { ok: true };
 }
 
 // BANリストから外し、再入室できるようにする。
-export async function unbanParticipant(userId: string): Promise<ActionResult> {
+export async function unbanParticipant(
+  userId: string,
+  locale: Locale = "ja",
+): Promise<ActionResult> {
   const { supabase, account } = await requireAdminAccount();
 
   const { error } = await supabase
@@ -240,7 +244,7 @@ export async function unbanParticipant(userId: string): Promise<ActionResult> {
     .delete()
     .eq("account_id", account.id)
     .eq("user_id", userId);
-  if (error) return { ok: false, error: "解除に失敗しました" };
+  if (error) return { ok: false, error: translate(locale, "admin.unbanFailed") };
 
   revalidatePath("/admin");
   return { ok: true };
@@ -252,23 +256,26 @@ export async function unbanParticipant(userId: string): Promise<ActionResult> {
 // (app/admin/page.tsxのisDebugPlanSwitcherAllowed)とは別に、ここでも
 // 必ずメールアドレスを再検証する(Server Actionは表示上のUIに関わらず
 // 直接呼び出せるため)。
-export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
+export async function debugSetPlan(
+  planId: PlanId,
+  locale: Locale = "ja",
+): Promise<ActionResult> {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "ログインが必要です" };
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
 
   const allowedEmails = (process.env.DEBUG_PLAN_SWITCH_EMAIL ?? "")
     .split(",")
     .map((e) => e.trim())
     .filter(Boolean);
   if (!user.email || !allowedEmails.includes(user.email)) {
-    return { ok: false, error: "この機能を利用する権限がありません" };
+    return { ok: false, error: translate(locale, "admin.permissionDenied") };
   }
 
   if (!DEBUG_SWITCHABLE_PLANS.includes(planId)) {
-    return { ok: false, error: "不正なプランです" };
+    return { ok: false, error: translate(locale, "admin.invalidPlan") };
   }
 
   const { data: account } = await supabase
@@ -276,7 +283,7 @@ export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
     .select("id")
     .eq("owner_user_id", user.id)
     .maybeSingle();
-  if (!account) return { ok: false, error: "アカウントが見つかりません" };
+  if (!account) return { ok: false, error: translate(locale, "admin.accountNotFound") };
 
   // planは本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
   // 対象列のため、service_roleクライアントで更新する(直前にDEBUG_PLAN_SWITCH_EMAIL
@@ -286,7 +293,7 @@ export async function debugSetPlan(planId: PlanId): Promise<ActionResult> {
     .from("accounts")
     .update({ plan: planId })
     .eq("id", account.id);
-  if (error) return { ok: false, error: "プランの更新に失敗しました" };
+  if (error) return { ok: false, error: translate(locale, "admin.planUpdateFailed") };
 
   await broadcastForceLeaveForAccount(supabase, account.id);
 

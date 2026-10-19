@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { regenerateInviteToken, updateInviteInviterName } from "./actions";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 export default function InvitePanel({
   inviteToken,
@@ -10,6 +11,7 @@ export default function InvitePanel({
   inviteToken: string;
   inviterName: string;
 }) {
+  const { t } = useLocale();
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
   const [savingName, startNameTransition] = useTransition();
@@ -28,23 +30,18 @@ export default function InvitePanel({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      setError("コピーに失敗しました。手動で選択してコピーしてください。");
+      setError(t("admin.copyFailed"));
     }
   };
 
   const handleRegenerate = () => {
-    if (
-      !window.confirm(
-        "招待URLを再発行します。今のURLは無効になりますが、よろしいですか?",
-      )
-    )
-      return;
+    if (!window.confirm(t("admin.regenerateConfirm"))) return;
     setError(null);
     startTransition(async () => {
       try {
         await regenerateInviteToken();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "再発行に失敗しました");
+        setError(e instanceof Error ? e.message : t("admin.regenerateFailed"));
       }
     });
   };
@@ -58,7 +55,9 @@ export default function InvitePanel({
         setNameSaved(true);
         setTimeout(() => setNameSaved(false), 2000);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "招待者名の更新に失敗しました");
+        setError(
+          e instanceof Error ? e.message : t("admin.inviterNameUpdateFailed"),
+        );
       }
     });
   };
@@ -66,13 +65,13 @@ export default function InvitePanel({
   return (
     <div>
       <p className="mb-1 text-xs font-semibold text-slate-500">
-        招待者名(招待URLからのログイン画面に「〇〇〇さんからの招待」と表示されます)
+        {t("admin.inviterNameHint")}
       </p>
       <div className="mb-3 flex gap-2">
         <input
           value={nameInput}
           onChange={(e) => setNameInput(e.target.value)}
-          placeholder="例: 山田太郎"
+          placeholder={t("admin.inviterNamePlaceholder")}
           className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
         />
         <button
@@ -80,11 +79,11 @@ export default function InvitePanel({
           disabled={savingName}
           className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
         >
-          {savingName ? "保存中..." : nameSaved ? "保存しました" : "保存"}
+          {savingName ? t("admin.saving") : nameSaved ? t("admin.saved") : t("admin.save")}
         </button>
       </div>
 
-      <p className="mb-2 mt-4 text-xs font-semibold text-slate-500">招待URL</p>
+      <p className="mb-2 mt-4 text-xs font-semibold text-slate-500">{t("admin.inviteUrl")}</p>
       <div className="mb-3 flex gap-2">
         <input
           readOnly
@@ -95,7 +94,7 @@ export default function InvitePanel({
           onClick={handleCopy}
           className="shrink-0 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
         >
-          {copied ? "コピーしました" : "コピー"}
+          {copied ? t("admin.copied") : t("admin.copy")}
         </button>
       </div>
 
@@ -110,9 +109,9 @@ export default function InvitePanel({
         disabled={pending}
         className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
       >
-        URLを再発行
+        {t("admin.regenerateUrl")}
       </button>
-      <p className="mt-1 text-xs text-red-600">※古いURLは無効になります</p>
+      <p className="mt-1 text-xs text-red-600">{t("admin.regenerateNote")}</p>
     </div>
   );
 }

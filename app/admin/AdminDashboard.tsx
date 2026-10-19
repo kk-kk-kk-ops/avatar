@@ -5,6 +5,8 @@ import Link from "next/link";
 import type { Announcement, PlanId, Room } from "@/lib/types";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import LogoutButton from "@/components/auth/LogoutButton";
+import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 import OnlineCount from "./OnlineCount";
 import RoomManager from "./RoomManager";
 import InvitePanel from "./InvitePanel";
@@ -13,14 +15,6 @@ import AnnouncementsView from "./AnnouncementsView";
 import { markAnnouncementRead } from "./actions";
 
 type Tab = "dashboard" | "rooms" | "invite" | "announcements" | "billing";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "dashboard", label: "ダッシュボード" },
-  { id: "rooms", label: "ルーム" },
-  { id: "invite", label: "招待" },
-  { id: "announcements", label: "お知らせ" },
-  { id: "billing", label: "契約情報" },
-];
 
 type TemplateOption = { id: string; name: string; backgroundImageUrl: string };
 type BannedParticipant = {
@@ -60,6 +54,14 @@ export default function AdminDashboard({
   hasActiveSubscription: boolean;
   announcements: (Announcement & { unread: boolean })[];
 }) {
+  const { t, locale } = useLocale();
+  const TABS: { id: Tab; label: string }[] = [
+    { id: "dashboard", label: t("admin.tab.dashboard") },
+    { id: "rooms", label: t("admin.tab.rooms") },
+    { id: "invite", label: t("admin.tab.invite") },
+    { id: "announcements", label: t("admin.tab.announcements") },
+    { id: "billing", label: t("admin.tab.billing") },
+  ];
   const [tab, setTab] = useState<Tab>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // 項目単位の既読管理(サーバーから受け取った初期状態をローカルで保持し、
@@ -103,7 +105,7 @@ export default function AdminDashboard({
         </div>
         <button
           onClick={() => setSidebarOpen(true)}
-          aria-label="メニューを開く"
+          aria-label={t("admin.openMenuAria")}
           className="shrink-0 rounded-lg border border-slate-700 px-3 py-1.5 text-base text-slate-200"
         >
           ☰
@@ -135,7 +137,7 @@ export default function AdminDashboard({
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
-            aria-label="メニューを閉じる"
+            aria-label={t("admin.closeMenuAria")}
             className="shrink-0 text-lg text-slate-400 md:hidden"
           >
             ×
@@ -143,20 +145,20 @@ export default function AdminDashboard({
         </div>
 
         <nav className="flex-1 space-y-1 p-3">
-          {TABS.map((t) => (
+          {TABS.map((tabItem) => (
             <button
-              key={t.id}
-              onClick={() => selectTab(t.id)}
+              key={tabItem.id}
+              onClick={() => selectTab(tabItem.id)}
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${
-                tab === t.id
+                tab === tabItem.id
                   ? "bg-red-600 text-white"
                   : "text-slate-300 hover:bg-slate-800"
               }`}
             >
-              <span>{t.label}</span>
-              {t.id === "announcements" && hasUnreadAnnouncements && (
+              <span>{tabItem.label}</span>
+              {tabItem.id === "announcements" && hasUnreadAnnouncements && (
                 <span
-                  aria-label="未読のお知らせがあります"
+                  aria-label={t("admin.unreadAnnouncementsAria")}
                   className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold leading-none text-white"
                 >
                   !
@@ -167,12 +169,15 @@ export default function AdminDashboard({
         </nav>
 
         <div className="space-y-2 border-t border-slate-800 p-3">
+          <div className="flex justify-center">
+            <LanguageSwitcher variant="dark" />
+          </div>
           {showMasterLink && (
             <Link
               href="/master"
               className="block w-full rounded-lg border border-emerald-500/60 px-3 py-2 text-center text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10"
             >
-              マスター画面へ
+              {t("room.goToMasterPanel")}
             </Link>
           )}
           <Link
@@ -183,7 +188,7 @@ export default function AdminDashboard({
             href={`/?invite=${inviteToken}`}
             className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
           >
-            ルームへ
+            {t("admin.goToRoom")}
           </Link>
           <LogoutButton className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800" />
         </div>
@@ -192,9 +197,11 @@ export default function AdminDashboard({
       <main className="min-w-0 flex-1 overflow-y-auto bg-slate-50 p-6 pt-20 md:pt-6">
         {trialEndsAt && (
           <div className="mx-auto mb-4 max-w-3xl rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-            無料トライアル期間中です(
-            {new Date(trialEndsAt).toLocaleDateString("ja-JP")}まで)。
-            期間終了後は自動的に無料プランに戻ります。
+            {t("admin.trialBanner", {
+              date: new Date(trialEndsAt).toLocaleDateString(
+                locale === "en" ? "en-US" : "ja-JP",
+              ),
+            })}
           </div>
         )}
         {/* 2026-09報告: 各タブの表示エリアの横幅をルームタブと同じ

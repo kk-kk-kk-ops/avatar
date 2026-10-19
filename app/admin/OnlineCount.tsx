@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { PRESENCE_STATUS_COLORS, type PlayerState, type Room } from "@/lib/types";
 import { kickParticipant, unbanParticipant } from "./actions";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 type BannedParticipant = {
   userId: string;
@@ -22,6 +23,7 @@ export default function OnlineCount({
   rooms: Room[];
   bannedParticipants: BannedParticipant[];
 }) {
+  const { t, locale } = useLocale();
   const [entriesByRoom, setEntriesByRoom] = useState<
     Record<string, PlayerState[]>
   >({});
@@ -73,13 +75,18 @@ export default function OnlineCount({
   const handleKick = async (roomId: string, player: PlayerState) => {
     if (
       !window.confirm(
-        `${player.name}さんを強制退出させ、管理者が解除するまで再入室できないようにします。よろしいですか?`,
+        t("admin.forceLeaveConfirm", { name: player.name }),
       )
     )
       return;
     setKickError(null);
     setKickingId(player.id);
-    const result = await kickParticipant(roomId, player.id, player.userId ?? null);
+    const result = await kickParticipant(
+      roomId,
+      player.id,
+      player.userId ?? null,
+      locale,
+    );
     setKickingId(null);
     if (!result.ok) setKickError(result.error);
     else if (result.warning) setKickError(result.warning);
@@ -88,16 +95,16 @@ export default function OnlineCount({
   const handleUnban = async (participant: BannedParticipant) => {
     setUnbanError(null);
     setUnbanningUserId(participant.userId);
-    const result = await unbanParticipant(participant.userId);
+    const result = await unbanParticipant(participant.userId, locale);
     setUnbanningUserId(null);
     if (!result.ok) setUnbanError(result.error);
   };
 
   return (
     <div className="rounded-xl border border-slate-200 p-6">
-      <p className="text-xs font-semibold text-slate-500">オンライン人数</p>
+      <p className="text-xs font-semibold text-slate-500">{t("admin.onlineCount")}</p>
       <p className="mt-1 text-3xl font-bold text-slate-800">
-        {participants.length}人
+        {t("admin.peopleCount", { count: String(participants.length) })}
       </p>
       {kickError && (
         <p className="mt-2 text-xs text-red-600">{kickError}</p>
@@ -120,7 +127,7 @@ export default function OnlineCount({
                 disabled={kickingId === player.id}
                 className="shrink-0 rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {kickingId === player.id ? "処理中..." : "強制退出"}
+                {kickingId === player.id ? t("common.processing") : t("admin.forceLeave")}
               </button>
             </li>
           ))}
@@ -130,7 +137,7 @@ export default function OnlineCount({
       {bannedParticipants.length > 0 && (
         <div className="mt-6 border-t border-slate-100 pt-4">
           <p className="text-xs font-semibold text-slate-500">
-            強制退出させた参加者(再入室不可)
+            {t("admin.bannedParticipants")}
           </p>
           {unbanError && (
             <p className="mt-2 text-xs text-red-600">{unbanError}</p>
@@ -139,7 +146,7 @@ export default function OnlineCount({
             {bannedParticipants.map((participant) => (
               <li key={participant.userId} className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate">
-                  {participant.displayName ?? "(名前未設定)"}
+                  {participant.displayName ?? t("admin.unnamed")}
                 </span>
                 <button
                   type="button"
@@ -148,8 +155,8 @@ export default function OnlineCount({
                   className="shrink-0 rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {unbanningUserId === participant.userId
-                    ? "処理中..."
-                    : "解除"}
+                    ? t("common.processing")
+                    : t("admin.unban")}
                 </button>
               </li>
             ))}

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import type { Room } from "@/lib/types";
 import { addRoom, updateRoomTemplate } from "./actions";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 type RoomDesignOption = {
   id: string;
@@ -21,6 +22,7 @@ export default function RoomManager({
   maxRooms: number;
   templates: RoomDesignOption[];
 }) {
+  const { t } = useLocale();
   const [pending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
     null,
@@ -56,7 +58,7 @@ export default function RoomManager({
         setTimeout(() => setApplied(false), 2000);
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : "ルームデザインの適用に失敗しました",
+          e instanceof Error ? e.message : t("admin.roomApplyFailed"),
         );
       } finally {
         setPendingAction(null);
@@ -67,7 +69,7 @@ export default function RoomManager({
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <p className="text-xs text-slate-500">現在適用中ルーム</p>
+        <p className="text-xs text-slate-500">{t("admin.currentRoom")}</p>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -99,42 +101,42 @@ export default function RoomManager({
 
       <div>
         <p className="mb-2 text-xs font-semibold text-slate-500">
-          ルームデザイン
+          {t("admin.roomDesign")}
         </p>
 
         {templates.length === 0 ? (
           <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            利用できるルームデザインがまだありません。マスター画面で作成してください。
+            {t("admin.noRoomDesigns")}
           </p>
         ) : (
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {templates.map((t) => {
+            {templates.map((template) => {
               // 現在ルームに適用されているデザインかどうか(選択中かとは
               // 別の概念)。適用中のものはボタンを押しても意味がないため
               // グレーアウトして押せないようにする。
               const isApplying = pendingAction?.type === "apply";
               const isCurrentlyApplied =
-                existingRoom?.templateId === t.id && !isApplying && !applied;
+                existingRoom?.templateId === template.id && !isApplying && !applied;
 
               return (
                 <div
-                  key={t.id}
+                  key={template.id}
                   className={`relative overflow-hidden rounded-lg border-2 bg-slate-100 transition-colors ${
-                    selectedDesignId === t.id
+                    selectedDesignId === template.id
                       ? "border-emerald-500"
                       : "border-transparent hover:border-slate-300"
                   }`}
                 >
                   <button
                     type="button"
-                    onClick={() => setSelectedDesignId(t.id)}
+                    onClick={() => setSelectedDesignId(template.id)}
                     disabled={pending}
                     className="block w-full text-left disabled:opacity-60"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={t.backgroundImageUrl}
-                      alt={t.name}
+                      src={template.backgroundImageUrl}
+                      alt={template.name}
                       className="aspect-video w-full object-cover"
                     />
                   </button>
@@ -144,15 +146,15 @@ export default function RoomManager({
                   <div className="flex items-center justify-between gap-2 px-2 py-2.5">
                     <button
                       type="button"
-                      onClick={() => setSelectedDesignId(t.id)}
+                      onClick={() => setSelectedDesignId(template.id)}
                       disabled={pending}
                       className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-slate-700 disabled:opacity-60"
                     >
-                      {t.name}
+                      {template.name}
                     </button>
                     {/* このカードを選んでいる間だけ表示する。他のカードを
                         選ぶとselectedDesignIdが変わるので自動的に隠れる。 */}
-                    {selectedDesignId === t.id && (
+                    {selectedDesignId === template.id && (
                       <button
                         type="button"
                         onClick={handleApply}
@@ -169,15 +171,15 @@ export default function RoomManager({
                       >
                         {isApplying
                           ? existingRoom
-                            ? "適用中..."
-                            : "作成中..."
+                            ? t("admin.applying")
+                            : t("admin.creating")
                           : applied
-                            ? "適用しました"
+                            ? t("admin.applied")
                             : isCurrentlyApplied
-                              ? "適用中"
+                              ? t("admin.currentlyApplied")
                               : existingRoom
-                                ? "適用"
-                                : "作成"}
+                                ? t("admin.apply")
+                                : t("admin.create")}
                       </button>
                     )}
                   </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Announcement } from "@/lib/types";
+import { useLocale } from "@/lib/i18n/LocaleContext";
 
 // マスター画面「お知らせ」タブ(app/master/AnnouncementsPanel.tsx)で
 // マスターが入力した内容を、管理者(role='admin')側では閲覧専用で表示する。
@@ -43,6 +44,7 @@ export default function AnnouncementsView({
   announcements: (Announcement & { unread: boolean })[];
   onReadAnnouncement: (id: string) => void;
 }) {
+  const { t } = useLocale();
   const entries: Entry[] = announcements.map((a) => ({
     id: a.id,
     primary: a.title,
@@ -83,7 +85,7 @@ export default function AnnouncementsView({
       <div className="h-[90vh] w-full shrink-0 space-y-2 overflow-y-auto sm:w-56">
         {entries.length === 0 ? (
           <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-400">
-            まだ登録されていません
+            {t("admin.announcementsNone")}
           </p>
         ) : (
           entries.map((entry) => (
@@ -105,7 +107,7 @@ export default function AnnouncementsView({
                   {formatDate(entry.date)}
                 </span>
               </span>
-              {entry.unread && <UnreadBadge label="未読" />}
+              {entry.unread && <UnreadBadge label={t("admin.announcementUnread")} />}
             </button>
           ))
         )}
@@ -117,7 +119,7 @@ export default function AnnouncementsView({
             {selected.body}
           </p>
         ) : (
-          <p className="text-xs text-slate-400">左の一覧から選択してください</p>
+          <p className="text-xs text-slate-400">{t("admin.announcementSelectPrompt")}</p>
         )}
       </div>
     </div>
