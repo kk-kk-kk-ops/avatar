@@ -94,6 +94,7 @@ end $$;
 create or replace function public.prevent_privileged_column_self_write()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   if auth.role() = 'service_role'
@@ -263,6 +264,7 @@ as $$
   );
 $$;
 
+revoke all on function public.is_master(uuid) from public;
 grant execute on function public.is_master(uuid) to authenticated;
 
 -- profiles: マスターは全員のプロフィールを閲覧できる(本人の行だけの
@@ -536,6 +538,7 @@ as $$
   order by r.created_at asc;
 $$;
 
+revoke all on function public.list_rooms_by_invite_token(text) from public;
 grant execute on function public.list_rooms_by_invite_token(text) to authenticated;
 
 
@@ -635,6 +638,7 @@ begin
 end;
 $$;
 
+revoke all on function public.increment_screen_watch_seconds(integer) from public;
 grant execute on function public.increment_screen_watch_seconds(integer) to authenticated;
 
 
@@ -765,6 +769,7 @@ begin
 end;
 $$;
 
+revoke all on function public.increment_daily_usage_seconds(text, integer) from public;
 grant execute on function public.increment_daily_usage_seconds(text, integer) to authenticated;
 
 -- 画面共有・ビデオ通話を開始する前に、今日すでに使った秒数を取得するための
@@ -792,6 +797,7 @@ begin
 end;
 $$;
 
+revoke all on function public.get_daily_usage_used_seconds(text) from public;
 grant execute on function public.get_daily_usage_used_seconds(text) to authenticated;
 
 -- 画像アップロード1日30枚(全プラン共通)の上限管理用。上記の秒数系関数と
@@ -845,6 +851,7 @@ begin
 end;
 $$;
 
+revoke all on function public.increment_daily_image_upload_count(integer) from public;
 grant execute on function public.increment_daily_image_upload_count(integer) to authenticated;
 
 drop function if exists public.get_daily_image_upload_count();
@@ -870,6 +877,7 @@ begin
 end;
 $$;
 
+revoke all on function public.get_daily_image_upload_count() from public;
 grant execute on function public.get_daily_image_upload_count() to authenticated;
 
 
@@ -1040,6 +1048,11 @@ begin
 end;
 $$;
 
+-- トリガー経由でのみ呼ばれる想定だが、既定ではPUBLIC(anon含む)にも
+-- EXECUTE権限が付いてしまうため念のため明示的に外す(Security Advisor
+-- 指摘対応、2026-10)。
+revoke all on function public.force_chat_message_sender_name() from public;
+
 drop trigger if exists chat_messages_force_sender_name on public.chat_messages;
 create trigger chat_messages_force_sender_name
   before insert on public.chat_messages
@@ -1096,6 +1109,7 @@ as $$
   limit 50;
 $$;
 
+revoke all on function public.list_chat_messages_by_invite_token(text, uuid, uuid) from public;
 grant execute on function public.list_chat_messages_by_invite_token(text, uuid, uuid) to authenticated;
 
 -- 引数を追加(p_image_path)して関数シグネチャが変わったため、
@@ -1157,6 +1171,7 @@ begin
 end;
 $$;
 
+revoke all on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text) from public;
 grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text) to authenticated;
 
 -- viewOnly向けのメッセージ編集。通常ルートは上のRLS
@@ -1207,6 +1222,7 @@ begin
 end;
 $$;
 
+revoke all on function public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz) from public;
 grant execute on function public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz) to authenticated;
 
 -- viewOnly向けのメッセージ削除(論理削除)。上のedit関数と同じ考え方。
@@ -1247,6 +1263,7 @@ begin
 end;
 $$;
 
+revoke all on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) from public;
 grant execute on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) to authenticated;
 
 -- 9f-3. チャット履歴の削除ポリシー。
@@ -1602,6 +1619,7 @@ begin
 end;
 $$;
 
+revoke all on function public.create_chat_group(uuid, uuid[]) from public;
 grant execute on function public.create_chat_group(uuid, uuid[]) to authenticated;
 
 -- 2026-08-30追加: viewOnly(既に自分のアカウントを持つ人が他人の招待URLを
@@ -1678,6 +1696,7 @@ begin
 end;
 $$;
 
+revoke all on function public.create_chat_group_by_invite_token(text, uuid, uuid[]) from public;
 grant execute on function public.create_chat_group_by_invite_token(text, uuid, uuid[]) to authenticated;
 
 -- スレッドを開いた際に既読位置を更新する(グループ)。
@@ -1722,6 +1741,7 @@ begin
 end;
 $$;
 
+revoke all on function public.rename_chat_group(uuid, text) from public;
 grant execute on function public.rename_chat_group(uuid, text) to authenticated;
 
 -- グループの削除(メッセージ・メンバー・既読情報もon delete cascadeで
@@ -1746,6 +1766,7 @@ begin
 end;
 $$;
 
+revoke all on function public.delete_chat_group(uuid) from public;
 grant execute on function public.delete_chat_group(uuid) to authenticated;
 
 -- グループチャットからの退出(2026-08-30追加、2026-08-31に空グループの
@@ -2204,6 +2225,7 @@ begin
 end;
 $$;
 
+revoke all on function public.list_chat_group_member_names(uuid) from public;
 grant execute on function public.list_chat_group_member_names(uuid) to authenticated;
 
 -- メンション行の作成。p_mention_everyoneがtrueの場合はp_mentioned_user_ids
@@ -2260,6 +2282,7 @@ begin
 end;
 $$;
 
+revoke all on function public.create_chat_mentions(uuid, uuid, text, boolean, uuid[]) from public;
 grant execute on function public.create_chat_mentions(uuid, uuid, text, boolean, uuid[]) to authenticated;
 
 -- 個人チャット(DM)のメンション行の作成(2026-09-29追加)。DMは相手が
@@ -2300,6 +2323,7 @@ begin
 end;
 $$;
 
+revoke all on function public.create_dm_mention(uuid, text) from public;
 grant execute on function public.create_dm_mention(uuid, text) to authenticated;
 
 -- viewOnly(招待URL経由の一時ゲスト)向け。send_chat_message_by_invite_token
@@ -2343,6 +2367,7 @@ begin
 end;
 $$;
 
+revoke all on function public.create_dm_mention_by_invite_token(text, uuid, text) from public;
 grant execute on function public.create_dm_mention_by_invite_token(text, uuid, text) to authenticated;
 
 -- 通知一覧の「〇〇さんからメンションされました」の表示名を、送信時点の
@@ -2371,6 +2396,7 @@ as $$
     );
 $$;
 
+revoke all on function public.list_mentioner_names(uuid[]) from public;
 grant execute on function public.list_mentioner_names(uuid[]) to authenticated;
 
 
@@ -2537,6 +2563,7 @@ begin
 end;
 $$;
 
+revoke all on function public.set_chat_message_reaction_by_invite_token(text, uuid, text) from public;
 grant execute on function public.set_chat_message_reaction_by_invite_token(text, uuid, text) to authenticated;
 
 drop function if exists public.remove_chat_message_reaction_by_invite_token(text, uuid);
@@ -2567,6 +2594,7 @@ begin
 end;
 $$;
 
+revoke all on function public.remove_chat_message_reaction_by_invite_token(text, uuid) from public;
 grant execute on function public.remove_chat_message_reaction_by_invite_token(text, uuid) to authenticated;
 
 -- viewOnly向けのリアクション一覧取得。1対1DMのメッセージ一覧
@@ -2598,6 +2626,7 @@ begin
 end;
 $$;
 
+revoke all on function public.list_chat_message_reactions_by_invite_token(text, uuid[]) from public;
 grant execute on function public.list_chat_message_reactions_by_invite_token(text, uuid[]) to authenticated;
 
 
@@ -2647,6 +2676,7 @@ as $$
   where last_seen_at > now() - interval '90 seconds';
 $$;
 
+revoke all on function public.get_online_session_count() from public;
 grant execute on function public.get_online_session_count() to authenticated;
 
 -- 多重ログイン検知(2026-09追加。手順9)。バーチャル空間・管理画面・
@@ -2690,6 +2720,7 @@ begin
 end;
 $$;
 
+revoke all on function public.claim_session(text) from public;
 grant execute on function public.claim_session(text) to authenticated;
 
 -- 契約(アカウント)作成時に、どの物理LiveKitサーバーへ割り当てるかを
@@ -2712,6 +2743,7 @@ as $$
   group by livekit_server_id;
 $$;
 
+revoke all on function public.count_accounts_by_livekit_server() from public;
 grant execute on function public.count_accounts_by_livekit_server() to authenticated;
 
 
@@ -2954,6 +2986,7 @@ begin
 end;
 $$;
 
+revoke all on function public.list_banned_participants(uuid) from public;
 grant execute on function public.list_banned_participants(uuid) to authenticated;
 
 
