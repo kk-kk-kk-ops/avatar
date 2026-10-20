@@ -75,6 +75,7 @@ export async function loginWithPassword(
   email: string,
   password: string,
   locale: Locale = "ja",
+  captchaToken?: string,
 ): Promise<LoginResult> {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail || !password) {
@@ -99,6 +100,7 @@ export async function loginWithPassword(
   const { error } = await supabase.auth.signInWithPassword({
     email: normalizedEmail,
     password,
+    options: captchaToken ? { captchaToken } : undefined,
   });
 
   if (error) {
