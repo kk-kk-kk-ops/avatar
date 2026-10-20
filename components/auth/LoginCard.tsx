@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { loginWithPassword } from "./actions";
 import GoogleLoginButton from "./GoogleLoginButton";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { useLocale } from "@/lib/i18n/LocaleContext";
+import TurnstileWidget, {
+  type TurnstileWidgetHandle,
+} from "@/components/TurnstileWidget";
 
 type Props = {
   inviteToken: string | null;
@@ -49,6 +52,17 @@ export default function LoginCard({
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Cloudflare Turnstile(ボット判定)。ログイン・新規登録・パスワード
+  // 再設定(および確認コードの再送信)の各送信時にトークンを一緒に送る。
+  // トークンは1回使うと失効するため、送信のたびにウィジェットをリセットし
+  // 次の送信に備える(resetCaptcha参照)。
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null);
+  const resetCaptcha = () => {
+    turnstileRef.current?.reset();
+    setTurnstileToken(null);
+  };
+
   const resetFormState = (nextMode: Mode) => {
     setMode(nextMode);
     setFormError(null);
@@ -69,7 +83,13 @@ export default function LoginCard({
       // ログイン失敗回数によるロック(components/auth/actions.ts)を
       // 効かせるため、ブラウザから直接signInWithPasswordを呼ばず
       // Server Action経由にする。
-      const result = await loginWithPassword(email.trim(), password, locale);
+      const result = await loginWithPassword(
+        email.trim(),
+        password,
+        locale,
+        turnstileToken ?? undefined,
+      );
+      resetCaptcha();
       if (!result.ok) {
         setFormError(result.error);
         setSubmitting(false);
@@ -80,6 +100,7 @@ export default function LoginCard({
       // (サーバーコンポーネント)に最新のログイン状態で振り分け直させる。
       window.location.reload();
     } catch {
+      resetCaptcha();
       setFormError(t("common.networkError"));
       setSubmitting(false);
     }
@@ -137,8 +158,10 @@ export default function LoginCard({
         password,
         options: {
           data: displayName.trim() ? { full_name: displayName.trim() } : undefined,
+          captchaToken: turnstileToken ?? undefined,
         },
       });
+      resetCaptcha();
       if (error) {
         setFormError(t("error.signupFailed"));
         setSubmitting(false);
@@ -148,6 +171,7 @@ export default function LoginCard({
       setMode("signup-code");
       setSubmitting(false);
     } catch {
+      resetCaptcha();
       setFormError(t("common.networkError"));
       setSubmitting(false);
     }
@@ -192,7 +216,9 @@ export default function LoginCard({
       const { error } = await supabase.auth.resend({
         type: "signup",
         email: email.trim(),
+        options: { captchaToken: turnstileToken ?? undefined },
       });
+      resetCaptcha();
       if (error) {
         setFormError(t("error.resendFailed"));
         setSubmitting(false);
@@ -202,6 +228,7 @@ export default function LoginCard({
       setSuccessMessage(t("success.codeResent"));
       setSubmitting(false);
     } catch {
+      resetCaptcha();
       setFormError(t("common.networkError"));
       setSubmitting(false);
     }
@@ -218,7 +245,9 @@ export default function LoginCard({
       const supabase = createClient();
       const { error } = await supabase.auth.resetPasswordForEmail(
         email.trim(),
+        { captchaToken: turnstileToken ?? undefined },
       );
+      resetCaptcha();
       // 登録の有無に関わらず同じ案内・同じ次の画面で統一する
       // (アカウントの有無を外部から探られないようにするため)。
       if (error) {
@@ -230,6 +259,7 @@ export default function LoginCard({
       setMode("forgot-code");
       setSubmitting(false);
     } catch {
+      resetCaptcha();
       setFormError(t("common.networkError"));
       setSubmitting(false);
     }
@@ -274,7 +304,9 @@ export default function LoginCard({
       const supabase = createClient();
       const { error } = await supabase.auth.resetPasswordForEmail(
         email.trim(),
+        { captchaToken: turnstileToken ?? undefined },
       );
+      resetCaptcha();
       if (error) {
         setFormError(t("error.resendFailed"));
         setSubmitting(false);
@@ -284,6 +316,7 @@ export default function LoginCard({
       setSuccessMessage(t("success.codeResent"));
       setSubmitting(false);
     } catch {
+      resetCaptcha();
       setFormError(t("common.networkError"));
       setSubmitting(false);
     }
@@ -337,6 +370,17 @@ export default function LoginCard({
   };
 
   const showTabs = mode === "login" || mode === "signup";
+  // ウィジェット自体は、送信ボタンかこの画面の「再送信」ボタンのいずれかが
+  // captchaTokenを必要とする画面でだけ表示する。signup-code/forgot-code
+  // 画面の主ボタン(コード確認)はcaptcha不要だが、再送信ボタンは必要。
+  const showCaptcha =
+    mode === "login" ||
+    mode === "signup" ||
+    mode === "forgot" ||
+    mode === "signup-code" ||
+    mode === "forgot-code";
+  const submitNeedsCaptcha =
+    mode === "login" || mode === "signup" || mode === "forgot";
 
   return (
     <div className="relative w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-xl">
@@ -515,9 +559,13 @@ export default function LoginCard({
           </p>
         )}
 
+        {showCaptcha && (
+          <TurnstileWidget ref={turnstileRef} onVerify={setTurnstileToken} />
+        )}
+
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || (submitNeedsCaptcha && !turnstileToken)}
           className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
         >
           {submitting
@@ -546,7 +594,7 @@ export default function LoginCard({
           <button
             type="button"
             onClick={handleResendSignupCode}
-            disabled={submitting}
+            disabled={submitting || !turnstileToken}
             className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
           >
             {t("login.resendCode")}
@@ -556,7 +604,7 @@ export default function LoginCard({
           <button
             type="button"
             onClick={handleResendResetCode}
-            disabled={submitting}
+            disabled={submitting || !turnstileToken}
             className="block w-full text-center text-xs text-slate-400 hover:text-slate-600"
           >
             {t("login.resendCode")}
