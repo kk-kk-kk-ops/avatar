@@ -17,6 +17,7 @@ declare global {
         container: HTMLElement,
         options: {
           sitekey: string;
+          theme?: "light" | "dark" | "auto";
           callback: (token: string) => void;
           "expired-callback"?: () => void;
           "error-callback"?: () => void;
@@ -66,6 +67,7 @@ const TurnstileWidget = forwardRef<
       if (widgetIdRef.current) return;
       widgetIdRef.current = window.turnstile.render(containerRef.current, {
         sitekey: siteKey,
+        theme: "light",
         callback: (token) => onVerifyRef.current(token),
         "expired-callback": () => onVerifyRef.current(null),
         "error-callback": () => {
