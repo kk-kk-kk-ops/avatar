@@ -58,6 +58,8 @@ const ja: Record<string, string> = {
   "error.loginTooManyAttempts":
     "ログイン試行回数が多いため、しばらく時間をおいてから再度お試しください。",
   "error.loginInvalidCredentials": "メールアドレスまたはパスワードが正しくありません。",
+  "error.captchaLoadFailed":
+    "セキュリティ確認を読み込めませんでした。広告ブロッカーなどを確認してください。",
 
   "google.connecting": "接続中...",
   "google.signIn": "Googleでログイン",
@@ -525,6 +527,8 @@ const en: Record<string, string> = {
   "error.loginTooManyAttempts":
     "Too many login attempts. Please wait a while and try again.",
   "error.loginInvalidCredentials": "Incorrect email address or password.",
+  "error.captchaLoadFailed":
+    "Could not load the security check. Please check whether an ad blocker is enabled.",
 
   "google.connecting": "Connecting...",
   "google.signIn": "Sign in with Google",

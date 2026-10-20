@@ -37,15 +37,17 @@ export type TurnstileWidgetHandle = {
 
 const TurnstileWidget = forwardRef<
   TurnstileWidgetHandle,
-  { onVerify: (token: string | null) => void }
->(function TurnstileWidget({ onVerify }, ref) {
+  { onVerify: (token: string | null) => void; onError?: () => void }
+>(function TurnstileWidget({ onVerify, onError }, ref) {
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
-  // onVerifyが呼び出し側の再レンダーのたびに新しい関数になっても、
+  // onVerify/onErrorが呼び出し側の再レンダーのたびに新しい関数になっても、
   // 既にrender済みのウィジェットを作り直さずに済むようrefで持つ。
   const onVerifyRef = useRef(onVerify);
   onVerifyRef.current = onVerify;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
 
   useImperativeHandle(ref, () => ({
     reset: () => {
@@ -66,8 +68,16 @@ const TurnstileWidget = forwardRef<
         sitekey: siteKey,
         callback: (token) => onVerifyRef.current(token),
         "expired-callback": () => onVerifyRef.current(null),
-        "error-callback": () => onVerifyRef.current(null),
+        "error-callback": () => {
+          onVerifyRef.current(null);
+          onErrorRef.current?.();
+        },
       });
+    };
+
+    const handleScriptError = () => {
+      if (cancelled) return;
+      onErrorRef.current?.();
     };
 
     if (window.turnstile) {
@@ -76,6 +86,7 @@ const TurnstileWidget = forwardRef<
       const existingScript = document.getElementById(SCRIPT_ID);
       if (existingScript) {
         existingScript.addEventListener("load", renderWidget);
+        existingScript.addEventListener("error", handleScriptError);
       } else {
         const script = document.createElement("script");
         script.id = SCRIPT_ID;
@@ -83,6 +94,7 @@ const TurnstileWidget = forwardRef<
         script.async = true;
         script.defer = true;
         script.addEventListener("load", renderWidget);
+        script.addEventListener("error", handleScriptError);
         document.head.appendChild(script);
       }
     }
