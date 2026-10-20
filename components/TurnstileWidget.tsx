@@ -28,7 +28,7 @@ declare global {
   }
 }
 
-const SCRIPT_SRC = "https://challenge.cloudflarestatic.com/turnstile/v0/api.js";
+const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js";
 const SCRIPT_ID = "cf-turnstile-script";
 
 export type TurnstileWidgetHandle = {
