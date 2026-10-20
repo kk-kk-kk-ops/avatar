@@ -57,6 +57,7 @@ export default function LoginCard({
   // トークンは1回使うと失効するため、送信のたびにウィジェットをリセットし
   // 次の送信に備える(resetCaptcha参照)。
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [captchaLoadError, setCaptchaLoadError] = useState(false);
   const turnstileRef = useRef<TurnstileWidgetHandle>(null);
   const resetCaptcha = () => {
     turnstileRef.current?.reset();
@@ -560,7 +561,21 @@ export default function LoginCard({
         )}
 
         {showCaptcha && (
-          <TurnstileWidget ref={turnstileRef} onVerify={setTurnstileToken} />
+          <>
+            <TurnstileWidget
+              ref={turnstileRef}
+              onVerify={(token) => {
+                setTurnstileToken(token);
+                if (token) setCaptchaLoadError(false);
+              }}
+              onError={() => setCaptchaLoadError(true)}
+            />
+            {captchaLoadError && (
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                {t("error.captchaLoadFailed")}
+              </p>
+            )}
+          </>
         )}
 
         <button
