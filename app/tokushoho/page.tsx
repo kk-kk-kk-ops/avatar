@@ -87,7 +87,7 @@ export default function TokushohoPage() {
     },
     {
       label: '返品・返金について',
-      value: `本サービスはオンラインで提供するサービスの性質上、返品はございません。${BILLING.refundRule}`,
+      value: `本サービスはクーリング・オフの対象外です。本サービスはオンラインで提供するサービスの性質上、返品はございません。${BILLING.refundRule}`,
     },
     {
       label: '動作環境',
