@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { loginWithPassword } from "./actions";
@@ -51,6 +52,11 @@ export default function LoginCard({
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // 利用規約・プライバシーポリシーへの同意(2026-10追加)。新規登録(メール/
+  // パスワード)はこのチェックが無いと送信できない。Googleログインは
+  // チェックボックスを経由しないため、ボタン付近に「続行すると同意した
+  // ものとみなす」旨の注記を表示するだけに留める(README参照)。
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   // Cloudflare Turnstile(ボット判定)。ログイン・新規登録・パスワード
   // 再設定(および確認コードの再送信)の各送信時にトークンを一緒に送る。
@@ -71,6 +77,7 @@ export default function LoginCard({
     setPassword("");
     setConfirmPassword("");
     setOtpCode("");
+    setAgreedToTerms(false);
   };
 
   const handleLogin = async () => {
@@ -129,6 +136,10 @@ export default function LoginCard({
     }
     if (password !== confirmPassword) {
       setFormError(t("error.passwordMismatch"));
+      return;
+    }
+    if (!agreedToTerms) {
+      setFormError(t("error.agreementRequired"));
       return;
     }
     setSubmitting(true);
@@ -384,6 +395,7 @@ export default function LoginCard({
     mode === "login" || mode === "signup" || mode === "forgot";
 
   return (
+    <>
     <div className="relative w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-xl">
       <div className="absolute right-4 top-4">
         <LanguageSwitcher />
@@ -412,6 +424,19 @@ export default function LoginCard({
       {showTabs && (
         <>
           <GoogleLoginButton />
+          {mode === "signup" && (
+            <p className="mt-2 text-[11px] leading-5 text-slate-400">
+              {t("login.googleConsentPrefix")}
+              <Link href="/terms" target="_blank" className="underline hover:text-slate-600">
+                {t("common.footerTerms")}
+              </Link>
+              {t("login.agreeToTermsAnd")}
+              <Link href="/privacy" target="_blank" className="underline hover:text-slate-600">
+                {t("common.footerPrivacy")}
+              </Link>
+              {t("login.googleConsentSuffix")}
+            </p>
+          )}
           <div className="my-4 flex items-center gap-3">
             <div className="h-px flex-1 bg-slate-200" />
             <span className="text-[11px] text-slate-400">{t("common.or")}</span>
@@ -509,6 +534,27 @@ export default function LoginCard({
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
           />
         )}
+        {mode === "signup" && (
+          <label className="flex items-start gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={agreedToTerms}
+              onChange={(e) => setAgreedToTerms(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300"
+            />
+            <span>
+              {t("login.agreeToTermsPrefix")}
+              <Link href="/terms" target="_blank" className="underline hover:text-slate-900">
+                {t("common.footerTerms")}
+              </Link>
+              {t("login.agreeToTermsAnd")}
+              <Link href="/privacy" target="_blank" className="underline hover:text-slate-900">
+                {t("common.footerPrivacy")}
+              </Link>
+              {t("login.agreeToTermsSuffix")}
+            </span>
+          </label>
+        )}
 
         {(mode === "signup-code" || mode === "forgot-code") && (
           <input
@@ -580,7 +626,11 @@ export default function LoginCard({
 
         <button
           type="submit"
-          disabled={submitting || (submitNeedsCaptcha && !turnstileToken)}
+          disabled={
+            submitting ||
+            (submitNeedsCaptcha && !turnstileToken) ||
+            (mode === "signup" && !agreedToTerms)
+          }
           className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
         >
           {submitting
@@ -638,5 +688,17 @@ export default function LoginCard({
         )}
       </form>
     </div>
+    <nav className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+      <Link href="/terms" className="hover:text-slate-200">
+        {t("common.footerTerms")}
+      </Link>
+      <Link href="/privacy" className="hover:text-slate-200">
+        {t("common.footerPrivacy")}
+      </Link>
+      <Link href="/tokushoho" className="hover:text-slate-200">
+        {t("common.footerTokushoho")}
+      </Link>
+    </nav>
+    </>
   );
 }
