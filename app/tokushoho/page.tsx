@@ -11,13 +11,7 @@ export default function TokushohoPage() {
   const rows: { label: string; value: ReactNode }[] = [
     {
       label: '販売事業者',
-      value: (
-        <>
-          {SITE.operatorLegalName}
-          <br />
-          (屋号:{SITE.operatorTradeName})
-        </>
-      ),
+      value: SITE.operatorLegalName,
     },
     { label: '所在地', value: SITE.address },
     {
