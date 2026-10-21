@@ -19,7 +19,6 @@ export default function TokushohoPage() {
         </>
       ),
     },
-    { label: '運営責任者', value: SITE.representative },
     { label: '所在地', value: SITE.address },
     {
       label: '電話番号',

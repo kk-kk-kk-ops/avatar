@@ -21,9 +21,9 @@ const PROCESSORS = [
   { name: 'Google LLC', country: '米国', purpose: 'Googleアカウントでのログイン' },
   // 2026-10時点、LiveKitは自前のVPS上に自己ホストしており、LiveKit社
   // (管理クラウド)は利用していない。実際にデータへアクセスしうる
-  // 「委託先」はこのVPSを提供するホスティング事業者になるため、ここは
-  // LiveKit社名ではなくそのホスティング事業者名に置き換えてください。
-  { name: '【要記入:映像・音声中継サーバー(自己ホストのLiveKit)を置いているVPS/ホスティング事業者名】', country: '【要記入】', purpose: 'ビデオ会議の映像・音声の中継(自己ホスト)' },
+  // 「委託先」はこのVPSを提供するホスティング事業者(NTTPCコミュニケー
+  // ションズ株式会社)。
+  { name: 'NTTPCコミュニケーションズ株式会社', country: '日本', purpose: 'ビデオ会議の映像・音声の中継' },
 ];
 
 export default function PrivacyPage() {

@@ -15,16 +15,17 @@ export const SITE = {
   loginPath: '/',
   // 個人事業主は屋号だけでなく本名の表示が必要です
   operatorTradeName: 'グロビナ・スタジオ',
-  operatorLegalName: '【要記入:事業者の氏名(本名)】',
-  representative: '【要記入:運営責任者の氏名(本名)】',
+  operatorLegalName: '角井 未来',
+  // 個人事業主のため、事業者名(operatorLegalName)=運営責任者であり、
+  // 別途「運営責任者」の行は設けない(ユーザー指示により行自体を削除)。
   // 「請求があれば遅滞なく開示」で省略する場合の文言(すぐに開示できる体制が前提です)
   address: 'ご請求があった場合、遅滞なく開示いたします。',
   phone: 'ご請求があった場合、遅滞なく開示いたします。',
   email: 'info@grovina-studio.com',
-  supportHours: '【要記入:例)平日10:00〜18:00(土日祝・年末年始を除く)】',
+  supportHours: '平日8:30〜15:30(土日祝・年末年始を除く)',
   studioUrl: 'https://grovina-studio.com/',
   contactUrl: 'https://grovina-studio.com/contact',
-  court: '【要記入:例)〇〇地方裁判所】',
+  court: '当方の住所地を管轄する地方裁判所',
   enactedAt: '2026年10月21日',
   updatedAt: '2026年10月21日',
 } as const;
