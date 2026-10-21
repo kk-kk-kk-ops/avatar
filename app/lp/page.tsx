@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteChrome';
-import { BILLING, FEATURES, PLANS, SITE, TRIAL, yen } from '@/lib/site-info';
+import { BILLING, BRAND, FEATURES, PLANS, SITE, TRIAL, yen } from '@/lib/site-info';
 
 export const metadata: Metadata = {
   title: `${SITE.serviceName}｜リンクひとつで集まれる、オンラインの部屋`,
@@ -17,21 +17,21 @@ function RoomPreview() {
     { name: 'ゲスト', tone: 'bg-emerald-200 text-emerald-900' },
   ];
   return (
-    <div aria-hidden="true" className="rounded-2xl bg-slate-800 p-3 shadow-2xl ring-1 ring-white/10">
+    <div aria-hidden="true" className="min-w-0 rounded-2xl bg-slate-800 p-3 shadow-2xl ring-1 ring-white/10">
       <div className="flex items-center justify-between px-2 pb-3 text-xs text-slate-400">
         <span>定例ミーティング</span>
         <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-red-500" />3人が参加中
+          <span className="h-2 w-2 rounded-full bg-[#E5342E]" />3人が参加中
         </span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-[1fr_11rem]">
-        <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_11rem]">
+        <div className="grid min-w-0 grid-cols-1 gap-3">
           <div className="flex aspect-video flex-col justify-between rounded-xl bg-white p-4">
             <div className="h-2 w-1/3 rounded bg-slate-300" />
             <div className="space-y-2">
               <div className="h-2 w-full rounded bg-slate-200" />
               <div className="h-2 w-4/5 rounded bg-slate-200" />
-              <div className="h-2 w-3/5 rounded bg-red-200" />
+              <div className="h-2 w-3/5 rounded bg-[#F8B6B7]" />
             </div>
             <p className="text-[11px] text-slate-500">ひよりさんが画面を共有しています</p>
           </div>
@@ -48,12 +48,12 @@ function RoomPreview() {
         </div>
         <div className="hidden flex-col gap-2 rounded-xl bg-slate-700/60 p-3 text-[12px] sm:flex">
           <p className="w-fit rounded-lg rounded-tl-none bg-slate-600 px-2.5 py-1.5 text-slate-100">資料のリンク送ります</p>
-          <p className="ml-auto w-fit rounded-lg rounded-tr-none bg-red-600 px-2.5 py-1.5 text-white">ありがとうございます！</p>
+          <p className="ml-auto w-fit rounded-lg rounded-tr-none bg-[#E5342E] px-2.5 py-1.5 text-white">ありがとうございます！</p>
           <p className="w-fit rounded-lg rounded-tl-none bg-slate-600 px-2.5 py-1.5 text-slate-100">@みなと 3ページ目を見てください</p>
         </div>
       </div>
       <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-slate-900 px-3 py-2 text-[12px]">
-        <span className="truncate text-slate-400">globy.grovina-studio.com/invite/••••••</span>
+        <span className="min-w-0 truncate text-slate-400">globy.grovina-studio.com/invite/••••••</span>
         <span className="shrink-0 rounded-md bg-white px-2.5 py-1 font-semibold text-slate-900">リンクをコピー</span>
       </div>
     </div>
@@ -62,12 +62,12 @@ function RoomPreview() {
 
 export default function LandingPage() {
   return (
-    <div className="bg-white text-slate-900">
+    <div className="bg-white text-slate-900" style={{ fontFamily: BRAND.font }}>
       {/* ヒーロー */}
+      <SiteHeader />
       <section className="bg-slate-900">
-        <SiteHeader dark />
-        <div className="mx-auto grid max-w-6xl items-center gap-12 px-5 pb-20 pt-10 lg:grid-cols-[1fr_1.1fr] lg:pt-16">
-          <div>
+        <div className="mx-auto grid max-w-6xl items-center gap-12 px-5 pb-20 pt-14 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:pt-16">
+          <div className="min-w-0">
             <h1 className="text-[2rem] font-bold leading-[1.35] text-white sm:text-5xl sm:leading-[1.3]">
               社外の人とも、
               <br />
@@ -81,7 +81,7 @@ export default function LandingPage() {
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
                 href={SITE.loginPath}
-                className="rounded-full bg-red-600 px-7 py-3.5 font-bold text-white hover:bg-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                className="rounded-full bg-[#E5342E] px-7 py-3.5 font-bold text-white hover:bg-[#C92B25] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
               >
                 無料で始める
               </Link>
@@ -108,7 +108,7 @@ export default function LandingPage() {
           {FEATURES.map((f) => (
             <div key={f.title}>
               <dt className="flex items-center gap-3 text-lg font-bold">
-                <span className="h-3 w-3 rotate-45 bg-red-600" aria-hidden="true" />
+                <span className="h-3 w-3 rotate-45 bg-[#E5342E]" aria-hidden="true" />
                 {f.title}
               </dt>
               <dd className="mt-2 leading-7 text-slate-600">{f.body}</dd>
@@ -154,7 +154,7 @@ export default function LandingPage() {
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-bold">{p.name}</h3>
                 {p.recommended && (
-                  <span className="rounded-full bg-red-600 px-2.5 py-0.5 text-xs font-bold text-white">おすすめ</span>
+                  <span className="rounded-full bg-[#E5342E] px-2.5 py-0.5 text-xs font-bold text-white">おすすめ</span>
                 )}
               </div>
               <p className={`mt-1 text-sm ${p.recommended ? 'text-slate-300' : 'text-slate-500'}`}>{p.summary}</p>
@@ -170,7 +170,7 @@ export default function LandingPage() {
               <Link
                 href={SITE.loginPath}
                 className={`mt-8 rounded-full py-3 text-center font-bold ${
-                  p.recommended ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                  p.recommended ? 'bg-[#E5342E] text-white hover:bg-[#C92B25]' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
                 }`}
               >
                 {p.monthlyPrice === 0 ? '無料で始める' : `${p.name}を申し込む`}
@@ -184,9 +184,9 @@ export default function LandingPage() {
           {TRIAL.enabled && <p>{TRIAL.description}</p>}
           <p>
             詳しくは
-            <Link href="/tokushoho" className="text-red-700 underline underline-offset-2">特定商取引法に基づく表記</Link>
+            <Link href="/tokushoho" className="text-[#C92B25] underline underline-offset-2">特定商取引法に基づく表記</Link>
             と
-            <Link href="/terms" className="text-red-700 underline underline-offset-2">利用規約</Link>
+            <Link href="/terms" className="text-[#C92B25] underline underline-offset-2">利用規約</Link>
             をご確認ください。
           </p>
         </div>
@@ -205,7 +205,7 @@ export default function LandingPage() {
               { q: '導入の相談はできますか？', a: `運営元の${SITE.operatorTradeName}が、お問い合わせフォームから相談を受け付けています。` },
             ].map((item) => (
               <details key={item.q} className="group px-6 py-5">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500 [&::-webkit-details-marker]:hidden">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#E5342E] [&::-webkit-details-marker]:hidden">
                   {item.q}
                   <span className="text-xl text-slate-400 transition-transform group-open:rotate-45 motion-reduce:transition-none" aria-hidden="true">
                     +
@@ -219,14 +219,14 @@ export default function LandingPage() {
       </section>
 
       {/* 最後の呼びかけ */}
-      <section className="bg-red-600">
+      <section className="bg-[#E5342E]">
         <div className="mx-auto flex max-w-6xl flex-col items-start gap-6 px-5 py-16 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-2xl font-bold text-white sm:text-3xl">次の打ち合わせから、{SITE.serviceName}で。</h2>
-            <p className="mt-2 text-red-100">まずはFreeプランで試してみてください。</p>
+            <p className="mt-2 text-white/80">まずはFreeプランで試してみてください。</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link href={SITE.loginPath} className="rounded-full bg-white px-7 py-3.5 font-bold text-red-700 hover:bg-red-50">
+            <Link href={SITE.loginPath} className="rounded-full bg-white px-7 py-3.5 font-bold text-[#C92B25] hover:bg-[#FDECEC]">
               無料で始める
             </Link>
             <a href={SITE.contactUrl} className="rounded-full px-7 py-3.5 font-bold text-white ring-1 ring-white/60 hover:bg-white/10">

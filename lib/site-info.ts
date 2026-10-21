@@ -155,3 +155,15 @@ export const FEATURES = [
 
 export const yen = (n: number | null) =>
   n === null ? '【要記入】' : `${n.toLocaleString('ja-JP')}円`;
+
+/** GROVINA STUDIO のサイトと共通のブランド設定(2026-10) */
+export const BRAND = {
+  font: 'Helvetica, "YuGothic", "Yu Gothic", sans-serif',
+  red: '#E5342E',
+  paleRed: '#F8B6B7',
+  sns: [
+    { label: 'LINE', href: 'https://line.me/ti/p/%40332orjgu', icon: '/grovina/icon-line.png' },
+    { label: 'Instagram', href: 'https://www.instagram.com/grovina_studio/', icon: '/grovina/icon-insta.png' },
+    { label: 'X', href: 'https://x.com/Grovina_studio', icon: '/grovina/icon-x.png' },
+  ],
+} as const;
