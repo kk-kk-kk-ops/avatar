@@ -137,7 +137,7 @@ export default function PrivacyPage() {
 
       <Article title="10. お問い合わせ窓口">
         <dl className="space-y-1">
-          <div>事業者:{SITE.operatorLegalName}(屋号:{OP})</div>
+          <div>事業者:{SITE.operatorLegalName}</div>
           <div>住所:{SITE.address}</div>
           <div>メール:{SITE.email}</div>
         </dl>
