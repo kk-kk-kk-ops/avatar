@@ -11,6 +11,9 @@ const ja: Record<string, string> = {
   "common.processing": "処理中...",
   "common.networkError":
     "ネットワークエラーが発生しました。通信環境をご確認ください。",
+  "common.footerTerms": "利用規約",
+  "common.footerPrivacy": "プライバシーポリシー",
+  "common.footerTokushoho": "特定商取引法に基づく表記",
 
   "login.tabLogin": "ログイン",
   "login.tabSignup": "新規登録",
@@ -36,6 +39,11 @@ const ja: Record<string, string> = {
   "login.resendCode": "コードが届かない場合は再送信",
   "login.backToLogin": "ログインに戻る",
   "login.logoAlt": "ロゴ",
+  "login.agreeToTermsPrefix": "",
+  "login.agreeToTermsAnd": "と",
+  "login.agreeToTermsSuffix": "に同意する",
+  "login.googleConsentPrefix": "続行すると",
+  "login.googleConsentSuffix": "に同意したものとみなします。",
 
   "error.emailPasswordRequired": "メールアドレスとパスワードを入力してください。",
   "error.passwordTooShort": "パスワードは6文字以上で入力してください。",
@@ -60,6 +68,8 @@ const ja: Record<string, string> = {
   "error.loginInvalidCredentials": "メールアドレスまたはパスワードが正しくありません。",
   "error.captchaLoadFailed":
     "セキュリティ確認を読み込めませんでした。広告ブロッカーなどを確認してください。",
+  "error.agreementRequired":
+    "利用規約とプライバシーポリシーへの同意が必要です。",
 
   "google.connecting": "接続中...",
   "google.signIn": "Googleでログイン",
@@ -481,6 +491,9 @@ const en: Record<string, string> = {
   "common.processing": "Processing...",
   "common.networkError":
     "A network error occurred. Please check your connection.",
+  "common.footerTerms": "Terms of Service",
+  "common.footerPrivacy": "Privacy Policy",
+  "common.footerTokushoho": "Specified Commercial Transactions Act Notice",
 
   "login.tabLogin": "Log in",
   "login.tabSignup": "Sign up",
@@ -506,6 +519,11 @@ const en: Record<string, string> = {
   "login.resendCode": "Didn't get the code? Resend",
   "login.backToLogin": "Back to login",
   "login.logoAlt": "Logo",
+  "login.agreeToTermsPrefix": "I agree to the ",
+  "login.agreeToTermsAnd": " and ",
+  "login.agreeToTermsSuffix": ".",
+  "login.googleConsentPrefix": "By continuing, you agree to the ",
+  "login.googleConsentSuffix": ".",
 
   "error.emailPasswordRequired": "Please enter your email address and password.",
   "error.passwordTooShort": "Password must be at least 6 characters.",
@@ -529,6 +547,8 @@ const en: Record<string, string> = {
   "error.loginInvalidCredentials": "Incorrect email address or password.",
   "error.captchaLoadFailed":
     "Could not load the security check. Please check whether an ad blocker is enabled.",
+  "error.agreementRequired":
+    "You must agree to the Terms of Service and Privacy Policy.",
 
   "google.connecting": "Connecting...",
   "google.signIn": "Sign in with Google",

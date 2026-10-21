@@ -5,11 +5,17 @@ import { SESSION_MAX_AGE } from "./constants";
 // 認証不要でアクセスできるパス("/"はTOPページ。ログイン済みなら
 // page.tsx側でプラン選択/管理画面/ルーム選択へ振り分ける。
 // "/admin/login"はセッションの有無を無視して常にログインカードを
-// 表示する管理者ログイン専用URL)
+// 表示する管理者ログイン専用URL。"/lp"・"/terms"・"/privacy"・
+// "/tokushoho"はLP・利用規約・プライバシーポリシー・特定商取引法に
+// 基づく表記(2026-10追加)。未ログインでも見られる必要がある)
 const PUBLIC_PATHS = [
   "/",
   "/auth/callback",
   "/admin/login",
+  "/lp",
+  "/terms",
+  "/privacy",
+  "/tokushoho",
 ];
 
 function isPublicPath(pathname: string) {

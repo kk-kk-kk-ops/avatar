@@ -191,6 +191,17 @@ export default function AdminDashboard({
             label={t("admin.logout")}
             loadingLabel={t("admin.loggingOut")}
           />
+          <nav className="flex flex-wrap justify-center gap-x-3 gap-y-1 px-1 pt-1 text-[10px] text-slate-500">
+            <Link href="/terms" className="hover:text-slate-300">
+              {t("common.footerTerms")}
+            </Link>
+            <Link href="/privacy" className="hover:text-slate-300">
+              {t("common.footerPrivacy")}
+            </Link>
+            <Link href="/tokushoho" className="hover:text-slate-300">
+              {t("common.footerTokushoho")}
+            </Link>
+          </nav>
         </div>
       </aside>
 

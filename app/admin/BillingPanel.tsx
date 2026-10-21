@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { PLANS, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
-import { createCheckoutSession } from "@/app/billing/checkout/actions";
 import { createPortalSession } from "@/app/billing/portal/actions";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 
@@ -23,6 +23,7 @@ export default function BillingPanel({
   hasActiveSubscription: boolean;
 }) {
   const { t, locale } = useLocale();
+  const router = useRouter();
   // 管理画面の英語対応(2026-10)にあたり、lib/types.tsのPLANS.priceLabel/
   // historyRetentionLabelは他画面(app/plan, app/billing/checkout、master画面)
   // でも共有されているため直接は変更せず、この画面専用にpriceYen等の
@@ -49,23 +50,29 @@ export default function BillingPanel({
     // リプション)が無ければStripe側でやることが無い(plan列だけが
     // 実態と食い違って設定されているデバッグ用アカウント等)。
     if (targetPlan === "free" && !hasActiveSubscription) return;
+    // Stripe上に有効なサブスクリプション(stripe_subscription_id)が
+    // 既にある場合のみCustomer Portal経由にする(プラン変更・freeへの
+    // ダウングレード=解約の両方)。ここをplan列で判定すると、Stripeを
+    // 一度も通していないのにplanだけ設定されているアカウント
+    // (デバッグ用プラン切り替えを使ったマスターアカウント等)で
+    // 「お支払い情報がまだ登録されていません」となりプラン変更が
+    // 一切できなくなる不具合になるため、実際の契約有無
+    // (hasActiveSubscription)で判定する。
+    if (!hasActiveSubscription) {
+      // 新規の有料プラン申し込みは、特定商取引法上の最終確認画面を
+      // 兼ねるapp/billing/checkout/page.tsxを必ず経由させる(2026-10)。
+      // ここから直接createCheckoutSessionを呼ぶと、その確認画面を
+      // 飛ばしてStripeの決済画面へ直行してしまうため廃止した。
+      router.push(`/billing/checkout?plan=${targetPlan}`);
+      return;
+    }
     setBillingError(null);
     setBillingPending(targetPlan);
     startBillingTransition(async () => {
-      // Stripe上に有効なサブスクリプション(stripe_subscription_id)が
-      // 既にある場合のみCustomer Portal経由にする(プラン変更・freeへの
-      // ダウングレード=解約の両方)。ここをplan列で判定すると、Stripeを
-      // 一度も通していないのにplanだけ設定されているアカウント
-      // (デバッグ用プラン切り替えを使ったマスターアカウント等)で
-      // 「お支払い情報がまだ登録されていません」となりプラン変更が
-      // 一切できなくなる不具合になるため、実際の契約有無
-      // (hasActiveSubscription)で判定する。
       // targetPlanを渡すと、ポータルのトップページを経由せず「このプランに
       // 変更しますか?」の確認画面へ直接遷移する(freeへの切り替え=解約は
       // targetPlanが有料プランではないため、従来通りトップページ経由になる)。
-      const result = hasActiveSubscription
-        ? await createPortalSession(targetPlan)
-        : await createCheckoutSession(targetPlan);
+      const result = await createPortalSession(targetPlan);
       setBillingPending(null);
       if (result && !result.ok) setBillingError(result.error);
     });
