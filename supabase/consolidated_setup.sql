@@ -214,6 +214,21 @@ alter table public.profiles
   add column if not exists role text check (role in ('admin', 'guest'));
 alter table public.profiles
   add column if not exists is_master boolean not null default false;
+-- 言語設定(ja/en)。ログイン画面・管理画面の多言語対応(2026-10)で
+-- 追加した列だが、このファイルへの追記が漏れていたため今回揃える
+-- (ダッシュボード側で先に追加済みのため、本番環境ではこのadd column自体は
+-- 何もしない。新規にこのファイルからセットアップする場合のための記載)。
+alter table public.profiles
+  add column if not exists locale text check (locale in ('ja', 'en'));
+-- アバター空間での表示方式・アップロードしたアイコン画像(2026-10追加)。
+-- avatar_icon_urlはSupabase Storageのuser-iconsバケット(本ファイル後半)
+-- に保存した画像の公開URL。avatar_mode='avatar'の間も値を保持し続け、
+-- 消さない(一時的にスプライト表示へ切り替えても、アップロード済みの
+-- 画像を失わないようにするため。アプリ側の実装を参照)。
+alter table public.profiles
+  add column if not exists avatar_mode text not null default 'avatar' check (avatar_mode in ('avatar', 'icon'));
+alter table public.profiles
+  add column if not exists avatar_icon_url text;
 
 alter table public.profiles enable row level security;
 
@@ -481,6 +496,56 @@ create policy "template-images: master delete"
   using (
     bucket_id = 'template-images'
     and public.is_master(auth.uid())
+  );
+
+
+-- ------------------------------------------------------------
+-- 8a. Storage: プロフィールアイコン(設定の「アイコン」選択時にアップ
+--     ロードする画像)用バケット(2026-10追加)。ユーザーごとに1枚だけ
+--     "{user_id}/icon.webp" の固定パスへupsertする方式のため、他の画像
+--     バケット(ランダムなファイル名で複数枚保持)と違い、自分のuser_id
+--     配下にしか書き込めない所有者チェックにしている(chat-imagesの
+--     "insert own raw"と同じ考え方)。アバター空間内で全員に見える必要が
+--     あるためバケット自体は公開(public: true)。
+-- ------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'user-icons', 'user-icons', true,
+  2097152, -- 2MB(アップロード前にブラウザのCanvasで縮小するため、保存される
+           -- WebPファイルは通常これよりずっと小さい。念のための上限)
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "user-icons: public read" on storage.objects;
+create policy "user-icons: public read"
+  on storage.objects for select
+  using (bucket_id = 'user-icons');
+
+drop policy if exists "user-icons: insert own" on storage.objects;
+create policy "user-icons: insert own"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'user-icons'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "user-icons: update own" on storage.objects;
+create policy "user-icons: update own"
+  on storage.objects for update
+  using (
+    bucket_id = 'user-icons'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "user-icons: delete own" on storage.objects;
+create policy "user-icons: delete own"
+  on storage.objects for delete
+  using (
+    bucket_id = 'user-icons'
+    and (storage.foldername(name))[1] = auth.uid()::text
   );
 
 

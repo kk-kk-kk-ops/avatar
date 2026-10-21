@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { Room } from "@/lib/types";
+import type { AvatarMode, Room } from "@/lib/types";
 import type { Locale } from "@/lib/i18n/translations";
 
 // canvasやwindow/keyboardイベントを使うためSSRを無効化
@@ -26,6 +26,8 @@ type Props = {
   maintenanceStartsAt?: string | null;
   maintenanceEndsAt?: string | null;
   initialProfileLocale?: Locale;
+  initialAvatarMode?: AvatarMode;
+  initialAvatarIconUrl?: string | null;
 };
 
 export default function AvatarSpaceLoader({
@@ -45,6 +47,8 @@ export default function AvatarSpaceLoader({
   maintenanceStartsAt,
   maintenanceEndsAt,
   initialProfileLocale,
+  initialAvatarMode,
+  initialAvatarIconUrl,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -72,6 +76,8 @@ export default function AvatarSpaceLoader({
         maintenanceStartsAt={maintenanceStartsAt}
         maintenanceEndsAt={maintenanceEndsAt}
         initialProfileLocale={initialProfileLocale}
+        initialAvatarMode={initialAvatarMode}
+        initialAvatarIconUrl={initialAvatarIconUrl}
       />
     </div>
   );

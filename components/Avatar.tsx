@@ -9,6 +9,8 @@ import {
   AVATAR_HITBOX_HEIGHT,
   CAR_HITBOX_HEIGHT,
   PRESENCE_STATUS_COLORS,
+  USER_ICON_DISPLAY_SIZE,
+  getAvatarDisplayMode,
   getAvatarSpritePath,
   getAvatarThumbnail,
   getCarSpritePath,
@@ -49,7 +51,12 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
   // アバター本体と全く同じものを流用し、毎フレーム両方のrefへ同時に
   // 反映することで見た目上は常に同期して動く。
   const nameTagRef = useRef<HTMLDivElement>(null);
-  const displaySize = sizePx ?? DEFAULT_DISPLAY_SIZE;
+  // アイコン表示(2026-10追加)時は、見た目のサイズも仕様で固定(50×50px)
+  // されており、マスター画面のアバターサイズ設定(sizePx)の影響を受けない。
+  const isIconMode = getAvatarDisplayMode(player) === "icon";
+  const displaySize = isIconMode
+    ? USER_ICON_DISPLAY_SIZE
+    : (sizePx ?? DEFAULT_DISPLAY_SIZE);
 
   useImperativeHandle(
     ref,
@@ -57,16 +64,24 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
       updatePosition: (x: number, y: number) => {
         // (x, y)は当たり判定(AVATAR_HITBOX_WIDTH/HEIGHT、車表示中は
         // CAR_HITBOX_HEIGHT)の中心座標。横方向は常に中心を揃える
-        // (当たり判定・画像とも同じxを中心とするため)。縦方向はアバター・
-        // 車表示のどちらも、当たり判定の下端と画像の下端が一致するように
-        // する(2026-09報告により、車も中心揃えからアバターと同じ下端揃えに
-        // 統一)。当たり判定の高さ自体はアバター/車で異なる
-        // (AVATAR_HITBOX_HEIGHT/CAR_HITBOX_HEIGHT)。
+        // (当たり判定・画像とも同じxを中心とするため)。
         const left = x - displaySize / 2;
-        const hitboxHeight = player.carVisible
-          ? CAR_HITBOX_HEIGHT
-          : AVATAR_HITBOX_HEIGHT;
-        const top = y + hitboxHeight / 2 - displaySize;
+        let top: number;
+        if (isIconMode) {
+          // アイコン表示時は丸枠と当たり判定を中央揃えにする仕様
+          // (スプライトアバターの「足元を当たり判定の下端に揃える」
+          // 方式とは異なる)。
+          top = y - displaySize / 2;
+        } else {
+          // 縦方向はアバター・車表示のどちらも、当たり判定の下端と画像の
+          // 下端が一致するようにする(2026-09報告により、車も中心揃えから
+          // アバターと同じ下端揃えに統一)。当たり判定の高さ自体は
+          // アバター/車で異なる(AVATAR_HITBOX_HEIGHT/CAR_HITBOX_HEIGHT)。
+          const hitboxHeight = player.carVisible
+            ? CAR_HITBOX_HEIGHT
+            : AVATAR_HITBOX_HEIGHT;
+          top = y + hitboxHeight / 2 - displaySize;
+        }
         const transform = `translate(${left}px, ${top}px)`;
         if (rootRef.current) rootRef.current.style.transform = transform;
         // 名前タグ側もアバター本体と全く同じサイズ・原点のボックスとして
@@ -75,7 +90,7 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         if (nameTagRef.current) nameTagRef.current.style.transform = transform;
       },
     }),
-    [displaySize, player.carVisible],
+    [displaySize, player.carVisible, isIconMode],
   );
 
   // 吹き出しは設定画面のチェックボックスで表示/非表示が切り替わる常時
@@ -170,7 +185,19 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
             中央揃えにより画像の実際の見た目(車体)は枠の上下中央に浮き、
             枠の下端(当たり判定の下端と揃えている位置)との間に余白ができて
             いた。object-bottomで画像の見た目そのものを枠の下端に揃える。 */}
-        {showCar ? (
+        {isIconMode ? (
+          // アイコン表示(2026-10追加): アップロード画像を丸枠(object-cover
+          // で正方形以外の画像も枠いっぱいに切り抜いて表示)に収める。
+          // 車表示(shift+x)はアイコンモードでは対象外(常にアイコンを表示)。
+          <div className="h-full w-full overflow-hidden rounded-full drop-shadow-md">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={player.avatarImage}
+              alt={player.name}
+              className="h-full w-full object-cover"
+            />
+          </div>
+        ) : showCar ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={carSrc}
