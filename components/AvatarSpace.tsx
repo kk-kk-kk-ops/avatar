@@ -57,6 +57,10 @@ import {
   isMaintenanceActive,
   isMaintenanceScheduled,
   formatMaintenanceDateTime,
+  type AvatarMode,
+  USER_ICON_ALLOWED_MIME_TYPES,
+  USER_ICON_MAX_UPLOAD_BYTES,
+  getAvatarDisplayMode,
 } from "@/lib/types";
 import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
@@ -76,6 +80,7 @@ import {
   uploadRawChatImageWithProgress,
   validateChatImageFile,
 } from "./uploadChatImage";
+import { uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
 
 const COLORS = [
@@ -717,6 +722,12 @@ type Props = {
   // クッキーとズレている場合、この値(アカウント側)を優先して同期する
   // (下の言語設定の同期effect参照)。
   initialProfileLocale?: Locale;
+  // アカウントに保存されている表示方式・アイコン画像(profiles.avatar_mode/
+  // avatar_icon_url、2026-10追加)。入室時・設定タブを開いた時点の初期値に
+  // 使う(アバタースプライトの選択自体は従来通りDBに保存しないため、
+  // ここでは"icon"選択時の情報のみ引き継ぐ)。
+  initialAvatarMode?: AvatarMode;
+  initialAvatarIconUrl?: string | null;
 };
 
 export default function AvatarSpace({
@@ -736,6 +747,8 @@ export default function AvatarSpace({
   maintenanceStartsAt: initialMaintenanceStartsAt,
   maintenanceEndsAt: initialMaintenanceEndsAt,
   initialProfileLocale,
+  initialAvatarMode,
+  initialAvatarIconUrl,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -805,6 +818,14 @@ export default function AvatarSpace({
   const [assetsReady, setAssetsReady] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
+  // アバター/アイコン表示切り替え(2026-10追加)。入室前の時点から
+  // 前回保存した選択(profiles.avatar_mode/avatar_icon_url)を引き継ぐ。
+  const [selectedAvatarMode, setSelectedAvatarMode] = useState<AvatarMode>(
+    initialAvatarMode ?? "avatar",
+  );
+  const [selectedIconUrl, setSelectedIconUrl] = useState<string | null>(
+    initialAvatarIconUrl ?? null,
+  );
   // サイドバーの3タブ(参加者/チャット/設定)。設定は以前は別画面の
   // モーダルだったが、サイドバー内のタブへ埋め込む形に変更した。
   const [sidebarTab, setSidebarTab] = useState<
@@ -812,6 +833,11 @@ export default function AvatarSpace({
   >("participants");
   const [settingsNameInput, setSettingsNameInput] = useState("");
   const [settingsAvatar, setSettingsAvatar] = useState(AVATAR_IMAGES[0]);
+  const [settingsAvatarMode, setSettingsAvatarMode] =
+    useState<AvatarMode>("avatar");
+  const [settingsIconUrl, setSettingsIconUrl] = useState<string | null>(null);
+  const [iconUploading, setIconUploading] = useState(false);
+  const [iconUploadError, setIconUploadError] = useState<string | null>(null);
   const [settingsCar, setSettingsCar] = useState(CAR_IMAGES[0]);
   const [settingsStatus, setSettingsStatus] =
     useState<PresenceStatus>("available");
@@ -4846,6 +4872,29 @@ export default function AvatarSpace({
     [supabase],
   );
 
+  // アバター/アイコンの表示方式・アイコンURLをprofiles.avatar_mode/
+  // avatar_icon_urlへ保存する(2026-10追加、saveDisplayName/saveLocaleと
+  // 同じ方式)。アイコンURLはmodeが"avatar"のときも消さずに渡す
+  // (一時的にスプライト表示へ切り替えても、アップロード済みの画像は
+  // 失わずに残しておくため)。
+  const saveAvatarSettings = useCallback(
+    (mode: AvatarMode, iconUrl: string | null) => {
+      const userId = authUserIdRef.current;
+      if (!userId) return;
+      supabase
+        .from("profiles")
+        .update({ avatar_mode: mode, avatar_icon_url: iconUrl })
+        .eq("user_id", userId)
+        .then(({ error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error("アイコン設定の保存に失敗しました", error);
+          }
+        });
+    },
+    [supabase],
+  );
+
   const handleJoin = useCallback(async () => {
     setRoomJoinError(null);
     // ロビー画面を開いたまま長時間放置すると、ログインセッションが裏側で
@@ -4877,12 +4926,16 @@ export default function AvatarSpace({
       mapSizeRef.current.height / 2,
       obstacles,
     );
+    // アイコンモードでも、まだ1枚もアップロードしていない(selectedIconUrlが
+    // 無い)場合はアバタースプライト表示にフォールバックする。
+    const useIcon = selectedAvatarMode === "icon" && !!selectedIconUrl;
     const initial: PlayerState = {
       id: selfId.current,
       userId: authUserIdRef.current ?? undefined,
       name,
       color: randomColor(),
-      avatarImage: selectedAvatar,
+      avatarImage: useIcon ? (selectedIconUrl as string) : selectedAvatar,
+      avatarMode: useIcon ? "icon" : "avatar",
       status: "available",
       x: spawn.x,
       y: spawn.y,
@@ -4896,12 +4949,16 @@ export default function AvatarSpace({
     setPlayers((prev) => ({ ...prev, [initial.id]: initial }));
     setSettingsNameInput(name);
     setSettingsAvatar(selectedAvatar);
+    setSettingsAvatarMode(useIcon ? "icon" : "avatar");
+    setSettingsIconUrl(selectedIconUrl);
     setAssetsReady(false);
     setJoined(true);
     saveDisplayName(name);
   }, [
     nameInput,
     selectedAvatar,
+    selectedAvatarMode,
+    selectedIconUrl,
     obstacles,
     saveDisplayName,
     supabase,
@@ -9615,22 +9672,42 @@ export default function AvatarSpace({
   // 開くようになったため、タブがsettingsになるたびに読み込み直す。
   useEffect(() => {
     if (sidebarTab !== "settings") return;
+    const mode = getAvatarDisplayMode(selfState.current ?? {});
     setSettingsNameInput(selfState.current?.name ?? "");
-    setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
+    setSettingsAvatarMode(mode);
+    // avatarImageはモードによって中身が変わる(アバター:スプライトの
+    // フォルダパス/アイコン:アップロード画像の公開URL)ため、対応する
+    // state側だけを更新する。icon→avatar→iconと行き来しても、触って
+    // いない方のstateは前回の値のまま保持される。
+    if (mode === "icon") {
+      setSettingsIconUrl(selfState.current?.avatarImage ?? null);
+    } else {
+      setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
+    }
     setSettingsCar(selfState.current?.carImage ?? CAR_IMAGES[0]);
     setSettingsStatus(selfState.current?.status ?? "available");
     setSettingsMessageInput(selfState.current?.message ?? "");
     setSettingsShowMessage(selfState.current?.showMessage ?? false);
+    setIconUploadError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarTab]);
 
   const saveSettings = useCallback(() => {
     if (!selfState.current) return;
+    if (settingsAvatarMode === "icon" && !settingsIconUrl) {
+      setIconUploadError(t("settings.iconRequired"));
+      return;
+    }
+    setIconUploadError(null);
     const name =
       settingsNameInput.trim() ||
       t("room.guestDefaultName", { id: selfId.current.slice(0, 4) });
     selfState.current.name = name;
-    selfState.current.avatarImage = settingsAvatar;
+    selfState.current.avatarImage =
+      settingsAvatarMode === "icon"
+        ? (settingsIconUrl as string)
+        : settingsAvatar;
+    selfState.current.avatarMode = settingsAvatarMode;
     selfState.current.carImage = settingsCar;
     selfState.current.status = settingsStatus;
     // 会議室退室時・タブ復帰時に戻す先を、今回の選択で更新しておく。
@@ -9644,21 +9721,67 @@ export default function AvatarSpace({
     channelRef.current?.track(updated);
     setSidebarTab("participants");
     saveDisplayName(name);
+    saveAvatarSettings(settingsAvatarMode, settingsIconUrl);
     // 入室前画面のname入力(nameInput)は設定変更後も更新されないままだった
     // ため、同じセッション内で退出→再入室すると、この古い値でhandleJoinが
     // 再度saveDisplayNameを呼び、DBの表示名を変更前の名前へ上書きして
     // しまっていた(2026-09報告の「保存しても退出したら元に戻る」の原因)。
     // ここで同期し、次の入室画面にも直近の保存値が反映されるようにする。
     setNameInput(name);
+    // 入室前画面でもアイコン選択を引き継げるよう同期する(アバター/
+    // アイコンの切り替え自体も同様)。
+    setSelectedAvatarMode(settingsAvatarMode);
+    setSelectedIconUrl(settingsIconUrl);
   }, [
     settingsNameInput,
     settingsAvatar,
+    settingsAvatarMode,
+    settingsIconUrl,
     settingsCar,
     settingsStatus,
     settingsMessageInput,
     settingsShowMessage,
     saveDisplayName,
+    saveAvatarSettings,
   ]);
+
+  // アイコン画像のアップロード(2026-10追加)。選択した時点でStorageへ
+  // アップロードし、公開URLをsettingsIconUrlへ反映する(保存ボタンを押す
+  // までは実際のavatarImage/DBへは反映しない。既存のアバター選択
+  // (AvatarPicker)と同じく、保存操作自体はsaveSettingsにまとめるため)。
+  const handleIconFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // 同じファイルを連続で選び直せるよう、選択直後にクリアしておく。
+      e.target.value = "";
+      if (!file) return;
+      setIconUploadError(null);
+      if (
+        !(USER_ICON_ALLOWED_MIME_TYPES as readonly string[]).includes(
+          file.type,
+        )
+      ) {
+        setIconUploadError(t("settings.iconInvalidType"));
+        return;
+      }
+      if (file.size > USER_ICON_MAX_UPLOAD_BYTES) {
+        setIconUploadError(t("settings.iconTooLarge"));
+        return;
+      }
+      const userId = authUserIdRef.current;
+      if (!userId) return;
+      setIconUploading(true);
+      try {
+        const url = await uploadUserIconClient(userId, file);
+        setSettingsIconUrl(url);
+      } catch {
+        setIconUploadError(t("settings.iconUploadFailed"));
+      } finally {
+        setIconUploading(false);
+      }
+    },
+    [t],
+  );
 
   // 入室前の画面にいる間、ルームのRealtimeチャンネルにpresence観測者として
   // 接続し、プレビュー表示用のオンライン人数を取得する(入室後は不要なので
@@ -9817,10 +9940,26 @@ export default function AvatarSpace({
           )}
 
           <div className="mb-4">
-            <AvatarPicker
-              selected={selectedAvatar}
-              onSelect={setSelectedAvatar}
-            />
+            {selectedAvatarMode === "icon" && selectedIconUrl ? (
+              <div className="flex flex-col items-center gap-2">
+                <div className="h-16 w-16 overflow-hidden rounded-full border-2 border-slate-300 bg-slate-100">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={selectedIconUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <p className="text-center text-[11px] text-slate-400">
+                  {t("lobby.iconChangeHint")}
+                </p>
+              </div>
+            ) : (
+              <AvatarPicker
+                selected={selectedAvatar}
+                onSelect={setSelectedAvatar}
+              />
+            )}
           </div>
 
           <input
@@ -12373,10 +12512,74 @@ export default function AvatarSpace({
                   <p className="mb-2 text-xs font-semibold text-slate-400">
                     {t("settings.avatarLabel")}
                   </p>
-                  <AvatarPicker
-                    selected={settingsAvatar}
-                    onSelect={setSettingsAvatar}
-                  />
+                  <div className="mb-3 flex rounded-lg bg-slate-800 p-1 text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setSettingsAvatarMode("avatar")}
+                      className={`flex-1 rounded-md py-1.5 transition-colors ${
+                        settingsAvatarMode === "avatar"
+                          ? "bg-slate-600 text-white"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {t("settings.avatarModeAvatar")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsAvatarMode("icon")}
+                      className={`flex-1 rounded-md py-1.5 transition-colors ${
+                        settingsAvatarMode === "icon"
+                          ? "bg-slate-600 text-white"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {t("settings.avatarModeIcon")}
+                    </button>
+                  </div>
+
+                  {settingsAvatarMode === "avatar" ? (
+                    <AvatarPicker
+                      selected={settingsAvatar}
+                      onSelect={setSettingsAvatar}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="h-20 w-20 overflow-hidden rounded-full border-2 border-slate-600 bg-slate-800">
+                        {settingsIconUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={settingsIconUrl}
+                            alt={t("settings.avatarModeIcon")}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-center text-[10px] text-slate-500">
+                            {t("settings.iconNotSet")}
+                          </div>
+                        )}
+                      </div>
+                      <label className="cursor-pointer rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+                        {iconUploading
+                          ? t("settings.iconUploading")
+                          : t("settings.iconUploadButton")}
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={iconUploading}
+                          onChange={handleIconFileChange}
+                        />
+                      </label>
+                      <p className="text-center text-[10px] text-slate-500">
+                        {t("settings.iconSquareHint")}
+                      </p>
+                      {iconUploadError && (
+                        <p className="text-center text-[10px] text-red-400">
+                          {iconUploadError}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div>

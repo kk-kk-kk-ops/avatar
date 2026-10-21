@@ -6,7 +6,7 @@ import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
 import { startFreeTrial } from "@/app/plan/actions";
 import { translateAuthError, type Locale } from "@/lib/i18n/translations";
 import { getServerLocale } from "@/lib/i18n/getServerLocale";
-import { PLANS, type PlanId, type Room } from "@/lib/types";
+import { PLANS, type AvatarMode, type PlanId, type Room } from "@/lib/types";
 import LoginCard from "@/components/auth/LoginCard";
 import AvatarSpaceLoader from "@/components/AvatarSpaceLoader";
 import LogoutButton from "@/components/auth/LogoutButton";
@@ -87,7 +87,7 @@ async function renderRoomJoin(
   ] = await Promise.all([
     supabase
       .from("profiles")
-      .select("display_name, locale")
+      .select("display_name, locale, avatar_mode, avatar_icon_url")
       .eq("user_id", user.id)
       .maybeSingle(),
     supabase
@@ -175,6 +175,8 @@ async function renderRoomJoin(
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
       maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
       initialProfileLocale={(profile?.locale as Locale) ?? undefined}
+      initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
+      initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
     />
   );
 }
@@ -217,7 +219,7 @@ async function renderViewOnlyRoomJoin(
     await Promise.all([
       supabase
         .from("profiles")
-        .select("display_name, locale")
+        .select("display_name, locale, avatar_mode, avatar_icon_url")
         .eq("user_id", user.id)
         .maybeSingle(),
       supabase
@@ -277,6 +279,8 @@ async function renderViewOnlyRoomJoin(
       // ルームアクセスを証明できず、これが無いと音声/映像に参加できない。
       viewOnlyInviteToken={inviteToken}
       initialProfileLocale={(profile?.locale as Locale) ?? undefined}
+      initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
+      initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
     />
   );
 }

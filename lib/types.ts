@@ -4,6 +4,11 @@
 // エリアのような強制OFFとは別物)。
 export type PresenceStatus = "available" | "busy" | "away" | "chatOnly";
 
+// アバター空間内での自分の表示方式(2026-10追加)。"avatar"は従来通りの
+// 向きごとスプライト(AVATAR_IMAGES)、"icon"はユーザーがアップロードした
+// 正方形画像を丸枠で表示する。
+export type AvatarMode = "avatar" | "icon";
+
 export type PlayerState = {
   id: string; // ブラウザごとのランダムID(ゲストID)
   userId?: string; // 認証済みSupabaseユーザーの安定ID(auth.uid())。DMの
@@ -42,7 +47,10 @@ export type PlayerState = {
   screenPreviewDataUrl?: string | null;
   inCall?: boolean; // ビデオ通話中かどうか(相手にも表示する)
   watchingScreen?: boolean; // 誰かの画面共有を視聴中かどうか(マスター画面の集計用)
-  avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)
+  avatarImage?: string; // 選択したアバター画像のパス(例: /avatar/goo.png)。
+  // avatarModeが"icon"の場合は、アップロードしたアイコン画像の公開URLを
+  // 保持する(このフィールドを兼用し、新規にフィールドを増やさない)。
+  avatarMode?: AvatarMode; // 未設定時は"avatar"扱い(getAvatarDisplayMode参照)
   status?: PresenceStatus; // 在席ステータス(未設定時はavailable扱い)
   carImage?: string; // 選択した車画像のフォルダパス(例: /car/car1)
   carVisible?: boolean; // 「shift+x」で車に乗った状態を表示中かどうか(相手にも表示する)
@@ -185,6 +193,17 @@ export function getAvatarSpritePath(
 ): string {
   if (!isAvatarFolder(avatarImage)) return avatarImage;
   return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.webp`;
+}
+
+// 実際にアイコン表示として描画してよいかどうかの判定(avatarModeが"icon"
+// でも、何らかの理由でavatarImageが空ならスプライト表示にフォールバック
+// する)。Avatar.tsx・設定画面の両方から参照する単一の判定ロジック。
+export function getAvatarDisplayMode(
+  player: Pick<PlayerState, "avatarMode" | "avatarImage">,
+): AvatarMode {
+  return player.avatarMode === "icon" && player.avatarImage
+    ? "icon"
+    : "avatar";
 }
 
 // 車選択一覧のプレビューに使う代表画像(front.png)。
@@ -441,6 +460,22 @@ export const CHAT_IMAGE_ALLOWED_MIME_TYPES = [
   "image/png",
   "image/webp",
 ] as const;
+
+// プロフィールアイコン(設定の「アイコン」選択時にアップロードする正方形
+// 画像)の制約。アバタースプライトと違い、ユーザーごとに1枚だけ
+// Supabase Storageのuser-iconsバケットに保存され、再アップロードすると
+// 同じパス("{userId}/icon.webp")へ上書きされる(履歴は残さない)。
+// アップロード前にブラウザのCanvasでUSER_ICON_MAX_DIMENSION四方まで
+// 縮小してからアップロードするため、テンプレート背景画像と同じく
+// サーバー側の圧縮処理(sharp)は持たない。
+export const USER_ICON_MAX_DIMENSION = 512; // Canvasで縮小する際の最大辺(px)
+export const USER_ICON_DISPLAY_SIZE = 50; // アバター空間内での表示サイズ(px、固定・仕様指定値)
+export const USER_ICON_ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+export const USER_ICON_MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10MB(アップロード前の元画像の上限)
 
 // タブ切替・アプリのバックグラウンド化が続いた際、ルームから自動退室
 // させるまでの秒数(永遠入室状態を防ぐため)。将来的に見直す可能性が
