@@ -93,7 +93,7 @@ export default function TokushohoPage() {
     {
       label: '動作環境',
       value:
-        '【要確認】Google Chrome、Microsoft Edge、Safari の最新版。マイク・カメラ(会議を利用する場合)と、安定したインターネット接続が必要です。',
+        'Google Chrome、Microsoft Edge、Safari の最新版。マイク・カメラ(会議を利用する場合)と、安定したインターネット接続が必要です。',
     },
   ];
 
