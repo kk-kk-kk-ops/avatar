@@ -188,14 +188,23 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         {isIconMode ? (
           // アイコン表示(2026-10追加): アップロード画像を丸枠(object-cover
           // で正方形以外の画像も枠いっぱいに切り抜いて表示)に収める。
-          // 車表示(shift+x)はアイコンモードでは対象外(常にアイコンを表示)。
-          <div className="h-full w-full overflow-hidden rounded-full drop-shadow-md">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={player.avatarImage}
-              alt={player.name}
-              className="h-full w-full object-cover"
-            />
+          // 画像が未設定(アップロード前・削除直後)の間は、代わりに表示名の
+          // 先頭1文字を丸枠の中央に表示する(設定画面のプレビューと同じ
+          // フォールバック)。車表示(shift+x)はアイコンモードでは対象外
+          // (常にアイコンを表示)。
+          <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-700 drop-shadow-md">
+            {player.avatarImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={player.avatarImage}
+                alt={player.name}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <span className="text-base font-bold text-slate-100">
+                {player.name.trim().slice(0, 1) || "?"}
+              </span>
+            )}
           </div>
         ) : showCar ? (
           // eslint-disable-next-line @next/next/no-img-element
