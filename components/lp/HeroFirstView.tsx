@@ -51,12 +51,12 @@ export function HeroFirstView() {
     <section className="relative overflow-hidden bg-gradient-to-b from-[#FFFDFD] to-[#FEF2F2]">
       <div className="relative mx-auto w-full max-w-[1440px] px-5 pb-14 pt-10 lg:aspect-[1440/900] lg:p-0">
         {/* 背景の装飾（赤いリボン・透かし文字・スクロール） */}
-        <img src="/lp/ribbon.png" alt="" aria-hidden="true" width={1440} height={960}
-          className="pointer-events-none absolute left-0 top-[38%] w-[170%] max-w-none select-none opacity-70 lg:top-0 lg:w-full lg:opacity-100" />
         <img src="/lp/watermark-globy.png" alt="" aria-hidden="true" width={494} height={181}
           className="pointer-events-none absolute right-2 top-2 w-[46%] select-none lg:left-[54.7%] lg:right-auto lg:top-0 lg:w-[34%]" />
         <img src="/lp/watermark-online-office.png" alt="" aria-hidden="true" width={544} height={248}
           className="pointer-events-none absolute hidden select-none lg:left-[9.4%] lg:top-[67.4%] lg:block lg:w-[37.8%]" />
+        <img src="/lp/ribbon.png" alt="" aria-hidden="true" width={1440} height={960}
+          className="pointer-events-none absolute left-0 top-[38%] w-[170%] max-w-none select-none opacity-70 lg:top-0 lg:w-full lg:opacity-100" />
         <img src="/lp/scroll.png" alt="" aria-hidden="true" width={174} height={271}
           className="pointer-events-none absolute hidden select-none lg:left-[46.7%] lg:top-[77.8%] lg:block lg:w-[6.1%]" />
 
