@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { AboutGloby } from '@/components/lp/AboutGloby';
 import { HeroFirstView } from '@/components/lp/HeroFirstView';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteChrome';
 import { BILLING, BRAND, FEATURES, PLANS, SITE, TRIAL, yen } from '@/lib/site-info';
@@ -15,6 +16,7 @@ export default function LandingPage() {
     <div className="bg-white text-slate-900" style={{ fontFamily: BRAND.font }}>
       <SiteHeader />
       <HeroFirstView />
+      <AboutGloby />
 
       {/* 機能 */}
       <section id="features" className="mx-auto max-w-6xl scroll-mt-6 px-5 py-20">
