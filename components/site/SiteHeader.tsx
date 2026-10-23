@@ -32,10 +32,9 @@ export function SiteHeader() {
   return (
     <header className="relative z-20 w-full bg-white" style={{ fontFamily: BRAND.font }}>
       <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between gap-8 px-5 lg:h-[112px] lg:px-[4.6%]">
-        {/* カンプでは空欄ですが、サービス名がわかるようにロゴを置いています（不要なら削除） */}
         <Link href="/lp" className="flex items-center gap-3" onClick={() => setOpen(false)}>
-          <img src="/grovina/logo.png" alt="GROVINA STUDIO" width={246} height={75} className="h-auto w-[120px] lg:w-[150px]" />
-          <span className="border-l border-[#ddd] pl-3 text-base font-bold text-[#222] lg:text-lg">{SITE.serviceName}</span>
+          <img src="/lp/logo-globy.png" alt="Globy" width={480} height={150}
+            className="h-auto w-[96px] lg:w-[120px]" />
         </Link>
 
         <div className="hidden items-center gap-10 lg:flex">
