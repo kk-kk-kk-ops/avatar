@@ -43,26 +43,26 @@ function OfficeIllustration() {
 
 /**
  * ファーストビュー（デザインカンプ準拠）
- * PC（1024px以上）は 1440×900 のカンプを基準に、画面幅に合わせて全体を拡大縮小します。
+ * PC（1024px以上）は 1440×960（リボン画像の高さ）を基準に、画面幅に合わせて全体を拡大縮小します。
  * スマホは「コピー → ボタン → イラスト」の縦並びです。
  */
 export function HeroFirstView() {
   return (
     <section className="relative overflow-hidden bg-gradient-to-b from-[#FFFDFD] to-[#FEF2F2]">
-      <div className="relative mx-auto w-full max-w-[1440px] px-5 pb-14 pt-10 lg:aspect-[1440/900] lg:p-0">
+      <div className="relative mx-auto w-full max-w-[1440px] px-5 pb-14 pt-10 lg:aspect-[1440/960] lg:p-0">
         {/* 背景の装飾（赤いリボン・透かし文字・スクロール） */}
         <img src="/lp/watermark-globy.png" alt="" aria-hidden="true" width={494} height={181}
           className="pointer-events-none absolute right-2 top-2 w-[46%] select-none lg:left-[54.7%] lg:right-auto lg:top-0 lg:w-[34%]" />
         <img src="/lp/watermark-online-office.png" alt="" aria-hidden="true" width={544} height={248}
-          className="pointer-events-none absolute hidden select-none lg:left-[9.4%] lg:top-[67.4%] lg:block lg:w-[37.8%]" />
+          className="pointer-events-none absolute hidden select-none lg:left-[9.4%] lg:top-[63.2%] lg:block lg:w-[37.8%]" />
         <img src="/lp/ribbon.png" alt="" aria-hidden="true" width={1440} height={960}
           className="pointer-events-none absolute left-0 top-[38%] w-[170%] max-w-none select-none opacity-70 lg:top-0 lg:w-full lg:opacity-100" />
         <img src="/lp/scroll.png" alt="" aria-hidden="true" width={174} height={271}
-          className="pointer-events-none absolute hidden select-none lg:left-[46.7%] lg:top-[77.8%] lg:block lg:w-[6.1%]" />
+          className="pointer-events-none absolute hidden select-none lg:left-[46.7%] lg:top-[72.9%] lg:block lg:w-[6.1%]" />
 
         <div className="relative grid gap-10 lg:static lg:block">
           {/* コピーとボタン */}
-          <div className="relative lg:absolute lg:left-[4.6%] lg:top-[15.5%] lg:w-[46%]">
+          <div className="relative lg:absolute lg:left-[4.6%] lg:top-[14.5%] lg:w-[46%]">
             <h1 className="text-[clamp(1.6rem,7.6vw,2.25rem)] lg:text-[clamp(2rem,3.95vw,3.55rem)] font-black leading-[1.35] text-[#111] lg:whitespace-nowrap">
               オンラインに、
               <br />
@@ -91,7 +91,7 @@ export function HeroFirstView() {
           </div>
 
           {/* イラスト */}
-          <div className="relative mx-auto w-full max-w-[560px] lg:absolute lg:left-[45.8%] lg:top-[11.1%] lg:mx-0 lg:w-[52.1%] lg:max-w-none">
+          <div className="relative mx-auto w-full max-w-[560px] lg:absolute lg:left-[45.8%] lg:top-[10.4%] lg:mx-0 lg:w-[52.1%] lg:max-w-none">
             <OfficeIllustration />
           </div>
         </div>
