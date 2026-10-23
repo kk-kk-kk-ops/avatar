@@ -66,22 +66,17 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         // CAR_HITBOX_HEIGHT)の中心座標。横方向は常に中心を揃える
         // (当たり判定・画像とも同じxを中心とするため)。
         const left = x - displaySize / 2;
-        let top: number;
-        if (isIconMode) {
-          // アイコン表示時は丸枠と当たり判定を中央揃えにする仕様
-          // (スプライトアバターの「足元を当たり判定の下端に揃える」
-          // 方式とは異なる)。
-          top = y - displaySize / 2;
-        } else {
-          // 縦方向はアバター・車表示のどちらも、当たり判定の下端と画像の
-          // 下端が一致するようにする(2026-09報告により、車も中心揃えから
-          // アバターと同じ下端揃えに統一)。当たり判定の高さ自体は
-          // アバター/車で異なる(AVATAR_HITBOX_HEIGHT/CAR_HITBOX_HEIGHT)。
-          const hitboxHeight = player.carVisible
+        // 縦方向はアバター・車・アイコンのいずれも、当たり判定の下端と
+        // 画像(丸枠)の下端が一致するようにする(2026-09報告により車も
+        // 中心揃えから下端揃えに統一、2026-10報告によりアイコンも同様に
+        // 統一)。当たり判定の高さは車表示中のみCAR_HITBOX_HEIGHT
+        // (アイコンモードでは車を表示しないため、carVisibleが立っていても
+        // 無視してAVATAR_HITBOX_HEIGHTを使う)。
+        const hitboxHeight =
+          !isIconMode && player.carVisible
             ? CAR_HITBOX_HEIGHT
             : AVATAR_HITBOX_HEIGHT;
-          top = y + hitboxHeight / 2 - displaySize;
-        }
+        const top = y + hitboxHeight / 2 - displaySize;
         const transform = `translate(${left}px, ${top}px)`;
         if (rootRef.current) rootRef.current.style.transform = transform;
         // 名前タグ側もアバター本体と全く同じサイズ・原点のボックスとして
