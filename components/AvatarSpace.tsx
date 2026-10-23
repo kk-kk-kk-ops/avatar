@@ -10179,6 +10179,34 @@ export default function AvatarSpace({
             </Link>
           )}
         </div>
+
+        {/* アイコン削除の確認モーダル。入室後の画面とは別のreturn文の
+            ため、showDeleteIconConfirm/handleDeleteIconConfirm自体は
+            共有しつつ、ロビー側にも同じモーダルを置く(無いと「削除」を
+            押しても何も表示されず、入室後に突然ポップアップが出てしまう)。 */}
+        {showDeleteIconConfirm && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+            <div className="w-full max-w-xs rounded-xl bg-white p-5 shadow-xl">
+              <p className="mb-4 text-left text-sm font-semibold text-slate-800">
+                {t("settings.iconDeleteConfirm")}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDeleteIconConfirm(false)}
+                  className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+                >
+                  {t("common.no")}
+                </button>
+                <button
+                  onClick={handleDeleteIconConfirm}
+                  className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500"
+                >
+                  {t("common.yes")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
