@@ -48,7 +48,7 @@ function OfficeIllustration() {
  */
 export function HeroFirstView() {
   return (
-    <section className="relative overflow-hidden bg-gradient-to-b from-[#FFFDFD] to-[#FEF2F2]">
+    <section className="relative overflow-hidden bg-white">
       <div className="relative mx-auto w-full max-w-[1440px] px-5 pb-14 pt-10 lg:aspect-[1440/960] lg:p-0">
         {/* 背景の装飾（背景画像（リボン＋透かし文字）・スクロール） */}
         <img src="/lp/fvback.png" alt="" aria-hidden="true" width={1440} height={960}
