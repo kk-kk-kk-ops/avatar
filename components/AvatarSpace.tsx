@@ -4833,6 +4833,36 @@ export default function AvatarSpace({
   }, []);
 
   // ---- 入室処理 ----
+  // 表示名・言語・アバター設定(avatar_mode/avatar_icon_url)の保存は
+  // いずれもprofilesテーブルへのfire-and-forgetなUPDATEだったため、
+  // ほぼ同時に複数回呼ばれると、後から発行したはずの新しい値が、
+  // 先に発行したが応答が遅れた古いUPDATEに後から上書きされてしまう
+  // レース条件があった(2026-10報告: アイコンをアップロードした直後に
+  // タブ切り替え等で別のUPDATEが発行され、ネットワークの応答順序が
+  // 入れ替わった結果、Storageには画像が残るのにDBのavatar_icon_urlだけ
+  // nullに戻ってしまっていた)。呼び出した順番どおりに適用されることを
+  // 保証するため、profilesへの書き込みを1本のPromiseチェーンに直列化
+  // する(display_name/locale/avatar_mode・avatar_icon_urlはすべて同じ
+  // 行の別々の列を更新するだけなので、直列化しても他の操作を妨げない)。
+  const profileWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const enqueueProfileWrite = useCallback(
+    (
+      run: () => PromiseLike<{ error: { message: string } | null }>,
+      errorLabel: string,
+    ) => {
+      profileWriteQueueRef.current = profileWriteQueueRef.current
+        .catch(() => {})
+        .then(() => run())
+        .then(({ error }) => {
+          if (error) {
+            // eslint-disable-next-line no-console
+            console.error(errorLabel, error);
+          }
+        });
+    },
+    [],
+  );
+
   // 表示名をprofiles.display_nameへ保存し、次回ログイン時のデフォルト値に
   // する(管理者・ゲストいずれのアカウントでも、認証済みユーザーは全員
   // 自分自身のprofiles行を持つため同じ経路でよい。viewOnly(他人の招待URL
@@ -4846,18 +4876,16 @@ export default function AvatarSpace({
     (name: string) => {
       const userId = authUserIdRef.current;
       if (!userId) return;
-      supabase
-        .from("profiles")
-        .update({ display_name: name })
-        .eq("user_id", userId)
-        .then(({ error }) => {
-          if (error) {
-            // eslint-disable-next-line no-console
-            console.error("表示名の保存に失敗しました", error);
-          }
-        });
+      enqueueProfileWrite(
+        () =>
+          supabase
+            .from("profiles")
+            .update({ display_name: name })
+            .eq("user_id", userId),
+        "表示名の保存に失敗しました",
+      );
     },
-    [supabase],
+    [supabase, enqueueProfileWrite],
   );
 
   // 設定パネルの言語ボタンで選んだ言語を、次回ログイン時・別デバイスでも
@@ -4867,18 +4895,16 @@ export default function AvatarSpace({
     (next: Locale) => {
       const userId = authUserIdRef.current;
       if (!userId) return;
-      supabase
-        .from("profiles")
-        .update({ locale: next })
-        .eq("user_id", userId)
-        .then(({ error }) => {
-          if (error) {
-            // eslint-disable-next-line no-console
-            console.error("言語設定の保存に失敗しました", error);
-          }
-        });
+      enqueueProfileWrite(
+        () =>
+          supabase
+            .from("profiles")
+            .update({ locale: next })
+            .eq("user_id", userId),
+        "言語設定の保存に失敗しました",
+      );
     },
-    [supabase],
+    [supabase, enqueueProfileWrite],
   );
 
   // アバター/アイコンの表示方式・アイコンURLをprofiles.avatar_mode/
@@ -4890,18 +4916,16 @@ export default function AvatarSpace({
     (mode: AvatarMode, iconUrl: string | null) => {
       const userId = authUserIdRef.current;
       if (!userId) return;
-      supabase
-        .from("profiles")
-        .update({ avatar_mode: mode, avatar_icon_url: iconUrl })
-        .eq("user_id", userId)
-        .then(({ error }) => {
-          if (error) {
-            // eslint-disable-next-line no-console
-            console.error("アイコン設定の保存に失敗しました", error);
-          }
-        });
+      enqueueProfileWrite(
+        () =>
+          supabase
+            .from("profiles")
+            .update({ avatar_mode: mode, avatar_icon_url: iconUrl })
+            .eq("user_id", userId),
+        "アイコン設定の保存に失敗しました",
+      );
     },
-    [supabase],
+    [supabase, enqueueProfileWrite],
   );
 
   const handleJoin = useCallback(async () => {
