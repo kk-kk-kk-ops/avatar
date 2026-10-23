@@ -195,15 +195,15 @@ export function getAvatarSpritePath(
   return `${avatarImage}/${AVATAR_DIR_FILENAMES[dir]}.webp`;
 }
 
-// 実際にアイコン表示として描画してよいかどうかの判定(avatarModeが"icon"
-// でも、何らかの理由でavatarImageが空ならスプライト表示にフォールバック
-// する)。Avatar.tsx・設定画面の両方から参照する単一の判定ロジック。
+// avatarModeをそのまま返すだけの判定(2026-10: 以前はavatarImageが空の
+// 場合にスプライト表示へフォールバックしていたが、アイコンモードで画像が
+// 未設定の間は丸枠に表示名の先頭1文字を表示する仕様に変更したため、
+// avatarImageの有無を問わずavatarModeの値だけで判定してよくなった)。
+// Avatar.tsx・設定画面の両方から参照する単一の判定ロジック。
 export function getAvatarDisplayMode(
   player: Pick<PlayerState, "avatarMode" | "avatarImage">,
 ): AvatarMode {
-  return player.avatarMode === "icon" && player.avatarImage
-    ? "icon"
-    : "avatar";
+  return player.avatarMode === "icon" ? "icon" : "avatar";
 }
 
 // 車選択一覧のプレビューに使う代表画像(front.png)。

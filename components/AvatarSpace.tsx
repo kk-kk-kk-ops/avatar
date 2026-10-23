@@ -843,9 +843,10 @@ export default function AvatarSpace({
     useState<PresenceStatus>("available");
   const [settingsMessageInput, setSettingsMessageInput] = useState("");
   const [settingsShowMessage, setSettingsShowMessage] = useState(false);
-  // アバター選択の連打対策(2026-10追加)。選択直後からこの時間が経つまで
-  // 次の選択を受け付けない(選択のたびに即座に反映・配信するため、連打すると
-  // 短時間に大量の反映処理が走ってしまうのを防ぐ)。
+  // アバター選択・「アバター」⇔「アイコン」タブ切り替えの連打対策
+  // (2026-10追加)。選択・切り替え直後からこの時間が経つまで次の操作を
+  // 受け付けない(操作のたびに即座に反映・配信するため、連打すると
+  // 短時間に大量の反映処理・DB書き込みが走ってしまうのを防ぐ)。
   const AVATAR_CHANGE_COOLDOWN_MS = 300;
   const avatarChangeLockedUntilRef = useRef(0);
   const [avatarPickerLocked, setAvatarPickerLocked] = useState(false);
@@ -4934,15 +4935,16 @@ export default function AvatarSpace({
       mapSizeRef.current.height / 2,
       obstacles,
     );
-    // アイコンモードでも、まだ1枚もアップロードしていない(selectedIconUrlが
-    // 無い)場合はアバタースプライト表示にフォールバックする。
-    const useIcon = selectedAvatarMode === "icon" && !!selectedIconUrl;
+    // アイコンモードでまだ1枚もアップロードしていない(selectedIconUrlが
+    // 無い)場合は、avatarImageを空にしておく(丸枠に表示名の先頭1文字を
+    // 表示するフォールバックはAvatar.tsx側で行う)。
+    const useIcon = selectedAvatarMode === "icon";
     const initial: PlayerState = {
       id: selfId.current,
       userId: authUserIdRef.current ?? undefined,
       name,
       color: randomColor(),
-      avatarImage: useIcon ? (selectedIconUrl as string) : selectedAvatar,
+      avatarImage: useIcon ? (selectedIconUrl ?? "") : selectedAvatar,
       avatarMode: useIcon ? "icon" : "avatar",
       status: "available",
       x: spawn.x,
@@ -9688,7 +9690,7 @@ export default function AvatarSpace({
     // state側だけを更新する。icon→avatar→iconと行き来しても、触って
     // いない方のstateは前回の値のまま保持される。
     if (mode === "icon") {
-      setSettingsIconUrl(selfState.current?.avatarImage ?? null);
+      setSettingsIconUrl(selfState.current?.avatarImage || null);
     } else {
       setSettingsAvatar(selfState.current?.avatarImage ?? AVATAR_IMAGES[0]);
     }
@@ -9712,23 +9714,60 @@ export default function AvatarSpace({
     channelRef.current?.track(updated);
   }, []);
 
-  // ①アバター: 選択したら即反映。連打対策として、選択してから
-  // AVATAR_CHANGE_COOLDOWN_MSが経つまで次の選択を受け付けない。
+  // アバター/アイコンの連打対策(2026-10追加)。選択・切り替え直後から
+  // AVATAR_CHANGE_COOLDOWN_MSが経つまで、次の選択・切り替えを受け付け
+  // ない(選択のたびに即座に反映・配信するため、連打すると短時間に大量の
+  // 反映処理・DB書き込みが走ってしまうのを防ぐ)。アバター選択(①)・
+  // 「アバター」⇔「アイコン」タブの切り替えの両方で共有する。
+  const tryLockAvatarChange = useCallback(() => {
+    const now = Date.now();
+    if (now < avatarChangeLockedUntilRef.current) return false;
+    avatarChangeLockedUntilRef.current = now + AVATAR_CHANGE_COOLDOWN_MS;
+    setAvatarPickerLocked(true);
+    window.setTimeout(() => {
+      setAvatarPickerLocked(false);
+    }, AVATAR_CHANGE_COOLDOWN_MS);
+    return true;
+  }, []);
+
+  // ①アバター: 選択したら即反映。
   const handleSelectAvatar = useCallback(
     (avatar: string) => {
-      const now = Date.now();
-      if (now < avatarChangeLockedUntilRef.current) return;
-      avatarChangeLockedUntilRef.current = now + AVATAR_CHANGE_COOLDOWN_MS;
-      setAvatarPickerLocked(true);
-      window.setTimeout(() => {
-        setAvatarPickerLocked(false);
-      }, AVATAR_CHANGE_COOLDOWN_MS);
+      if (!tryLockAvatarChange()) return;
       setSettingsAvatar(avatar);
       setSettingsAvatarMode("avatar");
       applySelfStateUpdate({ avatarImage: avatar, avatarMode: "avatar" });
       setSelectedAvatarMode("avatar");
     },
-    [applySelfStateUpdate],
+    [tryLockAvatarChange, applySelfStateUpdate],
+  );
+
+  // 「アバター」「アイコン」タブの切り替え自体も即反映する(2026-10)。
+  // アイコン側に画像が未設定でも、丸枠に表示名の先頭1文字を表示する
+  // フォールバックがあるため、画像の有無にかかわらず切り替えてよい。
+  const handleSetAvatarMode = useCallback(
+    (mode: AvatarMode) => {
+      if (!tryLockAvatarChange()) return;
+      setSettingsAvatarMode(mode);
+      if (mode === "icon") {
+        applySelfStateUpdate({
+          avatarMode: "icon",
+          avatarImage: settingsIconUrl ?? "",
+        });
+      } else {
+        applySelfStateUpdate({ avatarMode: "avatar", avatarImage: settingsAvatar });
+      }
+      saveAvatarSettings(mode, settingsIconUrl);
+      setSelectedAvatarMode(mode);
+      setSelectedIconUrl(settingsIconUrl);
+    },
+    [
+      tryLockAvatarChange,
+      applySelfStateUpdate,
+      settingsIconUrl,
+      settingsAvatar,
+      saveAvatarSettings,
+    ],
   );
 
   // ③車: 選択したら即反映(車の選択はこれまでもDBへは保存しておらず、
@@ -9830,10 +9869,9 @@ export default function AvatarSpace({
   );
 
   // ②アイコンの削除。確認ポップアップで「はい」が押されたときに呼ぶ。
-  // Storageの実ファイルを削除したうえで、表示はアバタースプライトに
-  // 戻す(アイコンが無い状態のまま"icon"モードを続けると表示できる
-  // 画像が無くなってしまうため)。設定タブ自体はアイコンタブのまま
-  // (プレースホルダー+再アップロード導線を見せ続ける)。
+  // Storageの実ファイルを削除したうえで、アイコンモードのまま丸枠に
+  // 表示名の先頭1文字を表示するフォールバック表示へ即座に切り替える
+  // (Avatar.tsxのisIconMode分岐を参照。アバタースプライトへは戻さない)。
   const handleDeleteIconConfirm = useCallback(() => {
     setShowDeleteIconConfirm(false);
     const userId = authUserIdRef.current;
@@ -9844,14 +9882,11 @@ export default function AvatarSpace({
       });
     }
     setSettingsIconUrl(null);
-    applySelfStateUpdate({
-      avatarImage: settingsAvatar,
-      avatarMode: "avatar",
-    });
-    saveAvatarSettings("avatar", null);
-    setSelectedAvatarMode("avatar");
+    applySelfStateUpdate({ avatarImage: "", avatarMode: "icon" });
+    saveAvatarSettings("icon", null);
+    setSelectedAvatarMode("icon");
     setSelectedIconUrl(null);
-  }, [settingsAvatar, applySelfStateUpdate, saveAvatarSettings]);
+  }, [applySelfStateUpdate, saveAvatarSettings]);
 
   // 入室前の画面にいる間、ルームのRealtimeチャンネルにpresence観測者として
   // 接続し、プレビュー表示用のオンライン人数を取得する(入室後は不要なので
@@ -12585,8 +12620,9 @@ export default function AvatarSpace({
                   <div className="mb-3 flex rounded-lg bg-slate-800 p-1 text-xs font-semibold">
                     <button
                       type="button"
-                      onClick={() => setSettingsAvatarMode("avatar")}
-                      className={`flex-1 rounded-md py-1.5 transition-colors ${
+                      disabled={avatarPickerLocked}
+                      onClick={() => handleSetAvatarMode("avatar")}
+                      className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                         settingsAvatarMode === "avatar"
                           ? "bg-slate-600 text-white"
                           : "text-slate-400"
@@ -12596,8 +12632,9 @@ export default function AvatarSpace({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSettingsAvatarMode("icon")}
-                      className={`flex-1 rounded-md py-1.5 transition-colors ${
+                      disabled={avatarPickerLocked}
+                      onClick={() => handleSetAvatarMode("icon")}
+                      className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                         settingsAvatarMode === "icon"
                           ? "bg-slate-600 text-white"
                           : "text-slate-400"
