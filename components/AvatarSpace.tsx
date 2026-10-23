@@ -13605,8 +13605,8 @@ export default function AvatarSpace({
       {/* アイコン削除の確認モーダル */}
       {showDeleteIconConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
-            <p className="mb-4 text-sm font-semibold text-slate-800">
+          <div className="w-full max-w-xs rounded-xl bg-white p-5 shadow-xl">
+            <p className="mb-4 text-left text-sm font-semibold text-slate-800">
               {t("settings.iconDeleteConfirm")}
             </p>
             <div className="flex gap-2">
