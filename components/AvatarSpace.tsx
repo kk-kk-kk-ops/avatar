@@ -9770,6 +9770,20 @@ export default function AvatarSpace({
     ],
   );
 
+  // ロビー画面(入室前)でのアバター選択(2026-10追加)。まだselfStateが
+  // 無い(入室していない)ため、applySelfStateUpdate/DB保存は不要で、
+  // handleJoin()が読むselectedAvatar/selectedAvatarModeを更新するだけで
+  // よい。アバター選択の連打対策(tryLockAvatarChange)は設定タブと共有
+  // する(ロビーと設定タブが同時に表示されることは無いため)。
+  const handleSelectLobbyAvatar = useCallback(
+    (avatar: string) => {
+      if (!tryLockAvatarChange()) return;
+      setSelectedAvatar(avatar);
+      setSelectedAvatarMode("avatar");
+    },
+    [tryLockAvatarChange],
+  );
+
   // ③車: 選択したら即反映(車の選択はこれまでもDBへは保存しておらず、
   // presence配信のみ。次回入室時は既定の車に戻る既存仕様のまま)。
   const handleSelectCar = useCallback(
@@ -10045,25 +10059,87 @@ export default function AvatarSpace({
           )}
 
           <div className="mb-4">
-            {selectedAvatarMode === "icon" && selectedIconUrl ? (
-              <div className="flex flex-col items-center gap-2">
-                <div className="h-16 w-16 overflow-hidden rounded-full border-2 border-slate-300 bg-slate-100">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={selectedIconUrl}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-                <p className="text-center text-[11px] text-slate-400">
-                  {t("lobby.iconChangeHint")}
-                </p>
-              </div>
-            ) : (
+            <div className="mb-3 flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
+              <button
+                type="button"
+                disabled={avatarPickerLocked}
+                onClick={() => handleSetAvatarMode("avatar")}
+                className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  selectedAvatarMode === "avatar"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500"
+                }`}
+              >
+                {t("settings.avatarModeAvatar")}
+              </button>
+              <button
+                type="button"
+                disabled={avatarPickerLocked}
+                onClick={() => handleSetAvatarMode("icon")}
+                className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  selectedAvatarMode === "icon"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500"
+                }`}
+              >
+                {t("settings.avatarModeIcon")}
+              </button>
+            </div>
+
+            {selectedAvatarMode === "avatar" ? (
               <AvatarPicker
                 selected={selectedAvatar}
-                onSelect={setSelectedAvatar}
+                onSelect={handleSelectLobbyAvatar}
+                disabled={avatarPickerLocked}
               />
+            ) : (
+              <div className="flex flex-col items-center gap-2">
+                <div className="h-16 w-16 overflow-hidden rounded-full border-2 border-slate-300 bg-slate-100">
+                  {selectedIconUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={selectedIconUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-xl font-bold text-slate-400">
+                      {nameInput.trim().slice(0, 1) || "?"}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    {iconUploading
+                      ? t("settings.iconUploading")
+                      : t("settings.iconUploadButton")}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      disabled={iconUploading}
+                      onChange={handleIconFileChange}
+                    />
+                  </label>
+                  {selectedIconUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteIconConfirm(true)}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      {t("common.delete")}
+                    </button>
+                  )}
+                </div>
+                <p className="text-center text-[10px] text-slate-400">
+                  {t("settings.iconSquareHint")}
+                </p>
+                {iconUploadError && (
+                  <p className="text-center text-[10px] text-red-500">
+                    {iconUploadError}
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
