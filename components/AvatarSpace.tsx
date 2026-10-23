@@ -80,7 +80,7 @@ import {
   uploadRawChatImageWithProgress,
   validateChatImageFile,
 } from "./uploadChatImage";
-import { uploadUserIconClient } from "./uploadUserIcon";
+import { deleteUserIconClient, uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
 
 const COLORS = [
@@ -843,6 +843,14 @@ export default function AvatarSpace({
     useState<PresenceStatus>("available");
   const [settingsMessageInput, setSettingsMessageInput] = useState("");
   const [settingsShowMessage, setSettingsShowMessage] = useState(false);
+  // アバター選択の連打対策(2026-10追加)。選択直後からこの時間が経つまで
+  // 次の選択を受け付けない(選択のたびに即座に反映・配信するため、連打すると
+  // 短時間に大量の反映処理が走ってしまうのを防ぐ)。
+  const AVATAR_CHANGE_COOLDOWN_MS = 300;
+  const avatarChangeLockedUntilRef = useRef(0);
+  const [avatarPickerLocked, setAvatarPickerLocked] = useState(false);
+  // アイコン削除の確認ポップアップ(2026-10追加)。
+  const [showDeleteIconConfirm, setShowDeleteIconConfirm] = useState(false);
   const [players, setPlayers] = useState<Record<string, PlayerState>>({});
   const playersRef = useRef<Record<string, PlayerState>>({});
   // LiveKitのイベントハンドラ(登録時に一度だけクロージャが作られる)から
@@ -9692,63 +9700,96 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarTab]);
 
-  const saveSettings = useCallback(() => {
+  // 設定タブの各項目は、以前は「保存する」ボタンを押すまでまとめて
+  // 反映する方式だったが、2026-10に項目ごとの即時反映へ変更した
+  // (ボタン自体を廃止)。selfState・presence(他の参加者への配信)・
+  // players(自分の描画)をまとめて更新する共通処理。
+  const applySelfStateUpdate = useCallback((patch: Partial<PlayerState>) => {
     if (!selfState.current) return;
-    if (settingsAvatarMode === "icon" && !settingsIconUrl) {
-      setIconUploadError(t("settings.iconRequired"));
-      return;
-    }
-    setIconUploadError(null);
-    const name =
-      settingsNameInput.trim() ||
-      t("room.guestDefaultName", { id: selfId.current.slice(0, 4) });
-    selfState.current.name = name;
-    selfState.current.avatarImage =
-      settingsAvatarMode === "icon"
-        ? (settingsIconUrl as string)
-        : settingsAvatar;
-    selfState.current.avatarMode = settingsAvatarMode;
-    selfState.current.carImage = settingsCar;
-    selfState.current.status = settingsStatus;
-    // 会議室退室時・タブ復帰時に戻す先を、今回の選択で更新しておく。
-    manualStatusRef.current = settingsStatus;
-    selfState.current.message = settingsMessageInput
-      .trim()
-      .slice(0, MESSAGE_MAX_LENGTH);
-    selfState.current.showMessage = settingsShowMessage;
+    Object.assign(selfState.current, patch);
     const updated = selfState.current;
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
     channelRef.current?.track(updated);
-    setSidebarTab("participants");
+  }, []);
+
+  // ①アバター: 選択したら即反映。連打対策として、選択してから
+  // AVATAR_CHANGE_COOLDOWN_MSが経つまで次の選択を受け付けない。
+  const handleSelectAvatar = useCallback(
+    (avatar: string) => {
+      const now = Date.now();
+      if (now < avatarChangeLockedUntilRef.current) return;
+      avatarChangeLockedUntilRef.current = now + AVATAR_CHANGE_COOLDOWN_MS;
+      setAvatarPickerLocked(true);
+      window.setTimeout(() => {
+        setAvatarPickerLocked(false);
+      }, AVATAR_CHANGE_COOLDOWN_MS);
+      setSettingsAvatar(avatar);
+      setSettingsAvatarMode("avatar");
+      applySelfStateUpdate({ avatarImage: avatar, avatarMode: "avatar" });
+      setSelectedAvatarMode("avatar");
+    },
+    [applySelfStateUpdate],
+  );
+
+  // ③車: 選択したら即反映(車の選択はこれまでもDBへは保存しておらず、
+  // presence配信のみ。次回入室時は既定の車に戻る既存仕様のまま)。
+  const handleSelectCar = useCallback(
+    (car: string) => {
+      setSettingsCar(car);
+      applySelfStateUpdate({ carImage: car });
+    },
+    [applySelfStateUpdate],
+  );
+
+  // ⑤ステータス: 選択したら即反映。
+  const handleSelectStatus = useCallback(
+    (status: PresenceStatus) => {
+      setSettingsStatus(status);
+      // 会議室退室時・タブ復帰時に戻す先も、今回の選択で更新しておく。
+      manualStatusRef.current = status;
+      applySelfStateUpdate({ status });
+    },
+    [applySelfStateUpdate],
+  );
+
+  // ④表示名: Enterキーまたは非アクティブ(blur)になったタイミングで
+  // 即反映する(1文字入力するたびに反映・配信すると負荷が大きいため)。
+  const commitDisplayName = useCallback(() => {
+    const name =
+      settingsNameInput.trim() ||
+      t("room.guestDefaultName", { id: selfId.current.slice(0, 4) });
+    if (settingsNameInput !== name) setSettingsNameInput(name);
+    if (!selfState.current || selfState.current.name === name) return;
+    applySelfStateUpdate({ name });
     saveDisplayName(name);
-    saveAvatarSettings(settingsAvatarMode, settingsIconUrl);
     // 入室前画面のname入力(nameInput)は設定変更後も更新されないままだった
     // ため、同じセッション内で退出→再入室すると、この古い値でhandleJoinが
     // 再度saveDisplayNameを呼び、DBの表示名を変更前の名前へ上書きして
     // しまっていた(2026-09報告の「保存しても退出したら元に戻る」の原因)。
     // ここで同期し、次の入室画面にも直近の保存値が反映されるようにする。
     setNameInput(name);
-    // 入室前画面でもアイコン選択を引き継げるよう同期する(アバター/
-    // アイコンの切り替え自体も同様)。
-    setSelectedAvatarMode(settingsAvatarMode);
-    setSelectedIconUrl(settingsIconUrl);
-  }, [
-    settingsNameInput,
-    settingsAvatar,
-    settingsAvatarMode,
-    settingsIconUrl,
-    settingsCar,
-    settingsStatus,
-    settingsMessageInput,
-    settingsShowMessage,
-    saveDisplayName,
-    saveAvatarSettings,
-  ]);
+  }, [settingsNameInput, applySelfStateUpdate, saveDisplayName, t]);
 
-  // アイコン画像のアップロード(2026-10追加)。選択した時点でStorageへ
-  // アップロードし、公開URLをsettingsIconUrlへ反映する(保存ボタンを押す
-  // までは実際のavatarImage/DBへは反映しない。既存のアバター選択
-  // (AvatarPicker)と同じく、保存操作自体はsaveSettingsにまとめるため)。
+  // ⑥吹き出し: 本文はEnterまたはblurで即反映、表示チェックボックスは
+  // 変更のたびに即反映。
+  const commitBubbleMessage = useCallback(() => {
+    const message = settingsMessageInput.trim().slice(0, MESSAGE_MAX_LENGTH);
+    if (settingsMessageInput !== message) setSettingsMessageInput(message);
+    if (!selfState.current || selfState.current.message === message) return;
+    applySelfStateUpdate({ message });
+  }, [settingsMessageInput, applySelfStateUpdate]);
+
+  const handleToggleShowMessage = useCallback(
+    (checked: boolean) => {
+      setSettingsShowMessage(checked);
+      applySelfStateUpdate({ showMessage: checked });
+    },
+    [applySelfStateUpdate],
+  );
+
+  // ②アイコンのアップロード(2026-10追加、2026-10更新で即時反映に変更)。
+  // 選択した時点でStorageへアップロードし、公開URL・モードをそのまま
+  // selfState/DBへ反映する。
   const handleIconFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -9774,14 +9815,43 @@ export default function AvatarSpace({
       try {
         const url = await uploadUserIconClient(userId, file);
         setSettingsIconUrl(url);
+        setSettingsAvatarMode("icon");
+        applySelfStateUpdate({ avatarImage: url, avatarMode: "icon" });
+        saveAvatarSettings("icon", url);
+        setSelectedAvatarMode("icon");
+        setSelectedIconUrl(url);
       } catch {
         setIconUploadError(t("settings.iconUploadFailed"));
       } finally {
         setIconUploading(false);
       }
     },
-    [t],
+    [t, applySelfStateUpdate, saveAvatarSettings],
   );
+
+  // ②アイコンの削除。確認ポップアップで「はい」が押されたときに呼ぶ。
+  // Storageの実ファイルを削除したうえで、表示はアバタースプライトに
+  // 戻す(アイコンが無い状態のまま"icon"モードを続けると表示できる
+  // 画像が無くなってしまうため)。設定タブ自体はアイコンタブのまま
+  // (プレースホルダー+再アップロード導線を見せ続ける)。
+  const handleDeleteIconConfirm = useCallback(() => {
+    setShowDeleteIconConfirm(false);
+    const userId = authUserIdRef.current;
+    if (userId) {
+      void deleteUserIconClient(userId).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.error("アイコン画像の削除に失敗しました", error);
+      });
+    }
+    setSettingsIconUrl(null);
+    applySelfStateUpdate({
+      avatarImage: settingsAvatar,
+      avatarMode: "avatar",
+    });
+    saveAvatarSettings("avatar", null);
+    setSelectedAvatarMode("avatar");
+    setSelectedIconUrl(null);
+  }, [settingsAvatar, applySelfStateUpdate, saveAvatarSettings]);
 
   // 入室前の画面にいる間、ルームのRealtimeチャンネルにpresence観測者として
   // 接続し、プレビュー表示用のオンライン人数を取得する(入室後は不要なので
@@ -12540,7 +12610,8 @@ export default function AvatarSpace({
                   {settingsAvatarMode === "avatar" ? (
                     <AvatarPicker
                       selected={settingsAvatar}
-                      onSelect={setSettingsAvatar}
+                      onSelect={handleSelectAvatar}
+                      disabled={avatarPickerLocked}
                     />
                   ) : (
                     <div className="flex flex-col items-center gap-2">
@@ -12553,23 +12624,34 @@ export default function AvatarSpace({
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center text-center text-[10px] text-slate-500">
-                            {t("settings.iconNotSet")}
+                          <div className="flex h-full w-full items-center justify-center text-2xl font-bold text-slate-300">
+                            {settingsNameInput.trim().slice(0, 1) || "?"}
                           </div>
                         )}
                       </div>
-                      <label className="cursor-pointer rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800">
-                        {iconUploading
-                          ? t("settings.iconUploading")
-                          : t("settings.iconUploadButton")}
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          className="hidden"
-                          disabled={iconUploading}
-                          onChange={handleIconFileChange}
-                        />
-                      </label>
+                      <div className="flex items-center gap-2">
+                        <label className="cursor-pointer rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+                          {iconUploading
+                            ? t("settings.iconUploading")
+                            : t("settings.iconUploadButton")}
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            className="hidden"
+                            disabled={iconUploading}
+                            onChange={handleIconFileChange}
+                          />
+                        </label>
+                        {settingsIconUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setShowDeleteIconConfirm(true)}
+                            className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800"
+                          >
+                            {t("common.delete")}
+                          </button>
+                        )}
+                      </div>
                       <p className="text-center text-[10px] text-slate-500">
                         {t("settings.iconSquareHint")}
                       </p>
@@ -12586,7 +12668,7 @@ export default function AvatarSpace({
                   <p className="mb-2 text-xs font-semibold text-slate-400">
                     {t("settings.carLabel")}
                   </p>
-                  <CarPicker selected={settingsCar} onSelect={setSettingsCar} />
+                  <CarPicker selected={settingsCar} onSelect={handleSelectCar} />
                 </div>
 
                 <div>
@@ -12596,7 +12678,13 @@ export default function AvatarSpace({
                   <input
                     value={settingsNameInput}
                     onChange={(e) => setSettingsNameInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && saveSettings()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        commitDisplayName();
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    onBlur={commitDisplayName}
                     placeholder={t("lobby.namePlaceholder")}
                     className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-slate-400"
                   />
@@ -12620,7 +12708,7 @@ export default function AvatarSpace({
                             name="presence-status"
                             value={status}
                             checked={settingsStatus === status}
-                            onChange={() => setSettingsStatus(status)}
+                            onChange={() => handleSelectStatus(status)}
                           />
                           <span
                             className="inline-block h-2.5 w-2.5 rounded-full"
@@ -12663,7 +12751,7 @@ export default function AvatarSpace({
                         type="checkbox"
                         checked={settingsShowMessage}
                         onChange={(e) =>
-                          setSettingsShowMessage(e.target.checked)
+                          handleToggleShowMessage(e.target.checked)
                         }
                       />
                       {t("settings.showLabel")}
@@ -12675,6 +12763,13 @@ export default function AvatarSpace({
                           e.target.value.slice(0, MESSAGE_MAX_LENGTH),
                         )
                       }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          commitBubbleMessage();
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      onBlur={commitBubbleMessage}
                       maxLength={MESSAGE_MAX_LENGTH}
                       placeholder={t("settings.bubbleContentPlaceholder")}
                       className="w-full rounded-lg border border-slate-600 bg-slate-800 px-2 py-1.5 text-sm text-white outline-none focus:border-slate-400"
@@ -12705,13 +12800,6 @@ export default function AvatarSpace({
                     </div>
                   </div>
                 </div>
-
-                <button
-                  onClick={saveSettings}
-                  className="w-full rounded-lg bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-                >
-                  {t("common.save")}
-                </button>
 
                 <button
                   onClick={() => setShowBugReportModal(true)}
@@ -13471,6 +13559,31 @@ export default function AvatarSpace({
                 className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
               >
                 {leavingGroupBusy ? t("group.leaving") : t("group.leave")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* アイコン削除の確認モーダル */}
+      {showDeleteIconConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-xl">
+            <p className="mb-4 text-sm font-semibold text-slate-800">
+              {t("settings.iconDeleteConfirm")}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowDeleteIconConfirm(false)}
+                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+              >
+                {t("common.no")}
+              </button>
+              <button
+                onClick={handleDeleteIconConfirm}
+                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500"
+              >
+                {t("common.yes")}
               </button>
             </div>
           </div>

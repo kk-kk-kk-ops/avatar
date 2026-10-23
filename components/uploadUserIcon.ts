@@ -54,3 +54,14 @@ export async function uploadUserIconClient(
   } = supabase.storage.from("user-icons").getPublicUrl(path);
   return `${publicUrl}?v=${Date.now()}`;
 }
+
+// アップロード済みのプロフィールアイコン(上と同じ固定パス)をStorageから
+// 削除する(設定画面の「削除」ボタン用)。
+export async function deleteUserIconClient(userId: string): Promise<void> {
+  const supabase = createClient();
+  const path = `${userId}/icon.webp`;
+  const { error } = await supabase.storage.from("user-icons").remove([path]);
+  if (error) {
+    throw new Error(`画像の削除に失敗しました: ${error.message}`);
+  }
+}
