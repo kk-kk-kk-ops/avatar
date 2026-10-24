@@ -9808,6 +9808,23 @@ export default function AvatarSpace({
     [tryLockAvatarChange],
   );
 
+  // ロビー画面(入室前)での「アバター」「アイコン」タブ切り替え(2026-10
+  // 追加)。設定タブのhandleSetAvatarModeをそのまま使い回すと、その関数が
+  // 読むsettingsIconUrlはロビーでは(このセッション内でアップロードして
+  // いない限り)初期化されずnullのままのため、既にDBに保存済みのアイコン
+  // (selectedIconUrl側には正しく入っている)を、タブを切り替えた瞬間に
+  // null(settingsIconUrlの値)で上書き保存してしまい、既存のアイコンが
+  // 消えてしまう不具合があった(2026-10報告)。ロビー専用に
+  // selectedIconUrl/selectedAvatarを読み書きする版を用意する。
+  const handleSetLobbyAvatarMode = useCallback(
+    (mode: AvatarMode) => {
+      if (!tryLockAvatarChange()) return;
+      setSelectedAvatarMode(mode);
+      saveAvatarSettings(mode, selectedIconUrl);
+    },
+    [tryLockAvatarChange, selectedIconUrl, saveAvatarSettings],
+  );
+
   // ③車: 選択したら即反映(車の選択はこれまでもDBへは保存しておらず、
   // presence配信のみ。次回入室時は既定の車に戻る既存仕様のまま)。
   const handleSelectCar = useCallback(
@@ -10087,7 +10104,7 @@ export default function AvatarSpace({
               <button
                 type="button"
                 disabled={avatarPickerLocked}
-                onClick={() => handleSetAvatarMode("avatar")}
+                onClick={() => handleSetLobbyAvatarMode("avatar")}
                 className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   selectedAvatarMode === "avatar"
                     ? "bg-white text-slate-900 shadow-sm"
@@ -10099,7 +10116,7 @@ export default function AvatarSpace({
               <button
                 type="button"
                 disabled={avatarPickerLocked}
-                onClick={() => handleSetAvatarMode("icon")}
+                onClick={() => handleSetLobbyAvatarMode("icon")}
                 className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   selectedAvatarMode === "icon"
                     ? "bg-white text-slate-900 shadow-sm"
