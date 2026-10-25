@@ -232,11 +232,14 @@ export default async function MasterPage() {
     const warpPoints: WarpPoint[] = rawWarpPoints
       .filter(
         (w: Partial<WarpPoint>) =>
-          w.channel === "A" || w.channel === "B" || w.channel === "C",
+          w.channel === "A" ||
+          w.channel === "B" ||
+          w.channel === "C" ||
+          w.channel === "D",
       )
       .map((w: Partial<WarpPoint>, i: number) => ({
         id: w.id ?? `warp-${i}`,
-        channel: w.channel as "A" | "B" | "C",
+        channel: w.channel as "A" | "B" | "C" | "D",
         x: w.x ?? 0,
         y: w.y ?? 0,
         label: w.label ?? "",

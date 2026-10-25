@@ -134,7 +134,7 @@ const MAX_MAP_SIZE = 8000;
 // Tailwindのcontentスキャン対象外(app/**・components/**のみ)になり
 // クラスが生成されないため、ここ(app/**配下)にクラス文字列そのままで
 // 持たせる。AvatarSpace.tsx側にも同じ内容を別途持たせている。
-function warpChannelClasses(channel: "A" | "B" | "C"): string {
+function warpChannelClasses(channel: "A" | "B" | "C" | "D"): string {
   switch (channel) {
     case "A":
       return "border-red-400 bg-red-500/30";
@@ -142,15 +142,18 @@ function warpChannelClasses(channel: "A" | "B" | "C"): string {
       return "border-yellow-400 bg-yellow-400/30";
     case "C":
       return "border-blue-400 bg-blue-500/30";
+    case "D":
+      return "border-green-400 bg-green-500/30";
   }
 }
 
 // サイドバーのボタン表示名(「Aワープ」等の記号ではなく、上の表示色と
 // 対応した色名で案内する)。
-const WARP_CHANNEL_NAMES: Record<"A" | "B" | "C", string> = {
+const WARP_CHANNEL_NAMES: Record<"A" | "B" | "C" | "D", string> = {
   A: "赤",
   B: "黄",
   C: "青",
+  D: "緑",
 };
 
 function clampMapSize(rawInput: string, fallback: number): number {
@@ -1897,7 +1900,7 @@ export default function TemplateEditor({
             </div>
             <div className="space-y-2 text-xs text-slate-600">
               <div>
-                <p className="font-semibold text-slate-700">【赤・黄・青ワープ】</p>
+                <p className="font-semibold text-slate-700">【赤・黄・青・緑ワープ】</p>
                 <p>・同じ色の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
               </div>
             </div>
