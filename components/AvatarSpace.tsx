@@ -187,7 +187,7 @@ function TabIconGear({ className }: { className?: string }) {
 // TemplateEditor.tsxにも同じ内容を別途持たせている(lib/types.tsは
 // Tailwindのcontentスキャン対象外のため、クラス文字列はcomponents/**・
 // app/**の中にそのまま書く必要がある)。
-function warpChannelClasses(channel: "A" | "B" | "C"): string {
+function warpChannelClasses(channel: "A" | "B" | "C" | "D"): string {
   switch (channel) {
     case "A":
       return "border-red-400 bg-red-500/30";
@@ -195,6 +195,8 @@ function warpChannelClasses(channel: "A" | "B" | "C"): string {
       return "border-yellow-400 bg-yellow-400/30";
     case "C":
       return "border-blue-400 bg-blue-500/30";
+    case "D":
+      return "border-green-400 bg-green-500/30";
   }
 }
 
@@ -5186,10 +5188,16 @@ export default function AvatarSpace({
         const rawWarpPoints = data.warp_points;
         if (Array.isArray(rawWarpPoints)) {
           const loadedWarpPoints = (rawWarpPoints as Array<Partial<WarpPoint>>)
-            .filter((w) => w.channel === "A" || w.channel === "B" || w.channel === "C")
+            .filter(
+              (w) =>
+                w.channel === "A" ||
+                w.channel === "B" ||
+                w.channel === "C" ||
+                w.channel === "D",
+            )
             .map((w, i) => ({
               id: w.id ?? `warp-${i}`,
-              channel: w.channel as "A" | "B" | "C",
+              channel: w.channel as "A" | "B" | "C" | "D",
               x: w.x ?? 0,
               y: w.y ?? 0,
               label: w.label ?? "",

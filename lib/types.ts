@@ -562,8 +562,8 @@ export type MeetingZone = Rect & {
 // label: 丸ごとに個別に付けられる任意の名前(未設定なら空扱い)。ワープの
 // 外側(上部)に表示する。同じchannelの2つの丸それぞれに別の名前を
 // 付けられるようにするためのもの(channel自体はA/B/C固定でペア判定用)。
-export type WarpPoint = { id: string; channel: "A" | "B" | "C"; x: number; y: number; label?: string };
-export const WARP_CHANNELS = ["A", "B", "C"] as const;
+export type WarpPoint = { id: string; channel: "A" | "B" | "C" | "D"; x: number; y: number; label?: string };
+export const WARP_CHANNELS = ["A", "B", "C", "D"] as const;
 export const WARP_POINT_RADIUS = 24; // 円の表示半径・当たり判定半径(px)。元は36pxで、2/3に縮小した
 
 export const NEW_ITEM_SIZE = 100; // 新規追加時のデフォルトサイズ
