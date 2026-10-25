@@ -138,7 +138,7 @@ export default function TemplateManager({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={t.backgroundImageUrl}
+              src={t.thumbnailImageUrl ?? t.backgroundImageUrl}
               alt={t.name}
               className="aspect-video w-full object-cover"
             />

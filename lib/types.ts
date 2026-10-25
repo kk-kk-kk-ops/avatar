@@ -320,6 +320,9 @@ export type MapTemplate = {
   id: string;
   name: string;
   backgroundImageUrl: string;
+  // 設定されていればロビー・管理画面等のサムネイル表示にこちらを優先して
+  // 使う(未設定=nullならbackgroundImageUrlを使う)。2026-10追加。
+  thumbnailImageUrl: string | null;
   obstacles: Obstacle[];
   meetingZones: MeetingZone[];
   warpPoints: WarpPoint[];

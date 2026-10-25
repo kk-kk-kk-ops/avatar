@@ -102,14 +102,17 @@ export async function provisionAccountForUser(
   // その場合はtemplate_idを付けずに従来通り作成する。
   const { data: defaultTemplate } = await supabase
     .from("templates")
-    .select("id, name, background_image_url")
+    .select("id, name, background_image_url, thumbnail_image_url")
     .eq("id", DEFAULT_SIGNUP_TEMPLATE_ID)
     .maybeSingle();
 
   const { error: roomError } = await supabase.from("rooms").insert({
     account_id: account.id,
     name: defaultTemplate?.name ?? "Globy",
-    preview_image: defaultTemplate?.background_image_url ?? "/map-background.webp",
+    preview_image:
+      defaultTemplate?.thumbnail_image_url ??
+      defaultTemplate?.background_image_url ??
+      "/map-background.webp",
     template_id: defaultTemplate?.id ?? null,
   });
 

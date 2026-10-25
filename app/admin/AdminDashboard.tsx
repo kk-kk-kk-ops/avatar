@@ -15,7 +15,12 @@ import { markAnnouncementRead } from "./actions";
 
 type Tab = "dashboard" | "rooms" | "invite" | "announcements" | "billing";
 
-type TemplateOption = { id: string; name: string; backgroundImageUrl: string };
+type TemplateOption = {
+  id: string;
+  name: string;
+  backgroundImageUrl: string;
+  thumbnailImageUrl: string | null;
+};
 type BannedParticipant = {
   userId: string;
   displayName: string | null;

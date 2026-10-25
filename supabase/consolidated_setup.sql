@@ -351,6 +351,14 @@ alter table public.templates
 alter table public.templates
   add column if not exists placed_objects jsonb not null default '[]'::jsonb;
 
+-- サムネイル画像(2026-10追加)。設定されていれば、ロビー・管理画面等での
+-- ルームのサムネイル表示にbackground_image_urlの代わりにこちらを使う
+-- (背景画像は横長の全体マップのため、そのままサムネイルにすると縦横比が
+-- 崩れたり見切れたりして分かりづらいことがあるための専用画像)。
+-- 未設定(null)の場合は従来通りbackground_image_urlを使う。
+alter table public.templates
+  add column if not exists thumbnail_image_url text;
+
 alter table public.templates enable row level security;
 
 drop policy if exists "templates: select authenticated" on public.templates;

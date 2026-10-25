@@ -41,7 +41,7 @@ export async function addRoom(templateId: string) {
 
   const { data: template } = await supabase
     .from("templates")
-    .select("id, name, background_image_url")
+    .select("id, name, background_image_url, thumbnail_image_url")
     .eq("id", templateId)
     .maybeSingle();
   if (!template) throw new Error("テンプレートが見つかりません");
@@ -62,7 +62,7 @@ export async function addRoom(templateId: string) {
     account_id: account.id,
     template_id: template.id,
     name: template.name,
-    preview_image: template.background_image_url,
+    preview_image: template.thumbnail_image_url ?? template.background_image_url,
   });
   if (error) throw new Error("ルームの作成に失敗しました");
 
@@ -76,7 +76,7 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
 
   const { data: template } = await supabase
     .from("templates")
-    .select("id, background_image_url")
+    .select("id, background_image_url, thumbnail_image_url")
     .eq("id", templateId)
     .maybeSingle();
   if (!template) throw new Error("ルームデザインが見つかりません");
@@ -85,7 +85,7 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
     .from("rooms")
     .update({
       template_id: template.id,
-      preview_image: template.background_image_url,
+      preview_image: template.thumbnail_image_url ?? template.background_image_url,
     })
     .eq("id", roomId)
     .eq("account_id", account.id);
