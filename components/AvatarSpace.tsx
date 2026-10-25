@@ -11346,8 +11346,8 @@ export default function AvatarSpace({
                     zone.kind === "announcement"
                       ? "border-amber-400 bg-amber-500/20"
                       : zone.kind === "work"
-                        ? "border-sky-400 bg-sky-500/20"
-                        : "border-slate-500 bg-slate-600/60"
+                        ? "border-sky-400 bg-sky-500/10"
+                        : "border-slate-500 bg-slate-600/30"
                   }`}
                   style={{
                     left: zone.x,
