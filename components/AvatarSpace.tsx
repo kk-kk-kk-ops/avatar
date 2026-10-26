@@ -772,6 +772,32 @@ export default function AvatarSpace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // アバター空間ではブラウザ自体の画面拡大縮小(Ctrl+ホイール/
+  // トラックパッドのピンチズーム/Ctrl+ +・-・0)を無効にする(2026-10
+  // 報告)。スマホのピンチズームはapp/layout.tsxのviewport設定
+  // (userScalable: false)で既にサイト全体で無効化済みだが、デスクトップの
+  // Ctrl+ホイール等のブラウザズームはviewportメタタグの対象外のため、
+  // ここでイベントを捕まえてpreventDefaultする。
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault();
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        ["+", "-", "=", "0"].includes(e.key)
+      ) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   // 一時的なモバイルデバッグ用。URLに?debugConsole=1が付いている場合のみ、
   // erudaという軽量なオンページデバッグコンソール(コンソールログ・
   // ネットワークタブを画面上に表示するツール)を読み込む。Macを使った
