@@ -9,6 +9,7 @@ type RoomDesignOption = {
   id: string;
   name: string;
   backgroundImageUrl: string;
+  thumbnailImageUrl: string | null;
 };
 
 type PendingAction = { type: "apply" };
@@ -135,7 +136,7 @@ export default function RoomManager({
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={template.backgroundImageUrl}
+                      src={template.thumbnailImageUrl ?? template.backgroundImageUrl}
                       alt={template.name}
                       className="aspect-video w-full object-cover"
                     />

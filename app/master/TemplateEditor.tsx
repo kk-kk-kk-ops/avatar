@@ -36,6 +36,7 @@ import {
   updateTemplateLayout,
   updateTemplateObjectLibrary,
   replaceTemplateImage,
+  replaceTemplateThumbnail,
   renameTemplate,
 } from "./actions";
 import {
@@ -203,6 +204,13 @@ export default function TemplateEditor({
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     template.backgroundImageUrl,
   );
+  // サムネイル画像(2026-10追加)。未設定ならnull(=ルーム一覧等では
+  // backgroundImageUrlがそのまま使われる)。背景画像と同じく「保存」
+  // ボタンを待たずアップロード・削除のたびに即時保存する。
+  const [thumbnailImageUrl, setThumbnailImageUrl] = useState(
+    template.thumbnailImageUrl,
+  );
+  const [thumbnailUploading, setThumbnailUploading] = useState(false);
   // オブジェクト登録(2026-09追加)。objectLibraryは登録済み画像の一覧
   // (背景画像と同じく、アップロードのたびに即時保存する。placedObjects
   // は他の壁・エリア等と同じく「保存」ボタンで一括保存する)。
@@ -1426,6 +1434,62 @@ export default function TemplateEditor({
     }
   };
 
+  // サムネイル画像のアップロード(2026-10追加)。検証・保存の流れは
+  // 背景画像(handleImageChange)と同じ。
+  const handleThumbnailImageChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    const isWebp = file.type === "image/webp" || /\.webp$/i.test(file.name);
+    if (!isWebp) {
+      setError("サムネイル画像はWEBP形式のみアップロードできます");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > MAX_BACKGROUND_IMAGE_BYTES) {
+      setError("サムネイル画像は1MB以下にしてください");
+      e.target.value = "";
+      return;
+    }
+    setThumbnailUploading(true);
+    try {
+      const url = await uploadTemplateImageClient(file);
+      const result = await replaceTemplateThumbnail(template.id, url);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setThumbnailImageUrl(url);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "画像の変更に失敗しました");
+    } finally {
+      setThumbnailUploading(false);
+    }
+  };
+
+  // サムネイル画像の解除。以後はbackgroundImageUrlがそのままサムネイル
+  // として使われる。
+  const handleRemoveThumbnail = async () => {
+    setError(null);
+    setThumbnailUploading(true);
+    try {
+      const result = await replaceTemplateThumbnail(template.id, null);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setThumbnailImageUrl(null);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "削除に失敗しました");
+    } finally {
+      setThumbnailUploading(false);
+    }
+  };
+
   // ---- キーボードショートカット(Ctrl+Z/Ctrl+Y/Ctrl+C/Ctrl+V) ----
   // Mac配列も考慮しCmdキー(metaKey)も同様に扱う。名前変更・マップサイズ・
   // ワープの名前欄などテキスト入力中は、ブラウザ標準のテキスト編集用
@@ -1535,6 +1599,49 @@ export default function TemplateEditor({
           </label>
           <p className="mt-1 text-[10px] text-slate-400">
             ※サイズ：1MB以下　形式：WEBPのみ
+          </p>
+        </div>
+
+        <div>
+          <p className="mb-1 text-xs font-semibold text-slate-500">
+            サムネイル画像(任意)
+          </p>
+          {thumbnailImageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={thumbnailImageUrl}
+              alt=""
+              className="mb-2 h-16 w-28 rounded-lg border border-slate-200 object-cover"
+            />
+          )}
+          <div className="flex items-center gap-1.5">
+            <label className="block flex-1 cursor-pointer rounded-lg bg-slate-800 px-3 py-1.5 text-center text-xs font-semibold text-white hover:bg-slate-700">
+              {thumbnailUploading
+                ? "アップロード中..."
+                : thumbnailImageUrl
+                  ? "サムネイル変更"
+                  : "サムネイル設定"}
+              <input
+                type="file"
+                accept="image/webp"
+                className="hidden"
+                onChange={handleThumbnailImageChange}
+                disabled={thumbnailUploading}
+              />
+            </label>
+            {thumbnailImageUrl && (
+              <button
+                type="button"
+                onClick={handleRemoveThumbnail}
+                disabled={thumbnailUploading}
+                className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                削除
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">
+            ※サイズ：1MB以下　形式：WEBPのみ　未設定時は背景画像を使用
           </p>
         </div>
 

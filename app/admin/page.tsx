@@ -96,7 +96,7 @@ export default async function AdminPage() {
 
   const { data: templateRows } = await supabase
     .from("templates")
-    .select("id, name, background_image_url")
+    .select("id, name, background_image_url, thumbnail_image_url")
     .order("created_at", { ascending: true });
 
   const { data: bannedRows } = await supabase.rpc(
@@ -119,6 +119,7 @@ export default async function AdminPage() {
     id: t.id,
     name: t.name,
     backgroundImageUrl: t.background_image_url,
+    thumbnailImageUrl: t.thumbnail_image_url,
   }));
 
   // お知らせ(マスター画面「お知らせ」タブで入力したもの)。announcementsの

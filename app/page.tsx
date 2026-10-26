@@ -33,7 +33,7 @@ async function applyTemplateNameToRooms(
   if (!templateId) return rooms;
   const { data: template } = await supabase
     .from("templates")
-    .select("name, background_image_url")
+    .select("name, background_image_url, thumbnail_image_url")
     .eq("id", templateId)
     .maybeSingle();
   if (!template) return rooms;
@@ -42,7 +42,10 @@ async function applyTemplateNameToRooms(
       ? {
           ...r,
           name: template.name ?? r.name,
-          previewImage: template.background_image_url ?? r.previewImage,
+          previewImage:
+            template.thumbnail_image_url ??
+            template.background_image_url ??
+            r.previewImage,
         }
       : r,
   );

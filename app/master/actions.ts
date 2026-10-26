@@ -143,20 +143,65 @@ export async function replaceTemplateImage(
   const { supabase } = await requireMaster();
   if (!backgroundImageUrl) return { ok: false, error: "画像を選択してください" };
 
+  // サムネイル画像が別途設定済みの場合、背景画像を差し替えてもルーム一覧
+  // 等のプレビューはサムネイルを優先し続ける(下のreplaceTemplateThumbnail
+  // と同じ優先順位)。
+  const { data: template } = await supabase
+    .from("templates")
+    .select("thumbnail_image_url")
+    .eq("id", templateId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("templates")
     .update({ background_image_url: backgroundImageUrl })
     .eq("id", templateId);
   if (error) return { ok: false, error: "画像の更新に失敗しました" };
 
-  // rooms.preview_imageはテンプレート適用時点の背景画像をコピーした
-  // スナップショットなので、ここで背景画像だけ差し替えても自動では
-  // 追従しない。このテンプレートを使っている全ルームのプレビューも
+  // rooms.preview_imageはテンプレート適用時点の背景画像(またはサムネイル)
+  // をコピーしたスナップショットなので、ここで背景画像だけ差し替えても
+  // 自動では追従しない。このテンプレートを使っている全ルームのプレビューも
   // 一緒に更新し、admin画面の「現在適用中ルーム」表示が古い画像の
   // ままにならないようにする(2026-09報告のズレ対応)。
   await supabase
     .from("rooms")
-    .update({ preview_image: backgroundImageUrl })
+    .update({
+      preview_image: template?.thumbnail_image_url ?? backgroundImageUrl,
+    })
+    .eq("template_id", templateId);
+
+  revalidatePath("/master");
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+// サムネイル画像の設定・解除(2026-10追加)。thumbnailImageUrlにnullを
+// 渡すと解除(以後は背景画像がそのままサムネイルとして使われる)。
+// rooms.preview_imageの追従はreplaceTemplateImageと同じ考え方。
+export async function replaceTemplateThumbnail(
+  templateId: string,
+  thumbnailImageUrl: string | null,
+): Promise<ActionResult> {
+  const { supabase } = await requireMaster();
+
+  const { data: template } = await supabase
+    .from("templates")
+    .select("background_image_url")
+    .eq("id", templateId)
+    .maybeSingle();
+  if (!template) return { ok: false, error: "テンプレートが見つかりません" };
+
+  const { error } = await supabase
+    .from("templates")
+    .update({ thumbnail_image_url: thumbnailImageUrl })
+    .eq("id", templateId);
+  if (error) return { ok: false, error: "サムネイル画像の更新に失敗しました" };
+
+  await supabase
+    .from("rooms")
+    .update({
+      preview_image: thumbnailImageUrl ?? template.background_image_url,
+    })
     .eq("template_id", templateId);
 
   revalidatePath("/master");

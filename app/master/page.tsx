@@ -197,7 +197,7 @@ export default async function MasterPage() {
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
-      "id, name, background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, object_library, placed_objects",
+      "id, name, background_image_url, thumbnail_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, object_library, placed_objects",
     )
     .order("created_at", { ascending: true });
 
@@ -274,6 +274,7 @@ export default async function MasterPage() {
       id: t.id,
       name: t.name,
       backgroundImageUrl: t.background_image_url,
+      thumbnailImageUrl: t.thumbnail_image_url ?? null,
       obstacles,
       meetingZones,
       warpPoints,

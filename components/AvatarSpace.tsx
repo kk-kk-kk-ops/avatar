@@ -10027,12 +10027,14 @@ export default function AvatarSpace({
       if (data.template_id) {
         const { data: template } = await supabase
           .from("templates")
-          .select("name, background_image_url")
+          .select("name, background_image_url, thumbnail_image_url")
           .eq("id", data.template_id)
           .maybeSingle();
         if (!cancelled && template?.name) name = template.name;
-        if (!cancelled && template?.background_image_url) {
-          previewImage = template.background_image_url;
+        if (!cancelled) {
+          const resolvedPreview =
+            template?.thumbnail_image_url ?? template?.background_image_url;
+          if (resolvedPreview) previewImage = resolvedPreview;
         }
       }
       if (cancelled) return;
