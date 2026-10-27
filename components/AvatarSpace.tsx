@@ -6972,19 +6972,28 @@ export default function AvatarSpace({
         const effectiveViewportHeight = viewport.height / mapScale;
         // カメラ境界(2026-10追加)。設定されていれば、カメラが追従できる
         // 範囲をこの矩形の中だけに制限する(未設定ならmapSize=背景画像
-        // 全体がそのまま範囲になる、従来通りの挙動)。
+        // 全体がそのまま範囲になる、従来通りの挙動)。ただし、ワープ等で
+        // アバター自身がこの矩形の外へ移動した場合にまで境界を適用すると、
+        // カメラが追従できずアバターが画面外へ消えてしまう(2026-10報告)。
+        // そのため軸ごとに「自分がその軸で境界の中にいるか」を見て、外に
+        // いる軸だけ一時的にmapSize基準(境界なし)へフォールバックする。
+        // 境界内へ戻れば自動的にまた境界に縛られる。
         const boundary = cameraBoundaryRef.current;
-        const cameraMinX = boundary ? boundary.x : 0;
-        const cameraMinY = boundary ? boundary.y : 0;
+        const inBoundaryX =
+          !!boundary && self.x >= boundary.x && self.x <= boundary.x + boundary.width;
+        const inBoundaryY =
+          !!boundary && self.y >= boundary.y && self.y <= boundary.y + boundary.height;
+        const cameraMinX = inBoundaryX ? boundary!.x : 0;
+        const cameraMinY = inBoundaryY ? boundary!.y : 0;
         const maxCameraX = Math.max(
-          (boundary
-            ? boundary.x + boundary.width
+          (inBoundaryX
+            ? boundary!.x + boundary!.width
             : mapSizeRef.current.width) - effectiveViewportWidth,
           cameraMinX,
         );
         const maxCameraY = Math.max(
-          (boundary
-            ? boundary.y + boundary.height
+          (inBoundaryY
+            ? boundary!.y + boundary!.height
             : mapSizeRef.current.height) - effectiveViewportHeight,
           cameraMinY,
         );
@@ -10461,19 +10470,31 @@ export default function AvatarSpace({
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
   const effectiveViewportWidth = viewport.width / mapScale;
   const effectiveViewportHeight = viewport.height / mapScale;
-  // カメラ境界(2026-10追加)。6944行目付近の移動ループ内の実装と同じ考え方
-  // (未設定ならmapSize=背景画像全体がそのまま範囲になる)。
-  const cameraMinX = cameraBoundary ? cameraBoundary.x : 0;
-  const cameraMinY = cameraBoundary ? cameraBoundary.y : 0;
+  // カメラ境界(2026-10追加)。移動ループ内の実装と同じ考え方(未設定なら
+  // mapSize=背景画像全体がそのまま範囲になる)。ワープ等でアバター自身が
+  // 境界の外にいる軸だけ、一時的にmapSize基準(境界なし)へフォールバック
+  // する(2026-10報告: そうしないとワープ先でアバターが画面外へ消える)。
+  const inBoundaryX =
+    !!cameraBoundary &&
+    !!selfPlayer &&
+    selfPlayer.x >= cameraBoundary.x &&
+    selfPlayer.x <= cameraBoundary.x + cameraBoundary.width;
+  const inBoundaryY =
+    !!cameraBoundary &&
+    !!selfPlayer &&
+    selfPlayer.y >= cameraBoundary.y &&
+    selfPlayer.y <= cameraBoundary.y + cameraBoundary.height;
+  const cameraMinX = inBoundaryX ? cameraBoundary!.x : 0;
+  const cameraMinY = inBoundaryY ? cameraBoundary!.y : 0;
   const maxCameraX = Math.max(
-    (cameraBoundary
-      ? cameraBoundary.x + cameraBoundary.width
+    (inBoundaryX
+      ? cameraBoundary!.x + cameraBoundary!.width
       : mapSize.width) - effectiveViewportWidth,
     cameraMinX,
   );
   const maxCameraY = Math.max(
-    (cameraBoundary
-      ? cameraBoundary.y + cameraBoundary.height
+    (inBoundaryY
+      ? cameraBoundary!.y + cameraBoundary!.height
       : mapSize.height) - effectiveViewportHeight,
     cameraMinY,
   );
