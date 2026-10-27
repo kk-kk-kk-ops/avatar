@@ -45,6 +45,7 @@ import {
   MeetingZone,
   WarpPoint,
   PlacedObject,
+  Rect,
   WARP_POINT_RADIUS,
   DEFAULT_OBSTACLES,
   DEFAULT_MEETING_ZONES,
@@ -1747,6 +1748,12 @@ export default function AvatarSpace({
   // いればそちらを使う。
   const [mapSize, setMapSize] = useState({ width: MAP_WIDTH, height: MAP_HEIGHT });
   const mapSizeRef = useRef({ width: MAP_WIDTH, height: MAP_HEIGHT });
+  // カメラ境界(2026-10追加)。設定されていれば、カメラ(画面の表示範囲)は
+  // 背景画像全体(mapSize)ではなくこの矩形の中だけに追従する(そこから
+  // 先はアバターだけが画面内を動く)。未設定(null)なら従来通りmapSizeの
+  // 端が実質的な境界になる。衝突判定には使わない(obstaclesRefとは別物)。
+  const [cameraBoundary, setCameraBoundary] = useState<Rect | null>(null);
+  const cameraBoundaryRef = useRef<Rect | null>(null);
 
   // 音声・映像・画面共有はLiveKit移行(Phase2〜4)でLiveKit経由に切り替えた
   // ため、自前PeerConnectionメッシュ関連の状態はPhase6で全て廃止した。
@@ -5060,6 +5067,9 @@ export default function AvatarSpace({
   useEffect(() => {
     mapSizeRef.current = mapSize;
   }, [mapSize]);
+  useEffect(() => {
+    cameraBoundaryRef.current = cameraBoundary;
+  }, [cameraBoundary]);
 
   // ---- マップレイアウト:選んだルームのテンプレートから読み込む ----
   // マップの編集はマスターがテンプレートに対して行う運用に一本化した
@@ -5115,7 +5125,7 @@ export default function AvatarSpace({
         const { data } = await supabase
           .from("templates")
           .select(
-            "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, placed_objects",
+            "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, placed_objects, camera_boundary",
           )
           .eq("id", templateId)
           .maybeSingle();
@@ -5222,6 +5232,22 @@ export default function AvatarSpace({
             }));
           setPlacedObjects(loadedPlacedObjects);
         }
+
+        const rawCameraBoundary = data.camera_boundary as Partial<Rect> | null;
+        setCameraBoundary(
+          rawCameraBoundary &&
+            typeof rawCameraBoundary.x === "number" &&
+            typeof rawCameraBoundary.y === "number" &&
+            typeof rawCameraBoundary.width === "number" &&
+            typeof rawCameraBoundary.height === "number"
+            ? {
+                x: rawCameraBoundary.x,
+                y: rawCameraBoundary.y,
+                width: rawCameraBoundary.width,
+                height: rawCameraBoundary.height,
+              }
+            : null,
+        );
       } finally {
         if (!cancelled) setTemplateLoaded(true);
       }
@@ -6918,20 +6944,30 @@ export default function AvatarSpace({
         const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
         const effectiveViewportWidth = viewport.width / mapScale;
         const effectiveViewportHeight = viewport.height / mapScale;
+        // カメラ境界(2026-10追加)。設定されていれば、カメラが追従できる
+        // 範囲をこの矩形の中だけに制限する(未設定ならmapSize=背景画像
+        // 全体がそのまま範囲になる、従来通りの挙動)。
+        const boundary = cameraBoundaryRef.current;
+        const cameraMinX = boundary ? boundary.x : 0;
+        const cameraMinY = boundary ? boundary.y : 0;
         const maxCameraX = Math.max(
-          mapSizeRef.current.width - effectiveViewportWidth,
-          0,
+          (boundary
+            ? boundary.x + boundary.width
+            : mapSizeRef.current.width) - effectiveViewportWidth,
+          cameraMinX,
         );
         const maxCameraY = Math.max(
-          mapSizeRef.current.height - effectiveViewportHeight,
-          0,
+          (boundary
+            ? boundary.y + boundary.height
+            : mapSizeRef.current.height) - effectiveViewportHeight,
+          cameraMinY,
         );
         const cameraX = Math.min(
-          Math.max(self.x - effectiveViewportWidth / 2, 0),
+          Math.max(self.x - effectiveViewportWidth / 2, cameraMinX),
           maxCameraX,
         );
         const cameraY = Math.min(
-          Math.max(self.y - effectiveViewportHeight / 2, 0),
+          Math.max(self.y - effectiveViewportHeight / 2, cameraMinY),
           maxCameraY,
         );
         if (worldRef.current) {
@@ -10399,17 +10435,31 @@ export default function AvatarSpace({
   const mapScale = viewport.width > 0 && viewport.width < 640 ? 0.7 : 1;
   const effectiveViewportWidth = viewport.width / mapScale;
   const effectiveViewportHeight = viewport.height / mapScale;
-  const maxCameraX = Math.max(mapSize.width - effectiveViewportWidth, 0);
-  const maxCameraY = Math.max(mapSize.height - effectiveViewportHeight, 0);
+  // カメラ境界(2026-10追加)。6944行目付近の移動ループ内の実装と同じ考え方
+  // (未設定ならmapSize=背景画像全体がそのまま範囲になる)。
+  const cameraMinX = cameraBoundary ? cameraBoundary.x : 0;
+  const cameraMinY = cameraBoundary ? cameraBoundary.y : 0;
+  const maxCameraX = Math.max(
+    (cameraBoundary
+      ? cameraBoundary.x + cameraBoundary.width
+      : mapSize.width) - effectiveViewportWidth,
+    cameraMinX,
+  );
+  const maxCameraY = Math.max(
+    (cameraBoundary
+      ? cameraBoundary.y + cameraBoundary.height
+      : mapSize.height) - effectiveViewportHeight,
+    cameraMinY,
+  );
   const cameraX = selfPlayer
     ? Math.min(
-        Math.max(selfPlayer.x - effectiveViewportWidth / 2, 0),
+        Math.max(selfPlayer.x - effectiveViewportWidth / 2, cameraMinX),
         maxCameraX,
       )
     : 0;
   const cameraY = selfPlayer
     ? Math.min(
-        Math.max(selfPlayer.y - effectiveViewportHeight / 2, 0),
+        Math.max(selfPlayer.y - effectiveViewportHeight / 2, cameraMinY),
         maxCameraY,
       )
     : 0;

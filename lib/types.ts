@@ -332,6 +332,11 @@ export type MapTemplate = {
   // エリアの左上座標とは座標系が異なるので注意)。未設定ならマップ中心
   // にスポーンする。
   spawnPoint: { x: number; y: number } | null;
+  // カメラ境界(2026-10追加)。設定すると、カメラ(画面の表示範囲)が
+  // この矩形の外側へは追従しなくなる(そこから先はアバターだけが
+  // 画面内を動く)。未設定(null)なら従来通り背景画像の端が境界になる。
+  // 衝突判定は持たない(壁とは別物、カメラ専用)。
+  cameraBoundary: Rect | null;
   // マップに配置できる装飾オブジェクト(2026-09追加)。登録済み画像の
   // ライブラリ(objectLibrary)と、実際にマップへ配置したインスタンス
   // (placedObjects)は別物。詳細はPlacedObject/TemplateObjectImageの

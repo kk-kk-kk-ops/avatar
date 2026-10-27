@@ -359,6 +359,15 @@ alter table public.templates
 alter table public.templates
   add column if not exists thumbnail_image_url text;
 
+-- カメラ境界(2026-10追加)。設定すると、アバター空間内のカメラ(画面の
+-- 表示範囲)がこの矩形({x,y,width,height})の外側へは追従しなくなる
+-- (そこから先はアバターだけが動く)。未設定(null)の場合は従来通り
+-- 背景画像(map_width/map_height)の端が実質的な境界になる。アバター
+-- 自身の移動・当たり判定には影響しない(壁のような衝突判定は持たない、
+-- カメラ専用の設定)。
+alter table public.templates
+  add column if not exists camera_boundary jsonb;
+
 alter table public.templates enable row level security;
 
 drop policy if exists "templates: select authenticated" on public.templates;

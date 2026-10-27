@@ -13,6 +13,7 @@ import {
   type MeetingZone,
   type WarpPoint,
   type PlacedObject,
+  type Rect,
   type TemplateObjectImage,
   type AccountSummary,
   type Announcement,
@@ -197,7 +198,7 @@ export default async function MasterPage() {
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
-      "id, name, background_image_url, thumbnail_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, object_library, placed_objects",
+      "id, name, background_image_url, thumbnail_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, object_library, placed_objects, camera_boundary",
     )
     .order("created_at", { ascending: true });
 
@@ -270,6 +271,21 @@ export default async function MasterPage() {
         rotation: o.rotation ?? 0,
       }));
 
+    const rawCameraBoundary = t.camera_boundary as Partial<Rect> | null;
+    const cameraBoundary: Rect | null =
+      rawCameraBoundary &&
+      typeof rawCameraBoundary.x === "number" &&
+      typeof rawCameraBoundary.y === "number" &&
+      typeof rawCameraBoundary.width === "number" &&
+      typeof rawCameraBoundary.height === "number"
+        ? {
+            x: rawCameraBoundary.x,
+            y: rawCameraBoundary.y,
+            width: rawCameraBoundary.width,
+            height: rawCameraBoundary.height,
+          }
+        : null;
+
     return {
       id: t.id,
       name: t.name,
@@ -286,6 +302,7 @@ export default async function MasterPage() {
           : null,
       objectLibrary,
       placedObjects,
+      cameraBoundary,
     };
   });
 

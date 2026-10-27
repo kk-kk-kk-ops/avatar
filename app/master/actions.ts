@@ -9,6 +9,7 @@ import type {
   WarpPoint,
   PlacedObject,
   TemplateObjectImage,
+  Rect,
 } from "@/lib/types";
 
 // Server Actionからthrowしたエラーは、本番ビルドでは詳細メッセージが
@@ -94,6 +95,7 @@ export async function updateTemplateLayout(
   spawnPoint: { x: number; y: number } | null,
   warpPoints: WarpPoint[],
   placedObjects: PlacedObject[],
+  cameraBoundary: Rect | null,
 ): Promise<ActionResult> {
   const { supabase } = await requireMaster();
   const { error } = await supabase
@@ -107,6 +109,7 @@ export async function updateTemplateLayout(
       spawn_y: spawnPoint?.y ?? null,
       warp_points: warpPoints,
       placed_objects: placedObjects,
+      camera_boundary: cameraBoundary,
     })
     .eq("id", templateId);
   if (error) return { ok: false, error: "レイアウトの保存に失敗しました" };

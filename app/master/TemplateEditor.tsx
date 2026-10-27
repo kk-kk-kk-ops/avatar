@@ -17,6 +17,7 @@ import type {
   WarpPoint,
   PlacedObject,
   TemplateObjectImage,
+  Rect,
 } from "@/lib/types";
 import {
   NEW_ITEM_SIZE,
@@ -84,6 +85,7 @@ type LayoutSnapshot = {
   spawnPoint: { x: number; y: number } | null;
   warpPoints: WarpPoint[];
   placedObjects: PlacedObject[];
+  cameraBoundary: Rect | null;
 };
 
 type DragState =
@@ -125,6 +127,23 @@ type DragState =
       centerY: number;
       startAngleDeg: number;
       originRotationDeg: number;
+    };
+
+// カメラ境界(1個だけ・回転なし)専用のドラッグ状態。壁・エリア等と同じ
+// 汎用のDragState/applyDragには乗せず、warpDragState/spawnDragStateと
+// 同じく独立した小さな状態として持つ(既存の壁・エリア・オブジェクトの
+// ドラッグ処理に手を入れず、安全に追加するため)。
+type CameraBoundaryDragState =
+  | { mode: "move"; startX: number; startY: number; originX: number; originY: number }
+  | {
+      mode: "resize";
+      corner: "br" | "tl" | "tr" | "bl";
+      startX: number;
+      startY: number;
+      originX: number;
+      originY: number;
+      originWidth: number;
+      originHeight: number;
     };
 
 const MAX_DISPLAY_WIDTH = 1200;
@@ -201,6 +220,12 @@ export default function TemplateEditor({
   const [warpPoints, setWarpPoints] = useState<WarpPoint[]>(
     template.warpPoints,
   );
+  // カメラ境界(2026-10追加)。設定すると、ルーム内のカメラ(画面の表示
+  // 範囲)がこの矩形の外側へは追従しなくなる。1つのテンプレートにつき
+  // 最大1個(spawnPointと同じ「単一の設定値」の扱い)。
+  const [cameraBoundary, setCameraBoundary] = useState<Rect | null>(
+    template.cameraBoundary,
+  );
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     template.backgroundImageUrl,
   );
@@ -263,6 +288,7 @@ export default function TemplateEditor({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [warpHelpOpen, setWarpHelpOpen] = useState(false);
+  const [cameraBoundaryHelpOpen, setCameraBoundaryHelpOpen] = useState(false);
   const [objectHelpOpen, setObjectHelpOpen] = useState(false);
   // 「リセット」ボタン押下時の確認モーダル(エリア・配置オブジェクトを
   // 全削除する前に一度確認する)。
@@ -295,7 +321,16 @@ export default function TemplateEditor({
       return;
     }
     setDirty(true);
-  }, [obstacles, meetingZones, mapWidth, mapHeight, spawnPoint, warpPoints, placedObjects]);
+  }, [
+    obstacles,
+    meetingZones,
+    mapWidth,
+    mapHeight,
+    spawnPoint,
+    warpPoints,
+    placedObjects,
+    cameraBoundary,
+  ]);
 
   // アップロード画像の実ピクセルサイズを取得し、マップサイズ欄へ反映する。
   const applyImageNaturalSize = () => {
@@ -339,6 +374,9 @@ export default function TemplateEditor({
     originX: number;
     originY: number;
   } | null>(null);
+  const cameraBoundaryDragState = useRef<CameraBoundaryDragState | null>(
+    null,
+  );
   const measureRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(MAX_DISPLAY_WIDTH);
@@ -434,6 +472,7 @@ export default function TemplateEditor({
     spawnPoint,
     warpPoints,
     placedObjects,
+    cameraBoundary,
   });
 
   // 壁・エリア・ワープ・配置オブジェクト・マップサイズ・アバター初期位置の
@@ -458,6 +497,7 @@ export default function TemplateEditor({
     setSpawnPoint(snap.spawnPoint);
     setWarpPoints(snap.warpPoints);
     setPlacedObjects(snap.placedObjects);
+    setCameraBoundary(snap.cameraBoundary);
   };
 
   const handleUndo = () => {
@@ -724,6 +764,63 @@ export default function TemplateEditor({
       }
       return;
     }
+    const boundaryDrag = cameraBoundaryDragState.current;
+    if (boundaryDrag) {
+      const dx = (e.clientX - boundaryDrag.startX) / scale;
+      const dy = (e.clientY - boundaryDrag.startY) / scale;
+      if (boundaryDrag.mode === "move") {
+        setCameraBoundary((prev) => {
+          if (!prev) return prev;
+          const pos = clampPosition(
+            boundaryDrag.originX + dx,
+            boundaryDrag.originY + dy,
+            prev.width,
+            prev.height,
+            mapWidth,
+            mapHeight,
+          );
+          return { ...prev, ...pos };
+        });
+        return;
+      }
+      // リサイズ(回転は考慮しない。カメラ境界は常に軸に沿った矩形のため)。
+      // 掴んだ角の反対側の辺を固定して、掴んだ角の方向へ伸縮する考え方は
+      // applyDragのgrowFromNearEdge/clampFromFarEdgeと同じ。
+      const xIsFar = boundaryDrag.corner === "tl" || boundaryDrag.corner === "bl";
+      const yIsFar = boundaryDrag.corner === "tl" || boundaryDrag.corner === "tr";
+      let x = boundaryDrag.originX;
+      let width = boundaryDrag.originWidth;
+      if (xIsFar) {
+        const farEdge = boundaryDrag.originX + boundaryDrag.originWidth;
+        width = Math.min(
+          Math.max(boundaryDrag.originWidth - dx, MIN_ITEM_SIZE),
+          farEdge,
+        );
+        x = farEdge - width;
+      } else {
+        width = Math.min(
+          Math.max(boundaryDrag.originWidth + dx, MIN_ITEM_SIZE),
+          Math.max(mapWidth - boundaryDrag.originX, MIN_ITEM_SIZE),
+        );
+      }
+      let y = boundaryDrag.originY;
+      let height = boundaryDrag.originHeight;
+      if (yIsFar) {
+        const farEdge = boundaryDrag.originY + boundaryDrag.originHeight;
+        height = Math.min(
+          Math.max(boundaryDrag.originHeight - dy, MIN_ITEM_SIZE),
+          farEdge,
+        );
+        y = farEdge - height;
+      } else {
+        height = Math.min(
+          Math.max(boundaryDrag.originHeight + dy, MIN_ITEM_SIZE),
+          Math.max(mapHeight - boundaryDrag.originY, MIN_ITEM_SIZE),
+        );
+      }
+      setCameraBoundary((prev) => (prev ? { ...prev, x, y, width, height } : prev));
+      return;
+    }
     const drag = dragState.current;
     if (!drag) return;
     if (drag.mode === "rotate") {
@@ -765,6 +862,7 @@ export default function TemplateEditor({
     dragState.current = null;
     spawnDragState.current = null;
     warpDragState.current = null;
+    cameraBoundaryDragState.current = null;
   };
 
   const handleWarpPointerDown = (e: React.PointerEvent, id: string) => {
@@ -779,6 +877,37 @@ export default function TemplateEditor({
       originX: point.x,
       originY: point.y,
     };
+  };
+
+  // カメラ境界の移動・リサイズ開始。1個だけなので、壁等のような
+  // itemType/idでの照合は不要(cameraBoundary自体がそのままドラッグ対象)。
+  const handleCameraBoundaryPointerDown = (
+    e: React.PointerEvent,
+    mode: "move" | "resize",
+    corner: "br" | "tl" | "tr" | "bl" = "br",
+  ) => {
+    e.stopPropagation();
+    if (!cameraBoundary) return;
+    pushUndo();
+    cameraBoundaryDragState.current =
+      mode === "move"
+        ? {
+            mode,
+            startX: e.clientX,
+            startY: e.clientY,
+            originX: cameraBoundary.x,
+            originY: cameraBoundary.y,
+          }
+        : {
+            mode,
+            corner,
+            startX: e.clientX,
+            startY: e.clientY,
+            originX: cameraBoundary.x,
+            originY: cameraBoundary.y,
+            originWidth: cameraBoundary.width,
+            originHeight: cameraBoundary.height,
+          };
   };
 
   // ワープ(A/B/Cチャンネルは1ペア=丸2つまで。ボタンは既にペアがある
@@ -1032,6 +1161,30 @@ export default function TemplateEditor({
     ]);
   };
 
+  // カメラ境界(2026-10追加、1個だけ)。デフォルトは画面サイズに近い
+  // 1200×800(マップがそれより小さい場合はマップに合わせる)で、
+  // 今見えている範囲の中心に配置する。
+  const addCameraBoundary = () => {
+    pushUndo();
+    const center = getVisibleCenterMapPoint();
+    const width = Math.min(1200, mapWidth);
+    const height = Math.min(800, mapHeight);
+    const pos = clampPosition(
+      center.x - width / 2,
+      center.y - height / 2,
+      width,
+      height,
+      mapWidth,
+      mapHeight,
+    );
+    setCameraBoundary({ ...pos, width, height });
+  };
+
+  const removeCameraBoundary = () => {
+    pushUndo();
+    setCameraBoundary(null);
+  };
+
   // 削除したアイテムが選択中だった場合は選択を解除する(赤枠・コピー
   // 吹き出しが消えたアイテムに付いたままにならないように)。
   const deselectIfRemoved = (itemType: ItemType, id: string) =>
@@ -1277,6 +1430,7 @@ export default function TemplateEditor({
       spawnPoint,
       warpPoints,
       placedObjects,
+      cameraBoundary,
     );
     if (!result.ok) {
       setError(result.error);
@@ -1317,6 +1471,7 @@ export default function TemplateEditor({
       spawnPoint,
       warpPoints,
       placedObjects,
+      cameraBoundary,
     );
     if (!result.ok) {
       setError(result.error);
@@ -1335,6 +1490,7 @@ export default function TemplateEditor({
     spawnPoint,
     warpPoints,
     placedObjects,
+    cameraBoundary,
     router,
   ]);
 
@@ -1699,6 +1855,34 @@ export default function TemplateEditor({
             ＋アナウンス
           </button>
           <div className="flex items-center gap-1.5">
+            <p className="text-xs font-semibold text-slate-500">画面境界</p>
+            <button
+              type="button"
+              onClick={() => setCameraBoundaryHelpOpen(true)}
+              title="画面境界の説明を表示"
+              className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-bold leading-none text-slate-500 hover:bg-slate-100"
+            >
+              ？
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={addCameraBoundary}
+              disabled={!!cameraBoundary}
+              className="flex-1 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"
+            >
+              ＋画面境界{cameraBoundary ? "(設置済み)" : ""}
+            </button>
+            {cameraBoundary && (
+              <button
+                onClick={removeCameraBoundary}
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                削除
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
             <p className="text-xs font-semibold text-slate-500">ワープ</p>
             <button
               type="button"
@@ -2009,6 +2193,41 @@ export default function TemplateEditor({
               <div>
                 <p className="font-semibold text-slate-700">【赤・黄・青・緑ワープ】</p>
                 <p>・同じ色の丸2つが1ペア。片方に入るともう片方へ瞬間移動(双方向)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cameraBoundaryHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[80vh] w-full max-w-sm overflow-y-auto rounded-xl bg-white p-5 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-bold text-slate-800">画面境界の説明</p>
+              <button
+                onClick={() => setCameraBoundaryHelpOpen(false)}
+                aria-label="閉じる"
+                className="rounded px-1.5 text-lg text-slate-400 hover:text-slate-700"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-2 text-xs text-slate-600">
+              <div>
+                <p className="font-semibold text-slate-700">【画面境界】</p>
+                <p>
+                  ・ルーム内で画面(カメラ)が追いかける範囲を、この点線の
+                  枠の内側だけに制限する(1つだけ設置可能)
+                </p>
+                <p>
+                  ・アバターが枠の外へ出ても、画面はそこで止まりアバター
+                  だけが動く(今まで背景画像の端で起きていた挙動を、この
+                  枠の位置で起こせるようにする機能)
+                </p>
+                <p>
+                  ・壁と違い当たり判定は持たない(アバターは枠を自由に
+                  通り抜けられる)
+                </p>
               </div>
             </div>
           </div>
@@ -2395,6 +2614,56 @@ export default function TemplateEditor({
                 </div>
               );
             })}
+
+            {cameraBoundary && (
+              <div
+                onPointerDown={(e) =>
+                  handleCameraBoundaryPointerDown(e, "move")
+                }
+                className="absolute flex cursor-move items-start justify-center border-2 border-dashed border-violet-500 bg-violet-500/10 text-center text-[10px] font-semibold text-violet-600"
+                style={{
+                  left: cameraBoundary.x * scale,
+                  top: cameraBoundary.y * scale,
+                  width: cameraBoundary.width * scale,
+                  height: cameraBoundary.height * scale,
+                }}
+              >
+                🖥️ 画面境界
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={removeCameraBoundary}
+                  className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                >
+                  ×
+                </button>
+                {/* リサイズハンドル(4隅)。壁と同じく見た目は出さず、4隅
+                    どこからでもドラッグでリサイズできる。回転は非対応。 */}
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "br")
+                  }
+                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize"
+                />
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "tl")
+                  }
+                  className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize"
+                />
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "tr")
+                  }
+                  className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize"
+                />
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "bl")
+                  }
+                  className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
+                />
+              </div>
+            )}
 
             {warpPoints.map((w) => (
               <Fragment key={w.id}>
