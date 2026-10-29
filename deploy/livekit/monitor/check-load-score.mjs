@@ -10,17 +10,19 @@
 // 踏まえて設定。deploy/livekit/LOAD_TEST_PLAN.md参照)。
 //
 // 実行方法(WebARENA Indigo等、任意のサーバーでcron実行を想定):
-//   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... SLACK_WEBHOOK_URL=... \
+//   SUPABASE_URL=... SUPABASE_SECRET_KEY=... SLACK_WEBHOOK_URL=... \
 //     node check-load-score.mjs
 //   例: */2 * * * * のcronで2分おきに実行する
 //
 // 必須の環境変数:
-//   SUPABASE_URL              SupabaseプロジェクトのURL
-//   SUPABASE_SERVICE_ROLE_KEY service_role キー(roomsテーブル参照・
-//                              presence購読に使う。anonキーではRLSに
-//                              阻まれる場合があるため service_role を推奨)
-//   SLACK_WEBHOOK_URL          通知先のIncoming Webhook URL(省略時は
-//                              標準出力にログを出すだけになる)
+//   SUPABASE_URL        SupabaseプロジェクトのURL
+//   SUPABASE_SECRET_KEY secret キー(新しいAPIキー方式。旧service_role
+//                        キーの代わり。roomsテーブル参照・presence購読に
+//                        使う。publishableキーではRLSに阻まれる場合が
+//                        あるため secret を推奨。移行期間中は未設定なら
+//                        旧SUPABASE_SERVICE_ROLE_KEYを読む)
+//   SLACK_WEBHOOK_URL    通知先のIncoming Webhook URL(省略時は
+//                        標準出力にログを出すだけになる)
 //
 // 「新たに超えた場合だけ」通知するため、直近に通知した段階(tier)を
 // state.jsonに保存しておく(同じ段階のままなら再通知しない。閾値を
@@ -101,10 +103,12 @@ function fetchRoomPresence(supabase, roomId) {
 
 async function main() {
   const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // TODO: 全環境の差し替えが終わったら右側のフォールバック(旧SUPABASE_SERVICE_ROLE_KEY)を削除する
+  const serviceRoleKey =
+    process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
     console.error(
-      "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が設定されていません",
+      "SUPABASE_URL / SUPABASE_SECRET_KEY(またはSUPABASE_SERVICE_ROLE_KEY)が設定されていません",
     );
     process.exit(1);
   }

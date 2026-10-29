@@ -9,7 +9,9 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 // (サーバー専用。Server Action/Route Handlerからのみ呼び出す)。
 export function createServiceRoleClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string;
+  // TODO: 全環境の差し替えが終わったら右側のフォールバックを削除する
+  const serviceRoleKey = (process.env.SUPABASE_SECRET_KEY ??
+    process.env.SUPABASE_SERVICE_ROLE_KEY) as string;
   return createSupabaseClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   });

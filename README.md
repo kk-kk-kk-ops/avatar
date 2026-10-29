@@ -17,8 +17,8 @@ MetaLife風の2Dバーチャルオフィスの土台です。
 npm install
 
 # 2. 環境変数を設定
-cp .env.local.example .env.local
-# .env.local を開き、SupabaseのURLとanon keyを入力
+cp .env.example .env.local
+# .env.local を開き、SupabaseのURLとPublishable Key(NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)を入力
 
 # 3. 開発サーバー起動
 npm run dev
@@ -32,7 +32,8 @@ http://localhost:3000 を2つのタブ(またはシークレットウィンド�
 1. GitHubにpush
 2. Vercelで「Import Project」→ このリポジトリを選択
 3. Environment Variables に `NEXT_PUBLIC_SUPABASE_URL` と
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY` を設定
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` を設定(他に必要な変数は
+   `.env.example` を参照)
 4. Deploy
 
 ## ディレクトリ構成
@@ -47,11 +48,11 @@ avatar-space/
 │   ├── AvatarSpace.tsx   # 本体(移動ループ・Realtime同期・チャット)
 │   └── Avatar.tsx        # 1体分の描画
 ├── lib/
-│   ├── supabase.ts       # Supabaseクライアント
+│   ├── supabase/         # Supabaseクライアント(client/server/middleware/serviceRole)
 │   └── types.ts          # PlayerState型・定数
 ├── supabase/
 │   └── README.md         # Supabase設定・今後の拡張用スキーマ
-├── .env.local.example
+├── .env.example
 └── package.json
 ```
 
