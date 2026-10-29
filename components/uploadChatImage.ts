@@ -48,7 +48,10 @@ export function uploadRawChatImageWithProgress(
       }
 
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      // TODO: 全環境の差し替えが終わったら右側のフォールバックを削除する
+      const anonKey =
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
       if (!supabaseUrl || !anonKey) {
         reject(new Error("Supabaseの設定が不足しています"));
         return;

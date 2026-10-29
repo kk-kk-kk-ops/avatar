@@ -15,7 +15,9 @@ import { SESSION_MAX_AGE } from "./constants";
 export function createClient() {
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
+    // TODO: 全環境の差し替えが終わったら右側のフォールバックを削除する
+    (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) as string,
     {
       cookieOptions: {
         maxAge: SESSION_MAX_AGE,
