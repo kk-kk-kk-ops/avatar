@@ -15,6 +15,12 @@ const SIGNED_URL_EXPIRES_IN = 300; // 5分
 //   - viewOnly: list_chat_messages_by_invite_tokenと同じ引数
 //     (roomId, peerUserId, inviteToken)を使い、同じSECURITY DEFINER関数で
 //     取得したスレッドの中から対象メッセージを探す。
+//
+// variant=thumbnail のときは、吹き出し表示用の小さいサムネイルを返す。
+// thumbnail_pathが無いメッセージ(サムネイル方式の導入前に送られた
+// 既存画像)は、ここでimage_path(元画像)にフォールバックする。これにより
+// 呼び出し側(クライアント)は新旧メッセージを区別せず常にvariant=thumbnailで
+// 呼べばよい。拡大表示・ダウンロードは従来通りvariant=full(デフォルト)。
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const messageId = searchParams.get("messageId");
@@ -22,6 +28,7 @@ export async function GET(request: NextRequest) {
   const peerUserId = searchParams.get("peerUserId");
   const inviteToken = searchParams.get("inviteToken");
   const download = searchParams.get("download") === "1";
+  const variant = searchParams.get("variant") === "thumbnail" ? "thumbnail" : "full";
 
   if (!messageId) {
     return NextResponse.json({ error: "messageIdが必要です" }, { status: 400 });
@@ -36,6 +43,7 @@ export async function GET(request: NextRequest) {
   }
 
   let imagePath: string | null = null;
+  let thumbnailPath: string | null = null;
 
   if (inviteToken && roomId && peerUserId) {
     const { data } = await supabase.rpc("list_chat_messages_by_invite_token", {
@@ -44,19 +52,28 @@ export async function GET(request: NextRequest) {
       peer_user_id: peerUserId,
     });
     const row = (
-      data as Array<{ id: string; image_path: string | null }> | null
+      data as
+        | Array<{ id: string; image_path: string | null; thumbnail_path: string | null }>
+        | null
     )?.find((m) => m.id === messageId);
     imagePath = row?.image_path ?? null;
+    thumbnailPath = row?.thumbnail_path ?? null;
   } else {
     const { data } = await supabase
       .from("chat_messages")
-      .select("image_path")
+      .select("image_path, thumbnail_path")
       .eq("id", messageId)
       .maybeSingle();
-    imagePath = (data as { image_path: string | null } | null)?.image_path ?? null;
+    const row = data as
+      | { image_path: string | null; thumbnail_path: string | null }
+      | null;
+    imagePath = row?.image_path ?? null;
+    thumbnailPath = row?.thumbnail_path ?? null;
   }
 
-  if (!imagePath) {
+  const targetPath = variant === "thumbnail" ? (thumbnailPath ?? imagePath) : imagePath;
+
+  if (!targetPath) {
     return NextResponse.json({ error: "画像が見つかりません" }, { status: 404 });
   }
 
@@ -80,7 +97,7 @@ export async function GET(request: NextRequest) {
   const { data: signed, error } = await serviceClient.storage
     .from("chat-images")
     .createSignedUrl(
-      imagePath,
+      targetPath,
       SIGNED_URL_EXPIRES_IN,
       download ? { download: true } : undefined,
     );

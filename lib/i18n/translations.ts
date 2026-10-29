@@ -210,6 +210,7 @@ const ja: Record<string, string> = {
   "chat.deleteConfirm": "このメッセージを削除します。よろしいですか?",
   "chat.imageSaving": "保存中...",
   "chat.saveImage": "画像を保存",
+  "chat.imageLoading": "読み込み中...",
 
   "notifications.loading": "Loading...",
   "notifications.fetchFailedWithReason": "通知の取得に失敗しました({reason})",
@@ -693,6 +694,7 @@ const en: Record<string, string> = {
   "chat.deleteConfirm": "Delete this message? Are you sure?",
   "chat.imageSaving": "Saving...",
   "chat.saveImage": "Save image",
+  "chat.imageLoading": "Loading...",
 
   "notifications.loading": "Loading...",
   "notifications.fetchFailedWithReason": "Failed to load notifications ({reason})",

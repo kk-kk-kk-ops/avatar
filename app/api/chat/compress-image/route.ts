@@ -124,43 +124,57 @@ export async function POST(request: Request) {
     outputBuffer = await compress(60);
   }
 
-  const finalPath = `${roomId}/${user.id}/${crypto.randomUUID()}.webp`;
-  const { error: uploadError } = await serviceClient.storage
-    .from("chat-images")
-    .upload(finalPath, outputBuffer, { contentType: "image/webp" });
-  if (uploadError) {
-    console.error("圧縮画像のアップロードに失敗しました", uploadError);
-    return NextResponse.json({ error: "画像の保存に失敗しました" }, { status: 500 });
-  }
+  // 吹き出し表示専用の小さいサムネイル(幅320px・quality70)。元画像
+  // (inputBuffer)から作る(outputBufferを再縮小するより画質が良いため)。
+  const thumbnailBuffer = await sharp(inputBuffer)
+    .rotate()
+    .resize({ width: 320, height: 320, fit: "inside", withoutEnlargement: true })
+    .webp({ quality: 70 })
+    .toBuffer();
 
   // upload()がエラーを返さないにもかかわらず、実際には署名付きURL経由で
   // 404になり読み出せない(=実体が保存されていない)事象が確認されたため、
   // 保存直後に実際にdownloadできるかを確認する。読み出せない場合は
-  // 1回だけ再アップロードを試みてから、それでもダメならエラーを返す
-  // (imagePathをメッセージに使わせて「読み込めない画像」を作らないための
-  // 最終防波堤)。
-  const canReadFinalPath = async () => {
-    const { data, error } = await serviceClient.storage
+  // 1回だけ再アップロードを試みる(imagePathをメッセージに使わせて
+  // 「読み込めない画像」を作らないための最終防波堤)。
+  const uploadAndVerify = async (path: string, buffer: Buffer) => {
+    const { error: uploadError } = await serviceClient.storage
       .from("chat-images")
-      .download(finalPath);
-    return !error && !!data;
-  };
-
-  if (!(await canReadFinalPath())) {
-    console.error(
-      "アップロード直後に画像を読み出せなかったため再アップロードします",
-      finalPath,
-    );
+      .upload(path, buffer, { contentType: "image/webp" });
+    if (uploadError) {
+      console.error("アップロードに失敗しました", path, uploadError);
+      return false;
+    }
+    const canRead = async () => {
+      const { data, error } = await serviceClient.storage
+        .from("chat-images")
+        .download(path);
+      return !error && !!data;
+    };
+    if (await canRead()) return true;
+    console.error("アップロード直後に読み出せなかったため再アップロードします", path);
     const { error: retryError } = await serviceClient.storage
       .from("chat-images")
-      .upload(finalPath, outputBuffer, {
-        contentType: "image/webp",
-        upsert: true,
-      });
-    if (retryError || !(await canReadFinalPath())) {
-      console.error("画像の再アップロードに失敗しました", finalPath, retryError);
-      return NextResponse.json({ error: "画像の保存に失敗しました" }, { status: 500 });
+      .upload(path, buffer, { contentType: "image/webp", upsert: true });
+    if (retryError) {
+      console.error("再アップロードに失敗しました", path, retryError);
+      return false;
     }
+    return await canRead();
+  };
+
+  const fileId = crypto.randomUUID();
+  const finalPath = `${roomId}/${user.id}/${fileId}.webp`;
+  if (!(await uploadAndVerify(finalPath, outputBuffer))) {
+    return NextResponse.json({ error: "画像の保存に失敗しました" }, { status: 500 });
+  }
+
+  // サムネイルの保存に失敗しても、画像送信自体は失敗にしない。
+  // thumbnail_pathをnullのままにすれば、表示側は既存画像(サムネイル無し)
+  // と同じ経路で元画像(imagePath)にフォールバックする。
+  let thumbnailPath: string | null = `${roomId}/${user.id}/${fileId}_thumb.webp`;
+  if (!(await uploadAndVerify(thumbnailPath, thumbnailBuffer))) {
+    thumbnailPath = null;
   }
 
   await serviceClient.storage.from("chat-images").remove([rawPath]);
@@ -176,13 +190,14 @@ export async function POST(request: Request) {
   );
   if (newCount === null) {
     // 上限に達していたため加算されなかった(同時アップロードによる競合)。
-    // 既にアップロード済みの最終画像を巻き戻す。
-    await serviceClient.storage.from("chat-images").remove([finalPath]);
+    // 既にアップロード済みの最終画像・サムネイルを巻き戻す。
+    const pathsToRemove = thumbnailPath ? [finalPath, thumbnailPath] : [finalPath];
+    await serviceClient.storage.from("chat-images").remove(pathsToRemove);
     return NextResponse.json(
       { error: `1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです` },
       { status: 429 },
     );
   }
 
-  return NextResponse.json({ imagePath: finalPath });
+  return NextResponse.json({ imagePath: finalPath, thumbnailPath });
 }

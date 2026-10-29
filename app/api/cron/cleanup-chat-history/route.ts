@@ -48,12 +48,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "削除対象の取得に失敗しました" }, { status: 500 });
   }
 
-  const rows = (expired ?? []) as Array<{ id: string; image_path: string | null }>;
+  const rows = (expired ?? []) as Array<{
+    id: string;
+    image_path: string | null;
+    thumbnail_path: string | null;
+  }>;
   if (rows.length === 0) {
     return NextResponse.json({ deletedMessages: 0, deletedImages: 0 });
   }
 
-  const imagePaths = rows.map((r) => r.image_path).filter((p): p is string => !!p);
+  const imagePaths = [
+    ...rows.map((r) => r.image_path),
+    ...rows.map((r) => r.thumbnail_path),
+  ].filter((p): p is string => !!p);
   if (imagePaths.length > 0) {
     const { error: storageError } = await supabase.storage
       .from("chat-images")

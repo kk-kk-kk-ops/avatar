@@ -33,11 +33,13 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => null);
-  const requestedPaths = body?.imagePaths as string[] | undefined;
+  const requestedPaths = (body?.imagePaths as string[] | undefined) ?? [];
+  const requestedThumbnailPaths =
+    (body?.thumbnailPaths as string[] | undefined) ?? [];
   if (
-    !requestedPaths ||
     !Array.isArray(requestedPaths) ||
-    requestedPaths.length === 0
+    !Array.isArray(requestedThumbnailPaths) ||
+    (requestedPaths.length === 0 && requestedThumbnailPaths.length === 0)
   ) {
     return NextResponse.json({ deletedImages: 0 });
   }
@@ -58,39 +60,62 @@ export async function POST(request: NextRequest) {
 
   // 現在もchat_messagesに参照が残っているパス(=進行中の会話の画像、または
   // 不正に指定されたパス)を除外し、本当に孤立したパスだけを削除対象にする。
-  const { data: stillReferenced, error: refError } = await serviceClient
-    .from("chat_messages")
-    .select("image_path")
-    .in("image_path", requestedPaths);
-  if (refError) {
-    console.error("画像参照の検証に失敗しました", refError);
+  // image_path・thumbnail_pathは別の列のため、それぞれ個別に検証する。
+  const findOrphaned = async (
+    requested: string[],
+    column: "image_path" | "thumbnail_path",
+  ): Promise<string[]> => {
+    if (requested.length === 0) return [];
+    const { data: stillReferenced, error: refError } = await serviceClient
+      .from("chat_messages")
+      .select(column)
+      .in(column, requested);
+    if (refError) {
+      console.error(`${column}の参照検証に失敗しました`, refError);
+      throw refError;
+    }
+    const referencedSet = new Set(
+      (stillReferenced as Array<Record<string, string>> | null ?? []).map(
+        (row) => row[column],
+      ),
+    );
+    const orphaned = requested.filter((p) => !referencedSet.has(p));
+    const rejectedCount = requested.length - orphaned.length;
+    if (rejectedCount > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `cleanup-group-images: ${rejectedCount}件の${column}が現在も参照されているため削除をスキップしました(user=${user.id})`,
+      );
+    }
+    return orphaned;
+  };
+
+  let imagePaths: string[];
+  let thumbnailPaths: string[];
+  try {
+    [imagePaths, thumbnailPaths] = await Promise.all([
+      findOrphaned(requestedPaths, "image_path"),
+      findOrphaned(requestedThumbnailPaths, "thumbnail_path"),
+    ]);
+  } catch {
     return NextResponse.json(
       { error: "画像の削除に失敗しました" },
       { status: 500 },
     );
   }
-  const referencedSet = new Set(
-    (stillReferenced ?? []).map((row) => row.image_path as string),
-  );
-  const imagePaths = requestedPaths.filter((p) => !referencedSet.has(p));
-  const rejectedCount = requestedPaths.length - imagePaths.length;
-  if (rejectedCount > 0) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `cleanup-group-images: ${rejectedCount}件のパスが現在も参照されているため削除をスキップしました(user=${user.id})`,
-    );
-  }
-  if (imagePaths.length === 0) {
+
+  const allPaths = [...imagePaths, ...thumbnailPaths];
+  if (allPaths.length === 0) {
     return NextResponse.json({ deletedImages: 0 });
   }
 
   const { error } = await serviceClient.storage
     .from("chat-images")
-    .remove(imagePaths);
+    .remove(allPaths);
   if (error) {
     console.error("グループ画像の削除に失敗しました", error);
     return NextResponse.json({ error: "画像の削除に失敗しました" }, { status: 500 });
   }
 
-  return NextResponse.json({ deletedImages: imagePaths.length });
+  return NextResponse.json({ deletedImages: imagePaths.length, deletedThumbnails: thumbnailPaths.length });
 }

@@ -1024,6 +1024,15 @@ alter table public.chat_messages add column if not exists deleted_at timestamptz
 -- 下のinsert own dmポリシーで行う)。
 alter table public.chat_messages add column if not exists image_path text;
 
+-- 吹き出し表示専用の小さいサムネイル(幅320px程度)のパス(2026-10-29)。
+-- image_pathと並ぶnullable列で、画像を圧縮する際にcompress-imageルートが
+-- 合わせて生成する。サムネイルは必ず画像付きメッセージにのみ付随する
+-- (単独では存在しない)ため、下のchat_messages_thumbnail_requires_image_check
+-- 制約で保証する。サムネイルが無い(=この機能の導入前に送られた)既存の
+-- メッセージは、表示側がimage_path(元画像)にフォールバックする
+-- (app/api/chat/image-url/route.tsのvariant=thumbnail参照)。
+alter table public.chat_messages add column if not exists thumbnail_path text;
+
 -- グループチャット退出時の「○○が退出しました」通知用(2026-08-30)。
 -- 通常のメッセージと区別して表示する(枠なし・赤文字)ためのフラグ。
 alter table public.chat_messages add column if not exists is_system boolean not null default false;
@@ -1038,6 +1047,12 @@ alter table public.chat_messages add column if not exists is_system boolean not 
 alter table public.chat_messages drop constraint if exists chat_messages_content_check;
 alter table public.chat_messages add constraint chat_messages_content_check
   check (message <> '' or image_path is not null or deleted_at is not null);
+
+-- thumbnail_pathがあるならimage_pathも必ずある、をDB側でも保証する
+-- (2026-10-29)。
+alter table public.chat_messages drop constraint if exists chat_messages_thumbnail_requires_image_check;
+alter table public.chat_messages add constraint chat_messages_thumbnail_requires_image_check
+  check (thumbnail_path is null or image_path is not null);
 
 create index if not exists chat_messages_room_id_created_at_idx
   on public.chat_messages (room_id, created_at);
@@ -1178,14 +1193,15 @@ returns table (
   created_at timestamptz,
   edited_at timestamptz,
   deleted_at timestamptz,
-  image_path text
+  image_path text,
+  thumbnail_path text
 )
 language sql
 security definer
 set search_path = public
 as $$
   select m.id, m.sender_user_id, m.sender_name, m.message, m.created_at,
-    m.edited_at, m.deleted_at, m.image_path
+    m.edited_at, m.deleted_at, m.image_path, m.thumbnail_path
   from public.chat_messages m
   join public.rooms r on r.id = m.room_id
   join public.accounts a on a.id = r.account_id
@@ -1203,11 +1219,12 @@ revoke all on function public.list_chat_messages_by_invite_token(text, uuid, uui
 revoke all on function public.list_chat_messages_by_invite_token(text, uuid, uuid) from anon;
 grant execute on function public.list_chat_messages_by_invite_token(text, uuid, uuid) to authenticated;
 
--- 引数を追加(p_image_path)して関数シグネチャが変わったため、
--- 旧シグネチャ・新シグネチャの両方をdropしてから作り直す。
+-- 引数を追加(p_image_path・p_thumbnail_path)して関数シグネチャが変わった
+-- ため、旧シグネチャ・新シグネチャの両方をdropしてから作り直す。
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, text, text);
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text);
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text);
+drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text);
 
 create function public.send_chat_message_by_invite_token(
   token text,
@@ -1215,7 +1232,8 @@ create function public.send_chat_message_by_invite_token(
   recipient_user_id uuid,
   sender_name text,
   message text,
-  p_image_path text default null
+  p_image_path text default null,
+  p_thumbnail_path text default null
 )
 returns table (id uuid, created_at timestamptz)
 language plpgsql
@@ -1248,23 +1266,28 @@ begin
     raise exception 'このルームへのアクセス権がありません';
   end if;
 
-  -- 画像添付時のなりすまし防止(通常ルートのRLSと同じ検証)。
+  -- 画像・サムネイル添付時のなりすまし防止(通常ルートのRLSと同じ検証)。
   if p_image_path is not null
      and p_image_path not like (v_room_id::text || '/' || auth.uid()::text || '/%') then
     raise exception '不正な画像パスです';
   end if;
 
+  if p_thumbnail_path is not null
+     and p_thumbnail_path not like (v_room_id::text || '/' || auth.uid()::text || '/%') then
+    raise exception '不正なサムネイルパスです';
+  end if;
+
   return query
     insert into public.chat_messages
-      (room_id, sender_user_id, recipient_user_id, sender_name, message, image_path)
-    values (v_room_id, auth.uid(), recipient_user_id, sender_name, message, p_image_path)
+      (room_id, sender_user_id, recipient_user_id, sender_name, message, image_path, thumbnail_path)
+    values (v_room_id, auth.uid(), recipient_user_id, sender_name, message, p_image_path, p_thumbnail_path)
     returning chat_messages.id, chat_messages.created_at;
 end;
 $$;
 
-revoke all on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text) from public;
-revoke all on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text) from anon;
-grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text) to authenticated;
+revoke all on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text) from public;
+revoke all on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text) from anon;
+grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text) to authenticated;
 
 -- viewOnly向けのメッセージ編集。通常ルートは上のRLS
 -- ("chat_messages: update own dm")で直接UPDATEできるが、viewOnlyは
@@ -1382,13 +1405,13 @@ drop function if exists public.delete_expired_chat_messages();
 drop function if exists public.get_expired_chat_message_ids();
 
 create function public.get_expired_chat_message_ids()
-returns table (id uuid, image_path text)
+returns table (id uuid, image_path text, thumbnail_path text)
 language sql
 security definer
 set search_path = public
 stable
 as $$
-  select m.id, m.image_path
+  select m.id, m.image_path, m.thumbnail_path
   from public.chat_messages m
   join public.rooms r on r.id = m.room_id
   join public.accounts a on a.id = r.account_id
@@ -1403,8 +1426,15 @@ as $$
   );
 $$;
 
+-- Supabaseのデフォルト権限(ALTER DEFAULT PRIVILEGES)は新規作成した関数に
+-- anon/authenticated/service_roleへのEXECUTEを自動付与するため、この関数が
+-- 本来の設計(service_role限定)通りになるよう、authenticatedからも明示的に
+-- revokeする(2026-10-29、サムネイル対応マイグレーションで追記。それまでは
+-- public/anonのみrevokeしており、authenticatedに意図せずEXECUTE権限が
+-- 残っていた)。
 revoke all on function public.get_expired_chat_message_ids() from public;
 revoke all on function public.get_expired_chat_message_ids() from anon;
+revoke all on function public.get_expired_chat_message_ids() from authenticated;
 grant execute on function public.get_expired_chat_message_ids() to service_role;
 
 -- 旧pg_cronジョブ(delete-expired-chat-messages)は上記の理由で廃止。
@@ -1622,6 +1652,10 @@ create policy "chat_messages: insert own dm"
     and (
       image_path is null
       or image_path like (room_id::text || '/' || sender_user_id::text || '/%')
+    )
+    and (
+      thumbnail_path is null
+      or thumbnail_path like (room_id::text || '/' || sender_user_id::text || '/%')
     )
     and (
       (
@@ -1886,10 +1920,10 @@ grant execute on function public.delete_chat_group(uuid) to authenticated;
 -- 退出後に誰もメンバーがいなくなった場合、DBに残しても容量を圧迫する
 -- だけのため、グループ本体(chat_groups)を削除する(on delete cascadeで
 -- chat_messages/chat_group_read_stateもまとめて消える)。ただしSupabase
--- Storageの添付画像実体はSQLのDELETEだけでは消えない既知の制約がある
--- (get_expired_chat_message_idsと同じ理由)ため、削除直前に画像パスの
--- 一覧を集めてdeleted_image_pathsとして返し、呼び出し元(アプリ側の
--- service_role経由API)に実ファイルの削除を委ねる。
+-- Storageの添付画像・サムネイル実体はSQLのDELETEだけでは消えない既知の制約
+-- がある(get_expired_chat_message_idsと同じ理由)ため、削除直前にパスの
+-- 一覧を集めてdeleted_image_paths/deleted_thumbnail_pathsとして返し、
+-- 呼び出し元(アプリ側のservice_role経由API)に実ファイルの削除を委ねる。
 drop function if exists public.leave_chat_group(uuid);
 create function public.leave_chat_group(p_group_id uuid)
 returns table (
@@ -1897,7 +1931,8 @@ returns table (
   created_at timestamptz,
   message text,
   sender_name text,
-  deleted_image_paths text[]
+  deleted_image_paths text[],
+  deleted_thumbnail_paths text[]
 )
 language plpgsql
 security definer
@@ -1911,6 +1946,7 @@ declare
   v_created_at timestamptz;
   v_remaining_members int;
   v_image_paths text[];
+  v_thumbnail_paths text[];
 begin
   if auth.uid() is null then
     raise exception 'ログインが必要です';
@@ -1947,6 +1983,10 @@ begin
     from public.chat_messages m
     where m.group_id = p_group_id and m.image_path is not null;
 
+    select array_agg(m.thumbnail_path) into v_thumbnail_paths
+    from public.chat_messages m
+    where m.group_id = p_group_id and m.thumbnail_path is not null;
+
     -- 2026-09 QA指摘(不具合1): この関数はreturns table (id uuid, ...)の
     -- ため、id という名前のPL/pgSQL変数(戻り値列)が暗黙に存在する。
     -- 以前はここが「where id = p_group_id」と無修飾だったため、
@@ -1958,7 +1998,9 @@ begin
   end if;
 
   return query
-    select v_id, v_created_at, v_message, v_name, coalesce(v_image_paths, array[]::text[]);
+    select v_id, v_created_at, v_message, v_name,
+      coalesce(v_image_paths, array[]::text[]),
+      coalesce(v_thumbnail_paths, array[]::text[]);
 end;
 $$;
 

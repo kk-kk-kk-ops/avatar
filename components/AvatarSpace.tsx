@@ -1339,6 +1339,7 @@ export default function AvatarSpace({
     editedAt: string | null;
     deletedAt: string | null;
     imagePath: string | null;
+    thumbnailPath: string | null;
     reactions: ChatReaction[];
   };
   // 会話相手(認証済みユーザーの安定ID)ごとのスレッド。
@@ -1422,6 +1423,7 @@ export default function AvatarSpace({
     // 出しではなく枠なし・赤文字で表示する。
     isSystem: boolean;
     imagePath: string | null;
+    thumbnailPath: string | null;
     reactions: ChatReaction[];
   };
   // 現在サイドバーで開いているグループスレッド。1対1(selectedPeerUserId)
@@ -1533,6 +1535,15 @@ export default function AvatarSpace({
   const [dmImageLoadFailed, setDmImageLoadFailed] = useState<
     Record<string, true>
   >({});
+  // 署名付きURLは取得済みだが、<img>自体の実読み込み(ブラウザの
+  // 実際のGET)がまだ完了していないメッセージIDを判定するための状態。
+  // これが無いと、URL取得が終わった時点でスケルトン(min-h-16/
+  // animate-pulse)が消えてしまい、loading="lazy"で画像の実読み込みが
+  // 画面内に入るまで遅延される間、表示サイズが確保されずガタつく
+  // (スケルトン→高さ0→実サイズ、という2段階のレイアウトシフトが起こる)。
+  const [dmImageLoaded, setDmImageLoaded] = useState<Record<string, true>>(
+    {},
+  );
   // 送信前の添付画像(選択/ドロップ/貼り付け直後〜送信操作までの一時状態)。
   // 複数枚を溜められるよう配列で持つ。実際のアップロード・圧縮は
   // 送信操作のタイミングまで行わない。
@@ -1566,6 +1577,9 @@ export default function AvatarSpace({
   const [dmLightbox, setDmLightbox] = useState<{
     messageId: string | null;
     url: string;
+    // サムネイルURLを仮表示しつつ、元画像(フル解像度)を裏で取得中かどうか。
+    // messageIdがnull(送信前プレビュー)の場合は常にfalse。
+    loadingFull: boolean;
   } | null>(null);
   const [dmLightboxDownloading, setDmLightboxDownloading] = useState(false);
   // 編集中のメッセージID。設定されている間、入力欄は送信ではなく更新用に
@@ -2040,10 +2054,11 @@ export default function AvatarSpace({
         edited_at: string | null;
         deleted_at: string | null;
         image_path: string | null;
+        thumbnail_path: string | null;
         chat_message_reactions?: Array<{ user_id: string; emoji: string }>;
       };
       const selectCols =
-        "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path, chat_message_reactions(user_id, emoji)";
+        "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path, thumbnail_path, chat_message_reactions(user_id, emoji)";
       const orFilter = `and(sender_user_id.eq.${myUserId},recipient_user_id.eq.${selectedPeerUserId}),and(sender_user_id.eq.${selectedPeerUserId},recipient_user_id.eq.${myUserId})`;
       // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
       // 場合、通常のRLS(profiles.account_id経由)では対象ルームの
@@ -2183,6 +2198,7 @@ export default function AvatarSpace({
           editedAt: row.edited_at,
           deletedAt: row.deleted_at,
           imagePath: row.image_path,
+          thumbnailPath: row.thumbnail_path,
           reactions: (
             viewOnlyInviteToken
               ? (reactionsByMessageId.get(row.id) ?? [])
@@ -2289,10 +2305,11 @@ export default function AvatarSpace({
       deleted_at: string | null;
       is_system: boolean;
       image_path: string | null;
+      thumbnail_path: string | null;
       chat_message_reactions?: Array<{ user_id: string; emoji: string }>;
     };
     const selectCols =
-      "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system, image_path, chat_message_reactions(user_id, emoji)";
+      "id, sender_user_id, sender_name, message, created_at, deleted_at, is_system, image_path, thumbnail_path, chat_message_reactions(user_id, emoji)";
     (async () => {
       // 通知一覧からのジャンプ待ちがある場合、「直近50件」だと対象メッセージ
       // が範囲外(それより古い)のことがあるため、対象の送信時刻を基準に
@@ -2366,6 +2383,7 @@ export default function AvatarSpace({
           deletedAt: row.deleted_at,
           isSystem: row.is_system,
           imagePath: row.image_path,
+          thumbnailPath: row.thumbnail_path,
           reactions: (row.chat_message_reactions ?? []).map((r) => ({
             userId: r.user_id,
             emoji: r.emoji,
@@ -2774,7 +2792,11 @@ export default function AvatarSpace({
   // ローカル反映・Realtime配信)。戻り値は送信に成功したかどうか
   // (呼び出し元が失敗時に入力欄の文面を復元できるように)。
   const postDmMessage = useCallback(
-    async (text: string, imagePath: string | null) => {
+    async (
+      text: string,
+      imagePath: string | null,
+      thumbnailPath: string | null = null,
+    ) => {
       const peerUserId = selectedPeerUserId;
       if ((!text && !imagePath) || !selfState.current || !peerUserId || dmSending) {
         return false;
@@ -2798,6 +2820,7 @@ export default function AvatarSpace({
                   sender_name: senderName,
                   message: text,
                   p_image_path: imagePath,
+                  p_thumbnail_path: thumbnailPath,
                 },
               );
               return { data: res.data?.[0] ?? null, error: res.error };
@@ -2811,6 +2834,7 @@ export default function AvatarSpace({
                 sender_name: senderName,
                 message: text,
                 image_path: imagePath,
+                thumbnail_path: thumbnailPath,
               })
               .select("id, created_at")
               .single();
@@ -2834,6 +2858,7 @@ export default function AvatarSpace({
               editedAt: null,
               deletedAt: null,
               imagePath,
+              thumbnailPath,
               reactions: [],
             },
           ],
@@ -2847,6 +2872,7 @@ export default function AvatarSpace({
           message: text,
           createdAt: data.created_at,
           imagePath,
+          thumbnailPath,
         });
         // @メンション(@<相手の表示名>)を含む場合、通知を作成する
         // (2026-09-29追加。グループチャットのcreate_chat_mentions呼び出しと
@@ -2922,7 +2948,11 @@ export default function AvatarSpace({
   // でもそのままこのINSERTが通る(トークン検証の専用RPCは不要)。
   // テキスト送信・画像送信で共通の本体部分(postDmMessageと同じ考え方)。
   const postGroupMessage = useCallback(
-    async (text: string, imagePath: string | null) => {
+    async (
+      text: string,
+      imagePath: string | null,
+      thumbnailPath: string | null = null,
+    ) => {
       const groupId = selectedGroupId;
       if (
         (!text && !imagePath) ||
@@ -2947,6 +2977,7 @@ export default function AvatarSpace({
             sender_name: senderName,
             message: text,
             image_path: imagePath,
+            thumbnail_path: thumbnailPath,
           })
           .select("id, created_at")
           .single();
@@ -2971,6 +3002,7 @@ export default function AvatarSpace({
               deletedAt: null,
               isSystem: false,
               imagePath,
+              thumbnailPath,
               reactions: [],
             },
           ],
@@ -2985,6 +3017,7 @@ export default function AvatarSpace({
           createdAt: data.created_at,
           isSystem: false,
           imagePath,
+          thumbnailPath,
         });
         // @メンション(@全員/@メンバー表示名)を含む場合、通知を作成する。
         // 表示上のハイライト(renderTextWithMentions)と対になる
@@ -3178,6 +3211,7 @@ export default function AvatarSpace({
         message: string;
         sender_name: string;
         deleted_image_paths: string[] | null;
+        deleted_thumbnail_paths: string[] | null;
       };
       channelRef.current?.httpSend("group-dm", {
         id: leftMessage.id,
@@ -3205,14 +3239,17 @@ export default function AvatarSpace({
       // SQLのDELETEだけでは消えないため、ここでService Role経由の
       // 削除APIを呼ぶ(cronの保管期間切れ削除と同じ理由・同じ方針)。
       if (
-        leftMessage.deleted_image_paths &&
-        leftMessage.deleted_image_paths.length > 0
+        (leftMessage.deleted_image_paths &&
+          leftMessage.deleted_image_paths.length > 0) ||
+        (leftMessage.deleted_thumbnail_paths &&
+          leftMessage.deleted_thumbnail_paths.length > 0)
       ) {
         fetch("/api/chat/cleanup-group-images", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            imagePaths: leftMessage.deleted_image_paths,
+            imagePaths: leftMessage.deleted_image_paths ?? [],
+            thumbnailPaths: leftMessage.deleted_thumbnail_paths ?? [],
           }),
         }).catch((err) => {
           // eslint-disable-next-line no-console
@@ -3637,6 +3674,7 @@ export default function AvatarSpace({
     // 複数画像は、chat_messagesのスキーマ上1メッセージにつき画像は1枚のため、
     // 1枚ずつ順番にメッセージとして送る(sendDmMessageと同じ考え方)。
     const imagePaths: string[] = [];
+    const thumbnailPaths: (string | null)[] = [];
     if (pending.length > 0) {
       const myUserId = authUserIdRef.current;
       if (!myUserId) return;
@@ -3683,6 +3721,7 @@ export default function AvatarSpace({
             return;
           }
           imagePaths.push(json.imagePath as string);
+          thumbnailPaths.push((json.thumbnailPath as string | null) ?? null);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -3707,7 +3746,11 @@ export default function AvatarSpace({
     let allOk = true;
     for (let i = 0; i < imagePaths.length; i++) {
       const isLast = i === imagePaths.length - 1;
-      const ok = await postGroupMessage(isLast ? text : "", imagePaths[i]);
+      const ok = await postGroupMessage(
+        isLast ? text : "",
+        imagePaths[i],
+        thumbnailPaths[i],
+      );
       if (!ok) {
         allOk = false;
         break;
@@ -3744,6 +3787,7 @@ export default function AvatarSpace({
     // まとめて届く形になる。1つの吹き出しに複数画像を並べる形にはしていない)。
     // キャプション(入力欄のテキスト)は最後の画像のメッセージに付与する。
     const imagePaths: string[] = [];
+    const thumbnailPaths: (string | null)[] = [];
     if (pending.length > 0) {
       const myUserId = authUserIdRef.current;
       if (!myUserId) return;
@@ -3790,6 +3834,7 @@ export default function AvatarSpace({
             return;
           }
           imagePaths.push(json.imagePath as string);
+          thumbnailPaths.push((json.thumbnailPath as string | null) ?? null);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -3812,7 +3857,11 @@ export default function AvatarSpace({
     let allOk = true;
     for (let i = 0; i < imagePaths.length; i++) {
       const isLast = i === imagePaths.length - 1;
-      const ok = await postDmMessage(isLast ? trimmed : "", imagePaths[i]);
+      const ok = await postDmMessage(
+        isLast ? trimmed : "",
+        imagePaths[i],
+        thumbnailPaths[i],
+      );
       if (!ok) {
         allOk = false;
         break;
@@ -3875,6 +3924,45 @@ export default function AvatarSpace({
     viewOnlyInviteToken,
   ]);
 
+  // サムネイル方式の導入に伴い、吹き出し表示(dmImageUrls)には常に
+  // サムネイル(variant=thumbnail)のURLが入っている。拡大表示では元画像を
+  // 見せたいため、クリック時点でまずサムネイルを仮表示しつつ、裏で
+  // variant=full(元画像)の署名付きURLを取得して差し替える。DM・グループ
+  // どちらの吹き出しからも使う(パラメータの付与条件はdownloadDmLightbox
+  // Imageと同じ)。
+  const openImageLightbox = useCallback(
+    async (messageId: string, thumbnailUrl: string) => {
+      setDmLightbox({ messageId, url: thumbnailUrl, loadingFull: true });
+      try {
+        const params = new URLSearchParams({ messageId, variant: "full" });
+        if (viewOnlyInviteToken && selectedPeerUserId) {
+          params.set("roomId", roomId);
+          params.set("peerUserId", selectedPeerUserId);
+          params.set("inviteToken", viewOnlyInviteToken);
+        }
+        const res = await fetch(`/api/chat/image-url?${params.toString()}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? t("chat.imageLoadFailed"));
+        setDmLightbox((prev) =>
+          prev && prev.messageId === messageId
+            ? { messageId, url: json.url as string, loadingFull: false }
+            : prev,
+        );
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("拡大画像の取得に失敗しました", messageId, err);
+        // サムネイルの仮表示はそのまま残し、読み込み中表示だけ解除する
+        // (元画像が取れなくても、サムネイルは見えている状態を保つ)。
+        setDmLightbox((prev) =>
+          prev && prev.messageId === messageId
+            ? { ...prev, loadingFull: false }
+            : prev,
+        );
+      }
+    },
+    [roomId, selectedPeerUserId, viewOnlyInviteToken],
+  );
+
   // 添付画像の署名付きURLを取得する(未取得・未失敗のもののみ)。
   // スレッドを開いた/更新された際にまとめて呼ぶ。失敗した場合は
   // dmImageLoadFailedに記録し、以後は自動リトライしない(理由不明の
@@ -3892,7 +3980,10 @@ export default function AvatarSpace({
     (async () => {
       const results = await Promise.all(
         targets.map(async (m) => {
-          const params = new URLSearchParams({ messageId: m.id });
+          const params = new URLSearchParams({
+            messageId: m.id,
+            variant: "thumbnail",
+          });
           if (viewOnlyInviteToken) {
             params.set("roomId", roomId);
             params.set("peerUserId", selectedPeerUserId);
@@ -3965,7 +4056,10 @@ export default function AvatarSpace({
     (async () => {
       const results = await Promise.all(
         targets.map(async (m) => {
-          const params = new URLSearchParams({ messageId: m.id });
+          const params = new URLSearchParams({
+            messageId: m.id,
+            variant: "thumbnail",
+          });
           try {
             const res = await fetch(`/api/chat/image-url?${params.toString()}`);
             const json = await res.json();
@@ -4020,6 +4114,12 @@ export default function AvatarSpace({
       return next;
     });
     setDmImageUrls((prev) => {
+      if (!prev[messageId]) return prev;
+      const next = { ...prev };
+      delete next[messageId];
+      return next;
+    });
+    setDmImageLoaded((prev) => {
       if (!prev[messageId]) return prev;
       const next = { ...prev };
       delete next[messageId];
@@ -4122,14 +4222,18 @@ export default function AvatarSpace({
         setDmError(t("chat.deleteFailedRetry"));
         return;
       }
-      // 画像添付メッセージの場合、保管期間を待たず即座に実ファイルも削除する。
-      // 自分がアップロードした画像("chat-images: delete own"ポリシーの
-      // 対象パス)のみ削除できるため、削除に失敗しても致命的ではない
-      // (最終的には保管期間経過時の一括削除でも消える)。
-      if (m.imagePath) {
+      // 画像添付メッセージの場合、保管期間を待たず即座に実ファイル
+      // (画像・サムネイル)も削除する。自分がアップロードした画像
+      // ("chat-images: delete own"ポリシーの対象パス)のみ削除できるため、
+      // 削除に失敗しても致命的ではない(最終的には保管期間経過時の
+      // 一括削除でも消える)。
+      const pathsToRemove = [m.imagePath, m.thumbnailPath].filter(
+        (p): p is string => !!p,
+      );
+      if (pathsToRemove.length > 0) {
         const { error: storageError } = await supabase.storage
           .from("chat-images")
-          .remove([m.imagePath]);
+          .remove(pathsToRemove);
         if (storageError) {
           // eslint-disable-next-line no-console
           console.error("添付画像の削除に失敗しました", storageError);
@@ -5874,6 +5978,7 @@ export default function AvatarSpace({
             message: string;
             createdAt: string;
             imagePath: string | null;
+            thumbnailPath?: string | null;
           };
           const myUserId = authUserIdRef.current;
           // 送信元タブが「自分」かどうかは、認証ユーザーID(senderUserId)
@@ -5912,6 +6017,7 @@ export default function AvatarSpace({
                 editedAt: null,
                 deletedAt: null,
                 imagePath: msg.imagePath,
+                thumbnailPath: msg.thumbnailPath ?? null,
                 reactions: [],
               },
             ],
@@ -5951,6 +6057,7 @@ export default function AvatarSpace({
             createdAt: string;
             isSystem?: boolean;
             imagePath?: string | null;
+            thumbnailPath?: string | null;
           };
           // broadcast自体はグループメンバー以外にも届くため、自分が
           // そのグループのメンバーかどうかをここで判定して弾く(退出
@@ -5986,6 +6093,7 @@ export default function AvatarSpace({
                 deletedAt: null,
                 isSystem: msg.isSystem ?? false,
                 imagePath: msg.imagePath ?? null,
+                thumbnailPath: msg.thumbnailPath ?? null,
                 reactions: [],
               },
             ],
@@ -12052,9 +12160,15 @@ export default function AvatarSpace({
                             <img
                               src={dmImageUrls[m.id]}
                               alt={t("chat.attachedImageAlt")}
+                              loading="lazy"
                               onClick={() => {
                                 const url = dmImageUrls[m.id];
-                                if (url) setDmLightbox({ messageId: m.id, url });
+                                if (url) openImageLightbox(m.id, url);
+                              }}
+                              onLoad={() => {
+                                setDmImageLoaded((prev) =>
+                                  prev[m.id] ? prev : { ...prev, [m.id]: true },
+                                );
                               }}
                               onError={() => {
                                 // 署名付きURLの取得自体は成功したが、実際の画像
@@ -12076,7 +12190,7 @@ export default function AvatarSpace({
                               className={`block max-h-56 max-w-full rounded-md object-contain ${
                                 m.message ? "mb-1" : ""
                               } ${
-                                dmImageUrls[m.id]
+                                dmImageLoaded[m.id]
                                   ? "cursor-pointer"
                                   : "min-h-16 min-w-16 animate-pulse bg-slate-600"
                               }`}
@@ -12165,7 +12279,11 @@ export default function AvatarSpace({
                           <button
                             type="button"
                             onClick={() =>
-                              setDmLightbox({ messageId: null, url: p.previewUrl })
+                              setDmLightbox({
+                                messageId: null,
+                                url: p.previewUrl,
+                                loadingFull: false,
+                              })
                             }
                             className="shrink-0"
                             aria-label={t("chat.expandImageAria")}
@@ -12515,10 +12633,17 @@ export default function AvatarSpace({
                                   <img
                                     src={dmImageUrls[m.id]}
                                     alt={t("chat.attachedImageAlt")}
+                                    loading="lazy"
                                     onClick={() => {
                                       const url = dmImageUrls[m.id];
-                                      if (url)
-                                        setDmLightbox({ messageId: m.id, url });
+                                      if (url) openImageLightbox(m.id, url);
+                                    }}
+                                    onLoad={() => {
+                                      setDmImageLoaded((prev) =>
+                                        prev[m.id]
+                                          ? prev
+                                          : { ...prev, [m.id]: true },
+                                      );
                                     }}
                                     onError={() => {
                                       if (dmImageUrls[m.id]) {
@@ -12537,7 +12662,7 @@ export default function AvatarSpace({
                                     className={`block max-h-56 max-w-full rounded-md object-contain ${
                                       m.message ? "mb-1" : ""
                                     } ${
-                                      dmImageUrls[m.id]
+                                      dmImageLoaded[m.id]
                                         ? "cursor-pointer"
                                         : "min-h-16 min-w-16 animate-pulse bg-slate-600"
                                     }`}
@@ -12602,6 +12727,7 @@ export default function AvatarSpace({
                                   setDmLightbox({
                                     messageId: null,
                                     url: p.previewUrl,
+                                    loadingFull: false,
                                   })
                                 }
                                 className="shrink-0"
@@ -13155,13 +13281,21 @@ export default function AvatarSpace({
           >
             ✕
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={dmLightbox.url}
-            alt={t("chat.attachedImageAlt")}
-            onClick={(e) => e.stopPropagation()}
-            className="max-h-[80vh] max-w-full rounded-lg object-contain"
-          />
+          <div className="relative">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={dmLightbox.url}
+              alt={t("chat.attachedImageAlt")}
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-[80vh] max-w-full rounded-lg object-contain"
+            />
+            {/* サムネイルを仮表示しつつ、裏で元画像(フル解像度)を取得中 */}
+            {dmLightbox.loadingFull && (
+              <div className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-1 text-[11px] text-white">
+                {t("chat.imageLoading")}
+              </div>
+            )}
+          </div>
           {dmLightbox.messageId && (
             <button
               type="button"
