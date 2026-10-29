@@ -174,6 +174,7 @@ const ja: Record<string, string> = {
   "chat.threadListFetchFailedWithReason":
     "チャット一覧の取得に失敗しました({reason})",
   "chat.imageUploadLimitReached": "1日アップロード上限{limit}枚までです",
+  "chat.imageByteLimitReached": "本日の画像送信上限に達しました(毎日4:00(日本時間)にリセット)",
   "chat.imageUploadFailed": "画像のアップロードに失敗しました",
   "chat.imageUploadFailedRetry":
     "画像のアップロードに失敗しました。時間をおいて再度お試しください。",
@@ -659,6 +660,7 @@ const en: Record<string, string> = {
     "Failed to load group chat history ({reason})",
   "chat.threadListFetchFailedWithReason": "Failed to load chat list ({reason})",
   "chat.imageUploadLimitReached": "You've reached today's upload limit of {limit} images",
+  "chat.imageByteLimitReached": "You've reached today's image sending limit (resets daily at 4:00 JST)",
   "chat.imageUploadFailed": "Failed to upload the image",
   "chat.imageUploadFailedRetry": "Failed to upload the image. Please try again later.",
   "chat.imageSaveFailed": "Failed to save the image",

@@ -782,11 +782,15 @@ alter table public.daily_usage alter column kind set not null;
 
 alter table public.daily_usage drop constraint if exists daily_usage_kind_check;
 alter table public.daily_usage add constraint daily_usage_kind_check
-  check (kind in ('screen_share', 'video_call', 'voice_call', 'image_upload'));
+  check (kind in ('screen_share', 'video_call', 'voice_call', 'image_upload', 'image_bytes'));
 
 -- image_upload(1日の画像アップロード枚数)は秒数ではなく回数で数えるため、
 -- used_secondsとは別に整数カウント用の列を持つ。
 alter table public.daily_usage add column if not exists used_count integer not null default 0;
+
+-- image_bytes(1日のチャット画像合計送信サイズ、2026-10-29追加)は
+-- 圧縮後の本文画像+サムネイルの合計バイト数を数えるため、専用の列を持つ。
+alter table public.daily_usage add column if not exists used_bytes bigint not null default 0;
 
 -- 主キーをリネーム前(user_id, day_key)から(user_id, day_key, kind)へ
 -- 付け替える(リネームされたテーブルの旧PK名・新規作成時のPK名の両方を
@@ -968,6 +972,120 @@ $$;
 revoke all on function public.get_daily_image_upload_count() from public;
 revoke all on function public.get_daily_image_upload_count() from anon;
 grant execute on function public.get_daily_image_upload_count() to authenticated;
+
+-- 1日あたりのチャット画像合計送信サイズ上限(2026-10-29追加)。プランごとの
+-- 上限値(lib/types.tsのPLANS[].dailyImageBytesLimitが唯一の情報源)と比較し、
+-- 圧縮後の本文画像+サムネイルの合計バイト数が超えていないかをチェックする。
+--
+-- 加算量(p_bytes)を呼び出し側が自由に指定できるため、もしauthenticatedから
+-- 直接RPCで呼べる状態にすると、ユーザーが自分のセッションから直接負の値を
+-- 渡して使用量を減らし、上限チェックをすり抜けられてしまう(枚数用の
+-- increment_daily_image_upload_countは常に+1固定、分数用の
+-- increment_daily_usage_secondsはgreatest(0,least(...,60))でクランプして
+-- いるため、この抜け道はバイト数版に固有)。そのためこの関数は
+-- service_role専用とし、authenticated/anon/publicの実行権限を外す。
+-- 呼び出し元はapp/api/chat/compress-image/route.tsのみとし、ユーザーIDは
+-- SECURITY DEFINER内のauth.uid()ではなく、サーバー側でセッション検証済みの
+-- ユーザーID(p_user_id)を明示的に渡す形にする(service_roleでの呼び出しは
+-- auth.uid()がnullになるため、そもそもauth.uid()には頼れない)。p_bytes<=0は
+-- 関数内でも例外にし、万一呼び出し元にバグがあっても0以下の値では絶対に
+-- 加算されないようにする。
+--
+-- 既存のincrement_daily_image_upload_count(枚数用)は
+-- 「on conflict ... do update ... where used_count < p_limit」という
+-- 書き方だが、これは「その日1件目」を無条件に通してしまう(枚数+1なら
+-- 問題ないが、バイト数だと「1件目の圧縮サイズだけで上限を超える」
+-- ケースを見逃してしまう)。そのためこの関数は、行が無ければ0件で
+-- INSERTしてからselect ... for updateで行ロックし、「現在値+追加分が
+-- 上限を超えないか」を明示的に判定してからUPDATEする、より厳密な書き方
+-- にしている。
+drop function if exists public.increment_daily_image_bytes(bigint, bigint);
+drop function if exists public.increment_daily_image_bytes(uuid, bigint, bigint);
+
+create function public.increment_daily_image_bytes(
+  p_user_id uuid,
+  p_bytes bigint,
+  p_limit bigint default null
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_day_key date;
+  v_current bigint;
+  v_total bigint;
+begin
+  if p_user_id is null then
+    raise exception 'p_user_idが必要です';
+  end if;
+  if p_bytes <= 0 then
+    raise exception 'p_bytesは正の値である必要があります';
+  end if;
+  v_day_key := (timezone('Asia/Tokyo', now()) - interval '4 hours')::date;
+
+  insert into public.daily_usage (user_id, day_key, kind, used_bytes)
+  values (p_user_id, v_day_key, 'image_bytes', 0)
+  on conflict (user_id, day_key, kind) do nothing;
+
+  select used_bytes into v_current
+  from public.daily_usage
+  where user_id = p_user_id and day_key = v_day_key and kind = 'image_bytes'
+  for update;
+
+  if p_limit is not null and v_current + p_bytes > p_limit then
+    -- 上限を超えるため加算しない。呼び出し元はこれを「今回の送信は拒否」
+    -- として扱う。
+    return null;
+  end if;
+
+  update public.daily_usage
+  set used_bytes = used_bytes + p_bytes, updated_at = now()
+  where user_id = p_user_id and day_key = v_day_key and kind = 'image_bytes'
+  returning used_bytes into v_total;
+
+  return v_total;
+end;
+$$;
+
+revoke all on function public.increment_daily_image_bytes(uuid, bigint, bigint) from public;
+revoke all on function public.increment_daily_image_bytes(uuid, bigint, bigint) from anon;
+revoke all on function public.increment_daily_image_bytes(uuid, bigint, bigint) from authenticated;
+grant execute on function public.increment_daily_image_bytes(uuid, bigint, bigint) to service_role;
+
+-- 本日の使用済みバイト数を取得する「読み取り専用」関数。こちらは
+-- auth.uid()ベースのまま、authenticatedに公開してよい(自分自身の使用量を
+-- 読むだけで、何かを書き換えたり上限判定を左右したりはできないため、
+-- increment関数とは性質が異なる)。クライアント側の送信前チェック
+-- (UX向上目的、すり抜け防止の本体ではない)・compress-imageの早期チェックの
+-- 両方から使う。
+drop function if exists public.get_daily_image_bytes_used();
+
+create function public.get_daily_image_bytes_used()
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_day_key date;
+  v_total bigint;
+begin
+  if auth.uid() is null then
+    return 0;
+  end if;
+  v_day_key := (timezone('Asia/Tokyo', now()) - interval '4 hours')::date;
+  select used_bytes into v_total
+  from public.daily_usage
+  where user_id = auth.uid() and day_key = v_day_key and kind = 'image_bytes';
+  return coalesce(v_total, 0);
+end;
+$$;
+
+revoke all on function public.get_daily_image_bytes_used() from public;
+revoke all on function public.get_daily_image_bytes_used() from anon;
+grant execute on function public.get_daily_image_bytes_used() to authenticated;
 
 
 -- ------------------------------------------------------------

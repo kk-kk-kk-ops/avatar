@@ -701,6 +701,11 @@ type Props = {
   voiceCallDailyMinutes: number | null;
   // プランごとの画面録画・自動文字起こし機能の利用可否(Freeのみfalse)。
   recordingEnabled: boolean;
+  // プランごとのチャット画像1日あたり送信量上限(バイト、圧縮後の本文画像+
+  // サムネイル合計)。画面共有等と同じくdaily_usageテーブル(kind=
+  // 'image_bytes')・毎日4:00リセット。送信前チェック(UX向上目的、すり抜け
+  // 防止の本体はサーバー側のapp/api/chat/compress-image/route.ts)に使う。
+  dailyImageBytesLimit: number;
   isAccountAdmin: boolean;
   isMaster: boolean;
   // 他人の招待URL経由で参加しているゲストの場合のみ渡される招待
@@ -741,6 +746,7 @@ export default function AvatarSpace({
   videoCallDailyMinutes,
   voiceCallDailyMinutes,
   recordingEnabled,
+  dailyImageBytesLimit,
   isAccountAdmin,
   isMaster,
   guestInviteToken,
@@ -3303,9 +3309,18 @@ export default function AvatarSpace({
     async (files: File[]) => {
       if (dmImageUploading || files.length === 0) return;
 
-      const { data: currentCount } = await supabase.rpc(
-        "get_daily_image_upload_count",
-      );
+      const [{ data: currentCount }, { data: bytesUsed }] = await Promise.all([
+        supabase.rpc("get_daily_image_upload_count"),
+        supabase.rpc("get_daily_image_bytes_used"),
+      ]);
+      // 1日の合計サイズ上限に既に達している場合は、添付前にここで止める
+      // (圧縮後のサイズは選択時点では分からないため、これ以降の個々の
+      // ファイルサイズによる事前判定はできない。すり抜け防止の本体は
+      // サーバー側のcompress-imageルート)。
+      if ((bytesUsed ?? 0) >= dailyImageBytesLimit) {
+        setDmError(t("chat.imageByteLimitReached"));
+        return;
+      }
       // 1日のアップロード上限はDM・グループ共通(ユーザー単位)のため、
       // 両方の添付中件数を差し引く。
       let remaining =
@@ -3362,6 +3377,7 @@ export default function AvatarSpace({
       dmPendingImages.length,
       groupPendingImages.length,
       dmEditingMessageId,
+      dailyImageBytesLimit,
       supabase,
     ],
   );
@@ -3387,9 +3403,14 @@ export default function AvatarSpace({
     async (files: File[]) => {
       if (groupImageUploading || files.length === 0) return;
 
-      const { data: currentCount } = await supabase.rpc(
-        "get_daily_image_upload_count",
-      );
+      const [{ data: currentCount }, { data: bytesUsed }] = await Promise.all([
+        supabase.rpc("get_daily_image_upload_count"),
+        supabase.rpc("get_daily_image_bytes_used"),
+      ]);
+      if ((bytesUsed ?? 0) >= dailyImageBytesLimit) {
+        setGroupError(t("chat.imageByteLimitReached"));
+        return;
+      }
       let remaining =
         DAILY_IMAGE_UPLOAD_LIMIT -
         (currentCount ?? 0) -
@@ -3437,6 +3458,7 @@ export default function AvatarSpace({
       groupImageUploading,
       dmPendingImages.length,
       groupPendingImages.length,
+      dailyImageBytesLimit,
       supabase,
     ],
   );

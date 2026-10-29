@@ -170,6 +170,7 @@ async function renderRoomJoin(
       videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
       voiceCallDailyMinutes={PLANS[plan].voiceCallDailyMinutes}
       recordingEnabled={PLANS[plan].recordingEnabled}
+      dailyImageBytesLimit={PLANS[plan].dailyImageBytesLimit}
       isAccountAdmin={isAccountAdmin}
       isMaster={isAccountAdmin && state.isMaster}
       guestInviteToken={guestInviteToken}
@@ -267,6 +268,7 @@ async function renderViewOnlyRoomJoin(
       videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
       voiceCallDailyMinutes={PLANS[plan].voiceCallDailyMinutes}
       recordingEnabled={PLANS[plan].recordingEnabled}
+      dailyImageBytesLimit={PLANS[plan].dailyImageBytesLimit}
       isAccountAdmin={false}
       isMaster={false}
       // 自分自身は管理者用アカウントを持っているので、ログアウト後は

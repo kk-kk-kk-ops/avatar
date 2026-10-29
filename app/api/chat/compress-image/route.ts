@@ -2,13 +2,20 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { DAILY_IMAGE_UPLOAD_LIMIT, CHAT_IMAGE_MAX_BYTES } from "@/lib/types";
+import {
+  DAILY_IMAGE_UPLOAD_LIMIT,
+  CHAT_IMAGE_MAX_BYTES,
+  PLANS,
+  type PlanId,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const TARGET_BYTES = 500 * 1024;
 const CHAT_IMAGE_MAX_MB = Math.round(CHAT_IMAGE_MAX_BYTES / 1024 / 1024);
+const DAILY_IMAGE_BYTE_LIMIT_MESSAGE =
+  "本日の画像送信上限に達しました(毎日4:00(日本時間)にリセット)";
 
 // クライアントが"raw/{myUserId}/{uuid}.ext"へ直接アップロードした生画像を、
 // 1920px以下・WebP・quality80(オーバーサイズならquality60で再試行)に
@@ -75,13 +82,45 @@ export async function POST(request: Request) {
     auth: { persistSession: false },
   });
 
+  // 1日あたりの合計送信サイズ上限は、このルームを持つアカウントのプランで
+  // 決まる(送信者自身のプランではなく、招待URL経由のゲストでも常に
+  // ルームの持ち主のプランが適用される。maxPeoplePerRoom等、他の
+  // プラン別上限と同じ考え方)。Service Role経由でRLSを気にせず取得する。
+  const { data: roomRow } = await serviceClient
+    .from("rooms")
+    .select("account_id")
+    .eq("id", roomId)
+    .maybeSingle();
+  let plan: PlanId = "free";
+  if (roomRow?.account_id) {
+    const { data: accountRow } = await serviceClient
+      .from("accounts")
+      .select("plan")
+      .eq("id", roomRow.account_id)
+      .maybeSingle();
+    plan = (accountRow?.plan as PlanId | undefined) ?? "free";
+  }
+  const dailyImageBytesLimit = PLANS[plan].dailyImageBytesLimit;
+
   // 日次上限の最終チェック(クライアント側のチェックは事前案内のためのもので、
-  // ここがサーバー側での最終防波堤)。
-  const { data: currentCount } = await supabase.rpc("get_daily_image_upload_count");
+  // ここがサーバー側での最終防波堤)。枚数・合計サイズのどちらも、ここでの
+  // 事前チェックはcheck-then-actのため同時リクエストでは多少すり抜けうる。
+  // 本当の最終防波堤は、圧縮後に行う下のアトミックな加算処理。
+  const [{ data: currentCount }, { data: bytesUsed }] = await Promise.all([
+    supabase.rpc("get_daily_image_upload_count"),
+    supabase.rpc("get_daily_image_bytes_used"),
+  ]);
   if ((currentCount ?? 0) >= DAILY_IMAGE_UPLOAD_LIMIT) {
     await serviceClient.storage.from("chat-images").remove([rawPath]);
     return NextResponse.json(
       { error: `1日アップロード上限${DAILY_IMAGE_UPLOAD_LIMIT}枚までです` },
+      { status: 429 },
+    );
+  }
+  if ((bytesUsed ?? 0) >= dailyImageBytesLimit) {
+    await serviceClient.storage.from("chat-images").remove([rawPath]);
+    return NextResponse.json(
+      { error: DAILY_IMAGE_BYTE_LIMIT_MESSAGE },
       { status: 429 },
     );
   }
@@ -179,18 +218,55 @@ export async function POST(request: Request) {
 
   await serviceClient.storage.from("chat-images").remove([rawPath]);
 
-  // 76-85行目の事前チェックはcheck-then-actのため、同時に複数リクエストが
-  // 走ると上限を多少超過しうる(2026-09 QA指摘)。ここでの最終加算は
-  // p_limitを渡し、DB側の行ロックで「チェックと加算」を1つの原子的な
-  // 操作にした関数を使うことで、同時リクエストでも上限を厳密に守る
-  // (supabase/consolidated_setup.sql 9e節参照)。
+  // 上の早期チェックはcheck-then-actのため、同時に複数リクエストが走ると
+  // 上限を多少超過しうる(2026-09 QA指摘、枚数版で既知)。ここでの最終加算は
+  // DB側の行ロックで「チェックと加算」を1つの原子的な操作にした関数を
+  // 使うことで、同時リクエストでも上限を厳密に守る。
+  //
+  // 合計サイズのチェックを先に行う。increment_daily_image_bytesは
+  // service_role専用関数のため、ユーザー自身のセッションクライアント
+  // (supabase)ではなくserviceClientから呼び、ユーザーIDはここまでに
+  // 検証済みのuser.idを明示的に渡す(auth.uid()はservice_role呼び出しでは
+  // 使えないため。詳細はマイグレーション2026-10-29_chat_image_daily_bytes_
+  // limit.sqlのコメント参照。p_bytesは必ず正の値である必要がある)。
+  const totalBytes =
+    outputBuffer.byteLength + (thumbnailPath ? thumbnailBuffer.byteLength : 0);
+  const { data: newBytesUsed, error: bytesError } = await serviceClient.rpc(
+    "increment_daily_image_bytes",
+    {
+      p_user_id: user.id,
+      p_bytes: totalBytes,
+      p_limit: dailyImageBytesLimit,
+    },
+  );
+  if (bytesError) {
+    console.error("使用量(バイト)の加算に失敗しました", bytesError);
+    const pathsToRemove = thumbnailPath ? [finalPath, thumbnailPath] : [finalPath];
+    await serviceClient.storage.from("chat-images").remove(pathsToRemove);
+    return NextResponse.json({ error: "画像の保存に失敗しました" }, { status: 500 });
+  }
+  if (newBytesUsed === null) {
+    // 上限に達していたため加算されなかった(同時アップロードによる競合)。
+    // 既にアップロード済みの最終画像・サムネイルを巻き戻す。
+    const pathsToRemove = thumbnailPath ? [finalPath, thumbnailPath] : [finalPath];
+    await serviceClient.storage.from("chat-images").remove(pathsToRemove);
+    return NextResponse.json(
+      { error: DAILY_IMAGE_BYTE_LIMIT_MESSAGE },
+      { status: 429 },
+    );
+  }
+
   const { data: newCount } = await supabase.rpc(
     "increment_daily_image_upload_count",
     { p_limit: DAILY_IMAGE_UPLOAD_LIMIT },
   );
   if (newCount === null) {
     // 上限に達していたため加算されなかった(同時アップロードによる競合)。
-    // 既にアップロード済みの最終画像・サムネイルを巻き戻す。
+    // 既にアップロード済みの最終画像・サムネイルを巻き戻す。上で加算済みの
+    // バイト使用量はこの1件分だけ取り消されずに残るが、実際より「残り」が
+    // 少なめに見える方向のズレのため実害は無く、極めて稀な競合時のみ
+    // 起こりうる話なので許容する(厳密な取り消しにはp_bytesへの負値が
+    // 必要になり、それは別の抜け道を生むため行わない)。
     const pathsToRemove = thumbnailPath ? [finalPath, thumbnailPath] : [finalPath];
     await serviceClient.storage.from("chat-images").remove(pathsToRemove);
     return NextResponse.json(
