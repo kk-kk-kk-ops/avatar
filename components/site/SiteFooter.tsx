@@ -5,7 +5,7 @@ const LINKS = [
   { href: '/terms', label: '利用規約' },
   { href: '/privacy', label: 'プライバシーポリシー' },
   { href: '/tokushoho', label: '特定商取引法に基づく表記' },
-  { href: SITE.contactUrl, label: 'お問い合わせ', external: true },
+  { href: SITE.contactUrl, label: 'お問い合わせ' },
   { href: SITE.studioUrl, label: '運営:GROVINA STUDIO', external: true },
 ];
 
