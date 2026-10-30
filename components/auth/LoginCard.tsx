@@ -16,6 +16,9 @@ type Props = {
   inviteToken: string | null;
   inviterName: string | null;
   errorMessage: string | null;
+  // 初期表示するタブ。/signup(app/signup/page.tsx)から「新規登録」タブを
+  // 開かせるために使う。省略時は従来通り"login"。
+  initialMode?: "login" | "signup";
 };
 
 // 新規登録・パスワード再設定は、いずれも「メールで届いた確認コードを
@@ -35,6 +38,7 @@ export default function LoginCard({
   inviteToken,
   inviterName,
   errorMessage,
+  initialMode = "login",
 }: Props) {
   const searchParams = useSearchParams();
   const { t, locale } = useLocale();
@@ -43,7 +47,7 @@ export default function LoginCard({
   // しておく(GoogleLoginButtonと同じ取得元)。
   const currentInviteToken = searchParams.get("invite") ?? inviteToken;
 
-  const [mode, setMode] = useState<Mode>("login");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
