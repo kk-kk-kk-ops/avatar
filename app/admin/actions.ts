@@ -24,7 +24,7 @@ async function requireAdminAccount() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/login");
 
   const { data: account } = await supabase
     .from("accounts")

@@ -88,7 +88,7 @@ export default function LandingPage() {
                 ))}
               </ul>
               <Link
-                href={SITE.loginPath}
+                href={SITE.signupPath}
                 className={`mt-8 rounded-full py-3 text-center font-bold ${
                   p.recommended ? 'bg-[#E5342E] text-white hover:bg-[#C92B25]' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
                 }`}
@@ -146,7 +146,7 @@ export default function LandingPage() {
             <p className="mt-2 text-white/80">まずはFreeプランで試してみてください。</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link href={SITE.loginPath} className="rounded-full bg-white px-7 py-3.5 font-bold text-[#C92B25] hover:bg-[#FDECEC]">
+            <Link href={SITE.signupPath} className="rounded-full bg-white px-7 py-3.5 font-bold text-[#C92B25] hover:bg-[#FDECEC]">
               無料で始める
             </Link>
             <a href={SITE.contactUrl} className="rounded-full px-7 py-3.5 font-bold text-white ring-1 ring-white/60 hover:bg-white/10">

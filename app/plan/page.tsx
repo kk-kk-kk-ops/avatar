@@ -11,7 +11,7 @@ export default async function PlanPage() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/login");
 
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.isMaster) redirect("/master");

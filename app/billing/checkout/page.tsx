@@ -25,7 +25,7 @@ export default async function CheckoutPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/login");
 
   const planId = searchParams.plan as PlanId | undefined;
   const plan =

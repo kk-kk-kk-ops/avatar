@@ -154,7 +154,7 @@ async function renderRoomJoin(
       return (
         <BannedNotice
           logoutRedirectTo={
-            guestInviteToken ? `/?invite=${guestInviteToken}` : "/"
+            guestInviteToken ? `/?invite=${guestInviteToken}` : "/login"
           }
         />
       );
@@ -407,6 +407,15 @@ export default async function Home({
     // 同じロビー画面(renderRoomJoin)に合流させる。管理画面への導線は
     // ロビー画面上の「管理者としてログイン」リンクに委ねる。
     return renderRoomJoin(supabase, user, state);
+  }
+
+  // 未ログインかつ招待URLでもない、素のトップページへのアクセスは
+  // LP(/lp)へ転送する(2026-10末)。ログイン画面はapp/login/page.tsx
+  // (新規登録はapp/signup/page.tsx)に分離した。errorがある場合
+  // (Googleログイン失敗等。/auth/complete参照)は転送せず、このまま
+  // ログイン画面を表示してエラー内容を見せる。
+  if (!inviteToken && !searchParams.error) {
+    redirect("/lp");
   }
 
   const errorMessage = translateAuthError(getServerLocale(), searchParams.error);

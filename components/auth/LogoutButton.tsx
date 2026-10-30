@@ -10,10 +10,10 @@ import {
 
 type Props = {
   className?: string;
-  // ログアウト後の遷移先。省略時はTOPページ(管理者用ログイン画面)。
-  // 他人の招待URL経由で参加しているゲストの場合は、呼び出し元から
-  // "/?invite=トークン"を渡すことで、ログアウト後も同じ招待URLの
-  // ゲスト用ログイン画面に戻れるようにする。
+  // ログアウト後の遷移先。省略時はログイン画面(/login)。他人の招待URL
+  // 経由で参加しているゲストの場合は、呼び出し元から"/?invite=トークン"を
+  // 渡すことで、ログアウト後も同じ招待URLのゲスト用ログイン画面に
+  // 戻れるようにする。
   redirectTo?: string;
   // ボタン文言の上書き(管理画面など、言語設定が英語表示に対応している
   // 画面からのみ渡す。マスター画面等、日本語固定のまま使う呼び出し元は
@@ -75,7 +75,7 @@ export default function LogoutButton({
     }
     await supabase.auth.signOut();
     // ページ全体を再読み込みしてCookie・middlewareの状態を確実にリセットする
-    window.location.href = redirectTo ?? "/";
+    window.location.href = redirectTo ?? "/login";
   };
 
   return (

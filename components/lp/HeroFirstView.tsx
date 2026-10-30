@@ -71,7 +71,7 @@ export function HeroFirstView() {
             </p>
             <div className="mt-8 w-full max-w-[570px] lg:mt-[min(3.75vw,54px)] lg:w-[86%]">
               <Link
-                href={SITE.loginPath}
+                href={SITE.signupPath}
                 className="group flex h-[clamp(3.5rem,5.7vw,5.1rem)] w-full items-center justify-center gap-4 rounded-full text-[clamp(1.05rem,1.6vw,1.45rem)] font-bold text-white shadow-[0_8px_20px_rgba(216,0,3,0.25)] transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4"
                 style={{ backgroundColor: RED, outlineColor: RED }}
               >

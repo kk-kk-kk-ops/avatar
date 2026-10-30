@@ -49,7 +49,7 @@ export default async function AdminPage() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/login");
 
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.type === "no-account") redirect("/plan");

@@ -12,7 +12,11 @@
 export const SITE = {
   serviceName: 'Globy',
   url: 'https://globy.grovina-studio.com',
-  loginPath: '/',
+  loginPath: '/login',
+  // 新規登録(無料で始める等)の行き先。TOPページ(/)は未ログイン時にLPへ
+  // 転送するようになった(2026-10末)ため、ログイン・新規登録はそれぞれ
+  // 専用のURLを使う。
+  signupPath: '/signup',
   // 個人事業主は屋号だけでなく本名の表示が必要です
   operatorTradeName: 'グロビナ・スタジオ',
   operatorLegalName: '角井 未来',
