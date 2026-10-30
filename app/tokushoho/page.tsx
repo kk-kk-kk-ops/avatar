@@ -70,6 +70,10 @@ export default function TokushohoPage() {
     },
     ...(TRIAL.enabled ? [{ label: '無料トライアル', value: TRIAL.description }] : []),
     {
+      label: 'プランの変更について',
+      value: BILLING.planChangeRule,
+    },
+    {
       label: '解約について',
       value: (
         <>
