@@ -7,7 +7,9 @@ import { SESSION_MAX_AGE } from "./constants";
 // "/admin/login"はセッションの有無を無視して常にログインカードを
 // 表示する管理者ログイン専用URL。"/lp"・"/terms"・"/privacy"・
 // "/tokushoho"はLP・利用規約・プライバシーポリシー・特定商取引法に
-// 基づく表記(2026-10追加)。未ログインでも見られる必要がある)
+// 基づく表記(2026-10追加)。"/login"・"/signup"はログイン・新規登録
+// 専用URL、"/contact"はお問い合わせページ(いずれも2026-10末追加)。
+// 未ログインでも見られる必要がある)
 const PUBLIC_PATHS = [
   "/",
   "/auth/callback",
@@ -16,6 +18,9 @@ const PUBLIC_PATHS = [
   "/terms",
   "/privacy",
   "/tokushoho",
+  "/login",
+  "/signup",
+  "/contact",
 ];
 
 function isPublicPath(pathname: string) {
