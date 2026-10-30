@@ -45,7 +45,7 @@ export function SiteFooter() {
           ))}
         </div>
       </div>
-      <p className="mt-6 text-center text-xs tracking-[0.05em] text-[#ccc]">© Grovina studio All Rights Reserved.</p>
+      <p className="mt-6 text-center text-xs tracking-[0.05em] text-[#ccc]">© GROVINA STUDIO All Rights Reserved.</p>
     </footer>
   );
 }
