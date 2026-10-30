@@ -81,20 +81,6 @@ export async function POST(request: NextRequest) {
             ? session.customer
             : (session.customer?.id ?? null);
 
-        // 「会社名・お名前」欄(custom_fields)に入力があれば、適格請求書の
-        // 宛名用にCustomer.nameへ反映する。未入力(null/空文字)の場合は
-        // 何もしない(billing_address_collectionで入力された氏名を
-        // 上書きしないため)。値を毎回同じ内容でsetするだけの処理なので、
-        // Webhookが再送されても重複実行による不整合は起きない。
-        const invoiceNameField = session.custom_fields?.find(
-          (f) => f.key === "invoice_name",
-        );
-        const invoiceName =
-          invoiceNameField?.type === "text" ? invoiceNameField.text?.value : null;
-        if (customerId && invoiceName) {
-          await stripe.customers.update(customerId, { name: invoiceName });
-        }
-
         if (accountId && subscriptionId) {
           const subscription = await stripe.subscriptions.retrieve(subscriptionId);
           const priceId = subscription.items.data[0]?.price.id;

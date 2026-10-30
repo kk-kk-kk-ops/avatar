@@ -98,18 +98,14 @@ export async function createCheckoutSession(planId: string): Promise<ActionResul
       // として、Stripeが生成する請求書・領収書に反映される。
       customer_update: { name: "auto", address: "auto" },
       billing_address_collection: "required",
-      // 任意入力。入力された場合はWebhook側(app/api/stripe/webhook/
-      // route.ts)でCustomer.nameに反映し、適格請求書の宛名を会社名に
-      // 揃えられるようにする。未入力時はbilling_address_collectionで
-      // 入力された氏名がそのまま宛名になる。
-      custom_fields: [
-        {
-          key: "invoice_name",
-          label: { type: "custom", custom: "会社名・お名前(請求書に記載されます)" },
-          type: "text",
-          optional: true,
-        },
-      ],
+      // 事業者名・個人名をCheckout自身がSession完了処理の一部として
+      // customer.business_name/individual_nameへ同期的に保存する(名前が
+      // Webhookの非同期処理で後から変わるのではなく、最初の請求書が
+      // 確定する前に反映されるため、適格請求書の宛名として正しく載る)。
+      name_collection: {
+        business: { enabled: true, optional: true },
+        individual: { enabled: true, optional: true },
+      },
       line_items: [{ price: priceIdForPlan(planId), quantity: 1 }],
       client_reference_id: accountId,
       subscription_data: {
