@@ -111,6 +111,10 @@ export default async function CheckoutPage({
           </p>
         </div>
 
+        <p className="mb-3 text-[11px] leading-5 text-slate-500">
+          法人・個人事業主のお客様は、次の画面で「商号」に会社名・屋号をご入力ください。請求書(適格請求書)の宛名として記載されます。
+        </p>
+
         <CheckoutButton planId={planId} />
       </div>
     </div>
