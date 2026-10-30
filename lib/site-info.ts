@@ -28,7 +28,9 @@ export const SITE = {
   email: 'info@grovina-studio.com',
   supportHours: '平日8:30〜15:30(土日祝・年末年始を除く)',
   studioUrl: 'https://grovina-studio.com/',
-  contactUrl: 'https://grovina-studio.com/contact',
+  // Globy専用のお問い合わせページ(app/contact/page.tsx)に変更(2026-10末)。
+  // 以前はgrovina-studio.com側の問い合わせページを指していた。
+  contactUrl: '/contact',
   court: '当方の住所地を管轄する地方裁判所',
   enactedAt: '2026年10月21日',
   updatedAt: '2026年10月21日',

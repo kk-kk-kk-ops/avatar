@@ -149,9 +149,9 @@ export default function LandingPage() {
             <Link href={SITE.signupPath} className="rounded-full bg-white px-7 py-3.5 font-bold text-[#C92B25] hover:bg-[#FDECEC]">
               無料で始める
             </Link>
-            <a href={SITE.contactUrl} className="rounded-full px-7 py-3.5 font-bold text-white ring-1 ring-white/60 hover:bg-white/10">
+            <Link href={SITE.contactUrl} className="rounded-full px-7 py-3.5 font-bold text-white ring-1 ring-white/60 hover:bg-white/10">
               導入について相談する
-            </a>
+            </Link>
           </div>
         </div>
       </section>

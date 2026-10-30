@@ -47,13 +47,13 @@ export function SiteHeader() {
               ))}
             </ul>
           </nav>
-          <a
+          <Link
             href={SITE.contactUrl}
             className="inline-flex h-[55px] w-[216px] items-center justify-center rounded-lg text-[15px] font-bold text-white transition-opacity hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
             style={{ backgroundColor: RED, outlineColor: RED }}
           >
             お問い合わせ
-          </a>
+          </Link>
         </div>
 
         <button
@@ -83,9 +83,9 @@ export function SiteHeader() {
               </Link>
             </li>
           </ul>
-          <a href={SITE.contactUrl} className="flex h-14 items-center justify-center font-bold text-white" style={{ backgroundColor: RED }}>
+          <Link href={SITE.contactUrl} className="flex h-14 items-center justify-center font-bold text-white" style={{ backgroundColor: RED }} onClick={() => setOpen(false)}>
             お問い合わせ
-          </a>
+          </Link>
         </div>
       )}
     </header>
