@@ -115,7 +115,7 @@ export const TRIAL = {
 export const BILLING = {
   cycle: '1か月ごとの自動更新',
   paymentMethod: 'クレジットカード(決済代行:Stripe)',
-  cancelHow: 'ログイン後、管理画面の「アカウント」からいつでも解約手続きができます。',
+  cancelHow: 'ログイン後、管理画面の「契約情報」からいつでも解約手続きができます。',
   cancelRule:
     '解約手続き後も、お支払い済みの契約期間の末日までご利用いただけます。次回以降の請求は発生しません。',
   refundRule:
