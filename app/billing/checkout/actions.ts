@@ -4,7 +4,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { provisionAccountForUser } from "@/lib/accountProvisioning";
-import { getStripe, priceIdForPlan, isPaidPlanId } from "@/lib/stripe";
+import { getStripe, priceIdForPlan, isPaidPlanId, taxRateId } from "@/lib/stripe";
+import { PLANS } from "@/lib/types";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -78,13 +79,53 @@ export async function createCheckoutSession(planId: string): Promise<ActionResul
     }
 
     const baseUrl = getBaseUrl();
+    const priceYen = PLANS[planId].priceYen.toLocaleString();
+    const taxRate = taxRateId();
+    if (!taxRate && process.env.VERCEL_ENV === "production") {
+      // 決済自体は止めない(税率なしで続行する)が、本番で税率が付かない
+      // 請求書が発行されてしまうため、見逃さないようログにだけ残す。
+      // eslint-disable-next-line no-console
+      console.error(
+        "Stripe Checkout: STRIPE_TAX_RATE_IDが未設定のため、税率なしでCheckout Sessionを作成します",
+      );
+    }
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
+      // 既存customerに対してCheckoutで入力された氏名・住所をCustomer
+      // オブジェクトへ書き戻す(customer_updateの指定が無いと既存customer
+      // 指定時はbilling_address_collectionが使えない)。適格請求書の宛名
+      // として、Stripeが生成する請求書・領収書に反映される。
+      customer_update: { name: "auto", address: "auto" },
+      billing_address_collection: "required",
+      // 任意入力。入力された場合はWebhook側(app/api/stripe/webhook/
+      // route.ts)でCustomer.nameに反映し、適格請求書の宛名を会社名に
+      // 揃えられるようにする。未入力時はbilling_address_collectionで
+      // 入力された氏名がそのまま宛名になる。
+      custom_fields: [
+        {
+          key: "invoice_name",
+          label: { type: "custom", custom: "会社名・お名前(請求書に記載されます)" },
+          type: "text",
+          optional: true,
+        },
+      ],
       line_items: [{ price: priceIdForPlan(planId), quantity: 1 }],
       client_reference_id: accountId,
-      subscription_data: { metadata: { accountId } },
+      subscription_data: {
+        metadata: { accountId },
+        // サブスクリプション自体に設定することで、初回請求だけでなく
+        // 毎月の更新・カスタマーポータル経由のプラン変更後の請求にも
+        // 継続して同じ税率が適用される。taxRateが無い場合はキー自体を
+        // 省略する(税率なしで決済を続行する)。
+        ...(taxRate ? { default_tax_rates: [taxRate] } : {}),
+      },
       metadata: { accountId, planId },
+      custom_text: {
+        submit: {
+          message: `月額${priceYen}円(税込)の自動更新です。解約はいつでも可能で、解約後も当月の利用期間末までご利用いただけます。日割りでの返金は行っておりません。`,
+        },
+      },
       success_url: `${baseUrl}/admin?checkout=success`,
       cancel_url: `${baseUrl}/billing/checkout?plan=${planId}&checkout=cancelled`,
     });

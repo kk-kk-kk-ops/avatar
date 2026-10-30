@@ -77,7 +77,7 @@ export default function TermsPage() {
 
       <Article title="第7条(プランの変更)">
         <p>
-          ユーザーは、当方の定める方法でプランを変更できます。変更の適用時期および料金の取り扱いは、変更手続きの画面に表示する内容に従います。
+          ユーザーは、当方の定める方法でプランを変更できます。{BILLING.planChangeRule}
         </p>
       </Article>
 

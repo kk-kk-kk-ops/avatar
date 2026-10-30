@@ -6,6 +6,7 @@ import { PLANS, type PlanId } from "@/lib/types";
 import { debugSetPlan } from "./actions";
 import { createPortalSession } from "@/app/billing/portal/actions";
 import { useLocale } from "@/lib/i18n/LocaleContext";
+import { BILLING } from "@/lib/site-info";
 
 const PLAN_DISPLAY_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
 
@@ -201,6 +202,13 @@ export default function BillingPanel({
             );
           })}
         </div>
+        {/* プラン変更時の課金ルール。特商法表記・利用規約と文言を揃えるため
+            lib/site-info.tsのBILLING.planChangeRuleをそのまま表示する
+            (この画面は他の管理画面と異なり日本語の法定表示を兼ねるため、
+            他のラベルと違いt()による英語対応はしない)。 */}
+        <p className="mt-3 text-[11px] leading-5 text-slate-500">
+          {BILLING.planChangeRule}
+        </p>
         {billingError && (
           <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
             {billingError}
