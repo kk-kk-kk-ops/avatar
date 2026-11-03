@@ -6,10 +6,12 @@ import { LIVEKIT_SERVERS } from "@/lib/livekitServers";
 const BETA_ONLINE_CAP = 1000;
 
 // 新規登録時、初期ルームに割り当てるデフォルトのルームデザイン(テンプレート)。
-// 「オフィス（ビル）」のtemplates.id固定値(2026-09-27時点で確認済み)。
+// 「GlobyTown」のtemplates.id固定値(2026-11-03時点で確認済み)。
 // 以前はtemplate_idを設定せずルームを作っていたため、初期ルームが
 // どのルームデザインにも一致しない状態になっていた不具合の修正。
-const DEFAULT_SIGNUP_TEMPLATE_ID = "d465652c-6133-486d-8af1-4fbb95c9c315";
+// (旧値は「オフィス（ビル）」のIDだったが、そのテンプレートが削除され
+// 存在しなくなっていたため、2026-11-03にGlobyTownへ差し替えた)
+const DEFAULT_SIGNUP_TEMPLATE_ID = "b0ebcdff-feac-4803-a8f5-831a4d6b77f9";
 
 type ProvisionResult =
   | { ok: true; accountId: string; created: boolean }
