@@ -587,6 +587,10 @@ export const MIN_ITEM_SIZE = 40; // これより小さくはできない
 // 高さどちらの最小値も一緒に縮小できるようにしている。
 export const MIN_OBSTACLE_WIDTH = 10;
 export const MIN_OBSTACLE_HEIGHT = 10;
+// 装飾オブジェクト(オブジェクト登録で配置した画像)は、通常の最小サイズ
+// (MIN_ITEM_SIZE)からさらに半分まで小さくリサイズできるようにする
+// (2026-11報告、小さい装飾を置きたいという要望)。
+export const MIN_PLACED_OBJECT_SIZE = MIN_ITEM_SIZE / 2;
 
 export const DEFAULT_OBSTACLES: Obstacle[] = [
   {
