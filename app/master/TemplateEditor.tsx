@@ -411,15 +411,16 @@ export default function TemplateEditor({
     };
   }, []);
 
-  // マップ全体(mapWidth×mapHeight)が画面に収まる縮尺。障害物・ミーティング
-  // エリアの位置調整がしやすいよう、これとは別に拡大表示もできるように
-  // している。拡大時は表示ウィンドウ(viewportWidth×viewportHeight)は
-  // 変えず、中身のマップ側だけ大きくしてスクロールで見る(transform:scaleで
-  // 見た目だけ拡大するとoverflow-autoのスクロール範囲計算があいまいに
-  // なるため、実際のpx幅・高さとして拡大している)。
+  // マップ全体(mapWidth×mapHeight)が画面に収まる縮尺(zoom=1でのスクロール
+  // 無し表示に使う)。障害物・ミーティングエリアの位置調整がしやすいよう、
+  // これとは別に拡大表示もできるようにしている。表示ウィンドウ(下の
+  // availableWidth×availableHeight)はこの縮尺に関わらず画面いっぱいの
+  // サイズで固定し、中身のマップ側だけ拡大してスクロールで見る
+  // (transform:scaleで見た目だけ拡大するとoverflow-autoのスクロール範囲
+  // 計算があいまいになるため、実際のpx幅・高さとして拡大している。
+  // 横長のマップでは画面の縦方向に余白ができるが、編集領域を画面いっぱいに
+  // 広く取れることを優先する2026-11の見直し)。
   const fitScale = Math.min(availableWidth / mapWidth, availableHeight / mapHeight);
-  const viewportWidth = mapWidth * fitScale;
-  const viewportHeight = mapHeight * fitScale;
   const scale = fitScale * zoom;
   const renderedWidth = mapWidth * scale;
   const renderedHeight = mapHeight * scale;
@@ -2339,7 +2340,7 @@ export default function TemplateEditor({
         <div
           ref={scrollRef}
           className="relative touch-none overflow-auto rounded-lg border border-slate-300 bg-slate-700"
-          style={{ width: viewportWidth, height: viewportHeight }}
+          style={{ width: availableWidth, height: availableHeight }}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
         >
