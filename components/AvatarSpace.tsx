@@ -7197,10 +7197,11 @@ export default function AvatarSpace({
   }, [joined]);
 
   // ---- 会議室(conference)ゾーンの入室確認・施錠操作 ----
-  // 「はい」:接触時点の進行方向(向き)にそのまま60px進んだ位置へ移動する。
+  // 「はい」:接触時点の進行方向(向き)にそのまま30px進んだ位置へ移動する。
   // ゾーンが小さい・斜め接触などでゾーン外へはみ出す場合は、ゾーン内側
   // (当たり判定の半径分の余白を持たせた範囲)にクランプする(Tech Lead確認済み)。
-  const MEETING_ENTRY_STEP = 60;
+  // (2026-11: 瞬間移動の距離が大きいとの報告を受け、60pxから半分に変更)
+  const MEETING_ENTRY_STEP = 30;
   const MEETING_ENTRY_DIRECTION: Record<
     PlayerState["dir"],
     { x: number; y: number }
