@@ -24,6 +24,7 @@ import {
   MIN_ITEM_SIZE,
   MIN_OBSTACLE_WIDTH,
   MIN_OBSTACLE_HEIGHT,
+  MIN_PLACED_OBJECT_SIZE,
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
   WARP_CHANNELS,
@@ -853,7 +854,9 @@ export default function TemplateEditor({
         applyDrag(prev, drag, dx, dy, MIN_OBSTACLE_WIDTH, MIN_OBSTACLE_HEIGHT),
       );
     } else if (drag.itemType === "object") {
-      setPlacedObjects((prev) => applyDrag(prev, drag, dx, dy));
+      setPlacedObjects((prev) =>
+        applyDrag(prev, drag, dx, dy, MIN_PLACED_OBJECT_SIZE, MIN_PLACED_OBJECT_SIZE),
+      );
     } else {
       setMeetingZones((prev) => applyDrag(prev, drag, dx, dy));
     }
