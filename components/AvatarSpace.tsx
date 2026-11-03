@@ -853,6 +853,21 @@ export default function AvatarSpace({
   const [assetsReady, setAssetsReady] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
+  // 最後に選択していたアバタースプライトをブラウザのlocalStorageに記憶し、
+  // 次回のロビー画面でも引き継ぐ(2026-11追加。ノイズ抑制フィルターの
+  // 設定と同じ、ブラウザ単位のその場しのぎの保存で十分なため、
+  // profiles側のDB保存は行わない)。AVATAR_IMAGESに無い値(過去の選択肢が
+  // 削除された等)が保存されていた場合は既定値のまま無視する。
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("globy-last-avatar");
+      if (saved && (AVATAR_IMAGES as string[]).includes(saved)) {
+        setSelectedAvatar(saved);
+      }
+    } catch {
+      // プライベートウィンドウ等でlocalStorageが使えない場合は既定値のまま
+    }
+  }, []);
   // アバター/アイコン表示切り替え(2026-10追加)。入室前の時点から
   // 前回保存した選択(profiles.avatar_mode/avatar_icon_url)を引き継ぐ。
   const [selectedAvatarMode, setSelectedAvatarMode] = useState<AvatarMode>(
@@ -9968,6 +9983,16 @@ export default function AvatarSpace({
     return true;
   }, []);
 
+  // 最後に選択したアバタースプライトをブラウザに記憶する(次回ロビー画面
+  // 用)。保存できなくても動作自体に影響はないので失敗は無視する。
+  const persistLastAvatarSprite = useCallback((avatar: string) => {
+    try {
+      window.localStorage.setItem("globy-last-avatar", avatar);
+    } catch {
+      // 保存できなくても動作自体に影響はない
+    }
+  }, []);
+
   // ①アバター: 選択したら即反映。
   const handleSelectAvatar = useCallback(
     (avatar: string) => {
@@ -9976,8 +10001,9 @@ export default function AvatarSpace({
       setSettingsAvatarMode("avatar");
       applySelfStateUpdate({ avatarImage: avatar, avatarMode: "avatar" });
       setSelectedAvatarMode("avatar");
+      persistLastAvatarSprite(avatar);
     },
-    [tryLockAvatarChange, applySelfStateUpdate],
+    [tryLockAvatarChange, applySelfStateUpdate, persistLastAvatarSprite],
   );
 
   // 「アバター」「アイコン」タブの切り替え自体も即反映する(2026-10)。
@@ -10018,8 +10044,9 @@ export default function AvatarSpace({
       if (!tryLockAvatarChange()) return;
       setSelectedAvatar(avatar);
       setSelectedAvatarMode("avatar");
+      persistLastAvatarSprite(avatar);
     },
-    [tryLockAvatarChange],
+    [tryLockAvatarChange, persistLastAvatarSprite],
   );
 
   // ロビー画面(入室前)での「アバター」「アイコン」タブ切り替え(2026-10
