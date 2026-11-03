@@ -2374,6 +2374,61 @@ export default function TemplateEditor({
               });
             }}
           >
+            {/* 画面境界(2026-10追加)。壁・エリア・オブジェクトより必ず先に
+                描画し、常に最背面にする(2026-11報告: 他の要素より手前に
+                あると、画面境界の下に隠れた壁・エリア・オブジェクトへ
+                ポインター操作が届かず、移動・リサイズができなくなっていた
+                ため)。 */}
+            {cameraBoundary && (
+              <div
+                onPointerDown={(e) =>
+                  handleCameraBoundaryPointerDown(e, "move")
+                }
+                className="absolute flex cursor-move items-start justify-center border-2 border-dashed border-violet-500 bg-violet-500/10 text-center text-[10px] font-semibold text-violet-600"
+                style={{
+                  left: cameraBoundary.x * scale,
+                  top: cameraBoundary.y * scale,
+                  width: cameraBoundary.width * scale,
+                  height: cameraBoundary.height * scale,
+                }}
+              >
+                🖥️ 画面境界
+                <button
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={removeCameraBoundary}
+                  className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                >
+                  ×
+                </button>
+                {/* リサイズハンドル(4隅)。壁と同じく見た目は出さず、4隅
+                    どこからでもドラッグでリサイズできる。回転は非対応。 */}
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "br")
+                  }
+                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize"
+                />
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "tl")
+                  }
+                  className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize"
+                />
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "tr")
+                  }
+                  className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize"
+                />
+                <div
+                  onPointerDown={(e) =>
+                    handleCameraBoundaryPointerDown(e, "resize", "bl")
+                  }
+                  className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
+                />
+              </div>
+            )}
+
             {/* 装飾オブジェクト(2026-09追加)。壁と違い実際に画像として表示
                 され、当たり判定は持たない。ドラッグ・リサイズ・回転の操作感は
                 壁と共通(handlePointerDown/handleRotatePointerDownをitemType
@@ -2614,56 +2669,6 @@ export default function TemplateEditor({
                 </div>
               );
             })}
-
-            {cameraBoundary && (
-              <div
-                onPointerDown={(e) =>
-                  handleCameraBoundaryPointerDown(e, "move")
-                }
-                className="absolute flex cursor-move items-start justify-center border-2 border-dashed border-violet-500 bg-violet-500/10 text-center text-[10px] font-semibold text-violet-600"
-                style={{
-                  left: cameraBoundary.x * scale,
-                  top: cameraBoundary.y * scale,
-                  width: cameraBoundary.width * scale,
-                  height: cameraBoundary.height * scale,
-                }}
-              >
-                🖥️ 画面境界
-                <button
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={removeCameraBoundary}
-                  className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
-                >
-                  ×
-                </button>
-                {/* リサイズハンドル(4隅)。壁と同じく見た目は出さず、4隅
-                    どこからでもドラッグでリサイズできる。回転は非対応。 */}
-                <div
-                  onPointerDown={(e) =>
-                    handleCameraBoundaryPointerDown(e, "resize", "br")
-                  }
-                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize"
-                />
-                <div
-                  onPointerDown={(e) =>
-                    handleCameraBoundaryPointerDown(e, "resize", "tl")
-                  }
-                  className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize"
-                />
-                <div
-                  onPointerDown={(e) =>
-                    handleCameraBoundaryPointerDown(e, "resize", "tr")
-                  }
-                  className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize"
-                />
-                <div
-                  onPointerDown={(e) =>
-                    handleCameraBoundaryPointerDown(e, "resize", "bl")
-                  }
-                  className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
-                />
-              </div>
-            )}
 
             {warpPoints.map((w) => (
               <Fragment key={w.id}>
