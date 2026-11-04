@@ -27,23 +27,26 @@ export async function uploadTemplateImageClient(file: File): Promise<string> {
   return publicUrl;
 }
 
-// 「オブジェクト登録」用の透過PNG画像アップロード(2026-09追加)。背景画像と
-// 同じバケット(template-images)を使うが、"objects/"配下に分けて置く
-// (バケット自体のMIME制限は背景画像と共用のため付けられない。透過PNGのみ
-// という制約はここでのクライアント側チェックで担保する)。
+// 「オブジェクト登録」用の透過PNG/WEBP画像アップロード(2026-09追加、
+// 2026-11にWEBPも許可)。背景画像と同じバケット(template-images)を
+// 使うが、"objects/"配下に分けて置く(バケット自体のMIME制限は背景画像と
+// 共用のため付けられない。PNG/WEBPのみという制約はここでのクライアント側
+// チェックで担保する)。
 export async function uploadTemplateObjectImageClient(
   file: File,
 ): Promise<string> {
-  const isPng =
-    file.type === "image/png" || /\.png$/i.test(file.name);
-  if (!isPng) {
-    throw new Error("PNG形式の画像のみ登録できます");
+  const isPng = file.type === "image/png" || /\.png$/i.test(file.name);
+  const isWebp = file.type === "image/webp" || /\.webp$/i.test(file.name);
+  if (!isPng && !isWebp) {
+    throw new Error("PNGまたはWEBP形式の画像のみ登録できます");
   }
+  const contentType = isWebp ? "image/webp" : "image/png";
+  const ext = isWebp ? "webp" : "png";
   const supabase = createClient();
-  const path = `objects/${crypto.randomUUID()}.png`;
+  const path = `objects/${crypto.randomUUID()}.${ext}`;
   const { error } = await supabase.storage
     .from("template-images")
-    .upload(path, file, { contentType: "image/png" });
+    .upload(path, file, { contentType });
   if (error) {
     throw new Error(`画像のアップロードに失敗しました: ${error.message}`);
   }
