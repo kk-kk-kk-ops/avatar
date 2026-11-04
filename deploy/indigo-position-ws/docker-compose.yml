@@ -1,0 +1,26 @@
+# 【重要・2026-11追加】本番(LiveKitと同じIndigoPro VPSへ同居させる場合)は
+# このファイルにCaddyサービスを含めない。deploy/livekit/livekit-node/に
+# 既存のCaddyコンテナ(network_mode: host、ポート80/443)が稼働しており、
+# 同じVPS上で2つ目のCaddy(や他のプロセス)が同じポート80/443を奪い合うと
+# 起動に失敗するため。本番では、deploy/livekit/livekit-node/Caddyfileに
+# 追記済みの{$INDIGO_WS_DOMAIN}/{$INDIGO_WS_ADMIN_DOMAIN}ブロック経由で
+# 既存のCaddyがこのサービスへリバースプロキシする構成にする(詳細は
+# README.mdの「デプロイ手順」参照)。
+#
+# このファイル自体のCaddy同梱版(./Caddyfile)は、LiveKitと同居しない
+# スタンドアロン用途(別VPSでの単独運用・ローカル確認用)でのみ使う。
+services:
+  indigo-position-ws:
+    build: .
+    network_mode: host
+    env_file:
+      - .env
+    restart: unless-stopped
+    # LiveKitと同じVPSに同居させる場合でも、WSサーバーの不具合・過負荷が
+    # LiveKitのリソースを奪わないようにするための上限(2026-11設計
+    # レビューで指摘)。位置情報中継は本来軽量なため、通常運用でこの上限に
+    # 当たることは想定していない(安全弁)。deploy.resources.limitsは
+    # Swarmモード以外では無視されることがあるため、プレーンな
+    # `docker compose up`でも確実に効くトップレベルの短縮記法を使う。
+    cpus: "1.0"
+    mem_limit: 512m

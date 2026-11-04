@@ -1,0 +1,30 @@
+# スタンドアロン用(2026-11追加)。LiveKitと同居させない場合(別VPSでの
+# 単独運用、ローカル確認等)にこちらを使う: `docker compose -f
+# docker-compose.standalone.yml up -d --build`。本番でLiveKitと同じ
+# IndigoPro VPSへ同居させる場合は、代わりに docker-compose.yml(Caddyを
+# 含まない)を使い、deploy/livekit/livekit-node/Caddyfileに追記済みの
+# ブロック経由で既存のCaddyにリバースプロキシさせること(README.md参照)。
+services:
+  indigo-position-ws:
+    build: .
+    network_mode: host
+    env_file:
+      - .env
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 512m
+
+  caddy:
+    image: caddy:2-alpine
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
