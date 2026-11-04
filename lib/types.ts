@@ -640,6 +640,23 @@ export function findMeetingZoneId(
   return zone ? zone.id : null;
 }
 
+// 既に所属しているとみなしているゾーンについて、境界のmargin分外側まで
+// 含めて判定する(findMeetingZoneIdの厳密な境界だけで毎フレーム判定すると、
+// 境界線上のジッターでin/outが入れ替わり続けるケースのヒステリシス用)。
+export function isPointInZoneWithMargin(
+  x: number,
+  y: number,
+  zone: MeetingZone,
+  margin: number,
+): boolean {
+  return (
+    x >= zone.x - margin &&
+    x <= zone.x + zone.width + margin &&
+    y >= zone.y - margin &&
+    y <= zone.y + zone.height + margin
+  );
+}
+
 // 円(アバター)と矩形(障害物・エリア)が重なっているかを判定する
 export function circleIntersectsRect(
   cx: number,
