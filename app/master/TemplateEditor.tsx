@@ -1976,7 +1976,7 @@ export default function TemplateEditor({
                 {registeringObject ? "登録中..." : "登録"}
                 <input
                   type="file"
-                  accept="image/png"
+                  accept="image/png,image/webp"
                   className="hidden"
                   onChange={handleRegisterObjectImage}
                   disabled={registeringObject}
@@ -2254,7 +2254,7 @@ export default function TemplateEditor({
             <div className="space-y-2 text-xs text-slate-600">
               <div>
                 <p className="font-semibold text-slate-700">【オブジェクト】</p>
-                <p>・登録した画像(PNGのみ)をマップに自由配置できる装飾</p>
+                <p>・登録した画像(PNG/WEBP)をマップに自由配置できる装飾</p>
                 <p>・通ることができる(壁と違い当たり判定なし)</p>
                 <p>・常にアバターより手前に表示される</p>
               </div>
