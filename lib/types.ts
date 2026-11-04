@@ -502,7 +502,7 @@ export const CHAT_IMAGE_ALLOWED_MIME_TYPES = [
 // 縮小してからアップロードするため、テンプレート背景画像と同じく
 // サーバー側の圧縮処理(sharp)は持たない。
 export const USER_ICON_MAX_DIMENSION = 512; // Canvasで縮小する際の最大辺(px)
-export const USER_ICON_DISPLAY_SIZE = 50; // アバター空間内での表示サイズ(px、固定・仕様指定値)
+export const USER_ICON_DISPLAY_SIZE = 40; // アバター空間内での表示サイズ(px、固定・仕様指定値)
 export const USER_ICON_ALLOWED_MIME_TYPES = [
   "image/jpeg",
   "image/png",
