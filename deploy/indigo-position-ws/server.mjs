@@ -39,6 +39,7 @@ import {
   recordMoveAccepted,
   recordMoveRecovered,
   recordMoveRejected,
+  recordReceived,
   snapshotMetrics,
 } from "./lib/metrics.mjs";
 
@@ -231,6 +232,7 @@ function acceptMove(conn, msg, now, { teleportOverride = false } = {}) {
 }
 
 function handleMove(conn, msg) {
+  recordReceived(conn.roomId); // moveLimiter等で後段で間引かれる分も含めて数える
   if (!conn.moveLimiter.tryConsume()) return; // 上限超過分は静かに間引く
 
   const now = Date.now();
@@ -278,6 +280,7 @@ function handleMove(conn, msg) {
 }
 
 function handleState(conn, msg) {
+  recordReceived(conn.roomId);
   if (typeof msg.payload !== "object" || msg.payload === null) return;
   // stateの中身自体はこのサーバーの関心事ではない(不透明なJSONとして
   // 中継するだけ)。Supabase presence側の「30秒5回」制限とは完全に独立した
@@ -378,9 +381,16 @@ heartbeatTimer.unref?.();
 // 日次の健全性確認ができるよう、累積件数を理由別に出力する(プロセス内の
 // 累積値であり、再起動でリセットされる)。
 const metricsTimer = setInterval(() => {
-  const { moveAccepted, moveRecovered, moveRejectedByReason } = snapshotMetrics();
+  const {
+    moveAccepted,
+    moveRecovered,
+    moveRejectedByReason,
+    peakMsgsPerSec,
+    peakMsgsPerSecPerRoom,
+    sendSkipped,
+  } = snapshotMetrics();
   console.log(
-    `[metrics] rooms=${roomCount()} connections=${connectionCount()} moveAccepted=${moveAccepted} moveRecovered=${moveRecovered} moveRejectedByReason=${JSON.stringify(moveRejectedByReason)}`,
+    `[metrics] rooms=${roomCount()} connections=${connectionCount()} moveAccepted=${moveAccepted} moveRecovered=${moveRecovered} moveRejectedByReason=${JSON.stringify(moveRejectedByReason)} peakMsgsPerSec=${JSON.stringify(peakMsgsPerSec)} peakMsgsPerSecPerRoom=${JSON.stringify(peakMsgsPerSecPerRoom)} sendSkipped=${sendSkipped}`,
   );
 }, METRICS_LOG_INTERVAL_MS);
 metricsTimer.unref?.();

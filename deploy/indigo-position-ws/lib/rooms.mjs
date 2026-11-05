@@ -6,6 +6,7 @@ import {
   RELAY_MODE,
   TICK_INTERVAL_MS,
 } from "../config.mjs";
+import { recordRelayed, recordSendSkipped } from "./metrics.mjs";
 
 const rooms = new Map(); // roomId -> Set<connection>
 const tickBuffers = new Map(); // roomId -> Map<userId, payload>
@@ -42,9 +43,10 @@ export function findExistingConnection(roomId, userId, excludeConn) {
   return null;
 }
 
-function send(conn, data) {
+function send(conn, data, roomId) {
   if (conn.ws.readyState !== conn.ws.OPEN) return;
   conn.ws.send(data);
+  recordRelayed(roomId);
 }
 
 // move/move-batch専用の「最新値優先」送信(2026-11追加、Tech Lead指摘)。
@@ -52,10 +54,14 @@ function send(conn, data) {
 // このmove更新だけをスキップする。次のmove/tickが来れば自然に最新の
 // 位置へ追いつくため無限にキューを溜め込ませない。state・管理API経由の
 // 切断等、取りこぼしたくない配信には使わない(通常のsend()のまま)。
-function sendLatestOnly(conn, data) {
+function sendLatestOnly(conn, data, roomId) {
   if (conn.ws.readyState !== conn.ws.OPEN) return;
-  if (conn.ws.bufferedAmount > MAX_BUFFERED_BYTES_FOR_MOVE) return;
+  if (conn.ws.bufferedAmount > MAX_BUFFERED_BYTES_FOR_MOVE) {
+    recordSendSkipped(); // 負荷試験向け(2026-11追加): 間引き発生件数
+    return;
+  }
   conn.ws.send(data);
+  recordRelayed(roomId);
 }
 
 // 「止まった瞬間」とteleportは稀にしか起きない上に、受信側がこれを
@@ -75,7 +81,7 @@ function relayImmediate(roomId, fromConn, type, payload) {
     type === "move" && !isCriticalMovePayload(payload) ? sendLatestOnly : send;
   for (const conn of set) {
     if (conn === fromConn) continue;
-    sender(conn, data);
+    sender(conn, data, roomId);
   }
 }
 
@@ -128,7 +134,7 @@ function flushTicks() {
       // flushで消費されるため再送されない)。tickモードは現状デフォルトでは
       // なく、負荷試験で実際に採用を検討する際に「ユーザーごとの直近状態を
       // 保持し毎tick必ず含める」方式へ拡張するかを判断する。
-      sendLatestOnly(conn, data);
+      sendLatestOnly(conn, data, roomId);
     }
   }
 }
