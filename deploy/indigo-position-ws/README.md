@@ -269,30 +269,28 @@ ssh user@<ノードIP>
 cd ~/indigo-position-ws
 cp .env.example .env
 # .envを編集: INDIGO_WS_SECRET, INDIGO_WS_ADMIN_SECRET, WS_PORT, ADMIN_PORT 等
-# (このサービス自身の.envにはCaddy用のドメイン変数は不要。Caddy側の
-#  設定は下記2)で行う)
+# (BIND_HOSTは既定127.0.0.1のままでよい。このサービス自身の.envには
+#  Caddy用のドメイン変数は不要)
 
 docker compose up -d --build
-
-# 2) 既存LiveKitノードの.env(deploy/livekit/livekit-node/.env相当、
-#    LiveKitのCaddyコンテナが読み込んでいるenv_file)に、追記したCaddyfile
-#    ブロックが参照する変数を追加する:
-#      INDIGO_WS_DOMAIN=position-ws.yourdomain.com
-#      INDIGO_WS_ADMIN_DOMAIN=position-ws-admin.yourdomain.com   # 推測困難なサブドメインにする
-#      INDIGO_WS_PORT=8787        # indigo-position-ws/.envのWS_PORTと一致させる
-#      INDIGO_WS_ADMIN_PORT=8788  # indigo-position-ws/.envのADMIN_PORTと一致させる
 ```
 
 **注意**: `.env`を変更した場合は`docker compose up -d --build`を再実行する
 こと(`restart`だけでは環境変数の変更が反映されない)。
 
-### 3) 既存Caddyfileへの追記を本番VPSへ反映する手順(本番反映自体は別途承認)
+### 2) 既存Caddyfileへの追記を本番VPSへ反映する手順(本番反映自体は別途承認)
 
-この追記(`{$INDIGO_WS_DOMAIN}`/`{$INDIGO_WS_ADMIN_DOMAIN}`ブロック)は、
-LiveKitの音声・映像を扱っている既存のCaddyコンテナに対する変更のため、
-通常の`docker compose restart`(コンテナを一度止めて起動し直す=一瞬
-でも通信が切れる)ではなく、**設定の構文チェック→無停止リロード**の
-手順で反映する。2026-11設計レビューの指示により、以下を必ず守ること。
+**環境変数は使わず、ドメイン名・ポートをCaddyfileへ直接記載する**
+(2026-11設計レビュー: LiveKitノードの`.env`はCaddyコンテナの`env_file`
+として読み込まれており、変更しても`caddy reload`では反映されず
+コンテナの再作成=LiveKitの一時停止が必要になってしまうため、この
+ブロックに限り`.env`を経由しない)。
+
+この追記は、LiveKitの音声・映像を扱っている既存のCaddyコンテナに対する
+変更のため、通常の`docker compose restart`(コンテナを一度止めて起動し
+直す=一瞬でも通信が切れる)ではなく、**設定の構文チェック→無停止
+リロード**の手順で反映する。2026-11設計レビューの指示により、以下を
+必ず守ること。
 
 ```bash
 # 事前準備: VPS上のLiveKitノードのディレクトリで作業する
@@ -301,11 +299,12 @@ cd ~/<livekit-nodeのディレクトリ>
 # ① 反映前のCaddyfileを必ずバックアップする(ロールバック用)
 cp Caddyfile Caddyfile.bak.$(date +%Y%m%d%H%M%S)
 
-# ② 新しいCaddyfile(本リポジトリのdeploy/livekit/livekit-node/Caddyfile、
-#    追記済みのもの)をVPSへ転送して上書きする
-scp deploy/livekit/livekit-node/Caddyfile user@<ノードIP>:~/<livekit-nodeのディレクトリ>/Caddyfile
-# (事前に①のINDIGO_WS_DOMAIN等の環境変数をLiveKitノードの.envへ
-#  追加しておくこと。上記2)参照)
+# ② VPS上の現在のCaddyfileの末尾に、ドメイン名・ポートを直接記載した
+#    サイトブロックを追記する(本リポジトリのdeploy/livekit/livekit-node/
+#    Caddyfileの追記部分と同内容。手元のファイルで上書きするのではなく、
+#    VPS上のファイルに直接追記すること。VPS側だけの変更が消えないように
+#    するため)。追記後、`cat /etc/caddy/Caddyfile`で反映されていることを
+#    コンテナ内から確認する。
 
 # ③ 反映前に構文チェックする(ここで止まればまだ何も変わっていない)
 docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
@@ -316,8 +315,10 @@ docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 
 # ⑤ 反映後、LiveKit(音声・ビデオ)が既存ルームで正常に使えることを
 #    実際に確認する(reload直後に少なくとも1回は入室して試す)。
-#    あわせて、新しい{$INDIGO_WS_DOMAIN}/{$INDIGO_WS_ADMIN_DOMAIN}
-#    宛てにも疎通確認する(例: curlでHTTPSハンドシェイクが通るか)。
+#    あわせて、新しいドメイン宛てにも疎通確認する(例: curlでHTTPS
+#    ハンドシェイクが通るか)。`ss -tlnp`で8787/8788が127.0.0.1でのみ
+#    listenしていることも確認する(Dockerのポート公開経由ではないため、
+#    ufw等のファイアウォールルールだけに頼らず実際のbind先を確認する)。
 
 # ⑥ 問題が起きた場合は①のバックアップへ戻し、同様に
 #    caddy validate → caddy reload で復旧する
@@ -350,9 +351,24 @@ docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 |---|---|---|---|
 | TCP | 443 (WS_PORT/ADMIN_PORTはCaddy経由のためポート自体の個別開放は不要) | 0.0.0.0 | Caddy(WSS/HTTPS) |
 
-`WS_PORT`(8787)・`ADMIN_PORT`(8788)自体は`network_mode: host`でVPS内の
-localhostにのみ直接listenし、Caddyがリバースプロキシする構成のため、
-これらのポート番号そのものを外部ファイアウォールで開放する必要はない。
+`WS_PORT`(8787)・`ADMIN_PORT`(8788)自体は`BIND_HOST`(既定`127.0.0.1`、
+下記「待ち受けアドレス」参照)によりVPS内のループバックにのみ直接listenし、
+Caddyがリバースプロキシする構成のため、これらのポート番号そのものを
+外部ファイアウォールで開放する必要はない。
+
+## 待ち受けアドレス(`BIND_HOST`)
+
+`network_mode: host`は、コンテナがDockerのポート公開(NAT)を経由せず
+ホストのネットワークインターフェースを直接共有するという意味でしかなく、
+それ自体は「外部から到達可能かどうか」を制御しない(2026-11発覚、
+デプロイ前のレビューで発見)。実際にどのアドレスでlistenするかは
+サーバー側のコード(`server.mjs`・`lib/adminApi.mjs`)が`BIND_HOST`
+(既定`127.0.0.1`)を明示的に指定することで決まる。本番・スタンドアロン
+運用のどちらも、WSサーバーとCaddyは同じVPS上に`network_mode: host`で
+同居する構成(標準の`docker-compose.yml`・`docker-compose.standalone.yml`
+いずれも)のため、Caddy側の`reverse_proxy localhost:...`は既定値のままで
+問題なく到達できる。別構成(Caddyと別ネットワーク名前空間のコンテナに
+分ける等)にする場合のみ、`BIND_HOST`を環境変数で明示的に変更すること。
 
 ## ローカルでの動作確認
 

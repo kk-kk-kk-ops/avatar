@@ -4,7 +4,7 @@
 // (2026-11設計レビューの結論。固定IPアドオンは導入しない方針)。
 import crypto from "node:crypto";
 import http from "node:http";
-import { ADMIN, CLOSE_CODE } from "../config.mjs";
+import { ADMIN, BIND_HOST, CLOSE_CODE } from "../config.mjs";
 import { createKeyedFailureLimiter } from "./rateLimiter.mjs";
 
 const failureLimiter = createKeyedFailureLimiter({
@@ -110,6 +110,6 @@ export function startAdminServer({ forceDisconnect }) {
       }
     });
   });
-  server.listen(ADMIN.port);
+  server.listen(ADMIN.port, BIND_HOST);
   return server;
 }

@@ -6,6 +6,7 @@
 import { WebSocketServer } from "ws";
 import {
   AUTH_GRACE_PERIOD_MS,
+  BIND_HOST,
   CLOSE_CODE,
   HEARTBEAT_INTERVAL_MS,
   INVALID_MESSAGE_LIMIT,
@@ -33,7 +34,11 @@ import {
 import { createRateLimiter } from "./lib/rateLimiter.mjs";
 import { validateMove } from "./lib/validateMove.mjs";
 
-const wss = new WebSocketServer({ port: WS_PORT, maxPayload: MAX_PAYLOAD_BYTES });
+const wss = new WebSocketServer({
+  port: WS_PORT,
+  host: BIND_HOST,
+  maxPayload: MAX_PAYLOAD_BYTES,
+});
 
 function closeConn(conn, code, reason) {
   try {
@@ -339,5 +344,5 @@ export function forceDisconnect(roomId, userId, code) {
 startAdminServer({ forceDisconnect });
 
 console.log(
-  `[indigo-position-ws] listening on :${WS_PORT} (rooms=${roomCount()}, connections=${connectionCount()})`,
+  `[indigo-position-ws] listening on ${BIND_HOST}:${WS_PORT} (rooms=${roomCount()}, connections=${connectionCount()})`,
 );
