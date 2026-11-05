@@ -12,6 +12,7 @@ import {
   INVALID_MESSAGE_LIMIT,
   INVALID_MESSAGE_WINDOW_MS,
   MAX_PAYLOAD_BYTES,
+  METRICS_LOG_INTERVAL_MS,
   MOVE_RATE_LIMIT,
   STATE_RATE_LIMIT,
   STATE_RATE_WINDOW_MS,
@@ -33,6 +34,19 @@ import {
 } from "./lib/rooms.mjs";
 import { createRateLimiter } from "./lib/rateLimiter.mjs";
 import { validateMove } from "./lib/validateMove.mjs";
+import { recordMoveAccepted, recordMoveRejected, snapshotMetrics } from "./lib/metrics.mjs";
+
+// recordInvalid(4005切断のカウント対象)に含める拒否理由(2026-11見直し:
+// Tech Lead指摘により、再接続直後や境界付近での一時的な誤判定が起こり
+// うるimplausible-speed/illegitimate-teleportを対象から外した。理由:
+// ・いずれのmoveも拒否された時点で中継されないため、4005切断の有無に
+//   関わらず不正な位置が反映される実害は無い。
+// ・一方、reasonがinvalid-shape/out-of-boundsの場合は型やマップ範囲という
+//   明確な不変条件に反しており、バグまたは改ざんの強いシグナルのため、
+//   従来通り連打検知の対象とする。
+// ・implausible-speed/illegitimate-teleportも無制限に送れるわけではなく、
+//   既存のmoveLimiter(25回/秒)の上限は引き続き適用される。
+const INVALID_COUNT_REASONS = new Set(["invalid-shape", "out-of-bounds"]);
 
 const wss = new WebSocketServer({
   port: WS_PORT,
@@ -195,11 +209,15 @@ function handleMove(conn, msg) {
   if (!result.ok) {
     // 単発の不正値では切断しない(ネットワーク由来の揺らぎ等でも起こり
     // うるため)。ただし短時間に連打してくる接続はrecordInvalidの側で
-    // 切断する(2026-11追加)。
+    // 切断する(2026-11追加)。reasonによっては4005のカウント対象から
+    // 除外する(上のINVALID_COUNT_REASONS参照)。
     console.warn(
       `[move-rejected] room=${conn.roomId} user=${conn.userId} reason=${result.reason}`,
     );
-    recordInvalid(conn);
+    recordMoveRejected(result.reason);
+    if (INVALID_COUNT_REASONS.has(result.reason)) {
+      recordInvalid(conn);
+    }
     return;
   }
 
@@ -207,6 +225,7 @@ function handleMove(conn, msg) {
     if (!conn.teleportLimiter.tryConsume()) return; // teleportの頻度超過は静かに間引く
   }
 
+  recordMoveAccepted();
   conn.lastAcceptedMove = { x: msg.x, y: msg.y, at: now };
   // 専用のstateイベントがクライアント側でまだ配線されていない間の暫定
   // 措置として、x/y/dir/moving/t/teleport以外にクライアントが乗せてきた
@@ -315,6 +334,17 @@ const heartbeatTimer = setInterval(() => {
   }
 }, HEARTBEAT_INTERVAL_MS);
 heartbeatTimer.unref?.();
+
+// 受理/拒否件数の定期サマリー(2026-11追加)。docker logsをgrepするだけで
+// 日次の健全性確認ができるよう、累積件数を理由別に出力する(プロセス内の
+// 累積値であり、再起動でリセットされる)。
+const metricsTimer = setInterval(() => {
+  const { moveAccepted, moveRejectedByReason } = snapshotMetrics();
+  console.log(
+    `[metrics] rooms=${roomCount()} connections=${connectionCount()} moveAccepted=${moveAccepted} moveRejectedByReason=${JSON.stringify(moveRejectedByReason)}`,
+  );
+}, METRICS_LOG_INTERVAL_MS);
+metricsTimer.unref?.();
 
 export function forceDisconnect(roomId, userId, code) {
   // adminApi.mjsから呼ばれる。roomId内の該当ユーザーの接続を切断する。

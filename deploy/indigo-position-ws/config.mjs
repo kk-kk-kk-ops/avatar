@@ -48,6 +48,11 @@ export const BIND_HOST = envStr("BIND_HOST", "127.0.0.1");
 // この周期でまとめて切断する(下記AUTH_GRACE_PERIOD_MSと同様、専用の
 // タイマーを増やさずこの既存の巡回に相乗りする)。
 export const HEARTBEAT_INTERVAL_MS = envInt("HEARTBEAT_INTERVAL_MS", 30_000);
+// 受理/拒否件数の定期サマリーログの出力間隔(2026-11追加、Tech Lead指摘:
+// move-rejectedの理由別件数を記録し、日次の健全性確認に使えるようにする
+// ため)。docker logsをgrepするだけで確認できるよう、既定5分おきに
+// [metrics]行を1本出力する。
+export const METRICS_LOG_INTERVAL_MS = envInt("METRICS_LOG_INTERVAL_MS", 5 * 60_000);
 // 想定ペイロードはmove約150バイトだが、接続後最初に送るauthenticate
 // メッセージはJWT(mapW/mapH/warpPairs/zonesを埋め込むため、ゾーン数等に
 // よっては1〜2KB程度になりうる。実測値はREADME参照)を含むため、それが
