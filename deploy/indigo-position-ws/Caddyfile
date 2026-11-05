@@ -1,0 +1,16 @@
+# 【スタンドアロン用のみ、2026-11追記】LiveKitと同じVPSに同居させる本番
+# 構成では、このCaddyfileは使わない(deploy/livekit/livekit-node/
+# Caddyfileに同内容のブロックを追記済み、ポート80/443の競合を避けるため。
+# README.mdの「デプロイ手順」参照)。別VPSでの単独運用・ローカル確認等、
+# LiveKitと同居しない場合にのみdocker-compose.standalone.ymlと合わせて使う。
+{$INDIGO_WS_DOMAIN} {
+  reverse_proxy localhost:{$WS_PORT}
+}
+
+# /internal/disconnect(Next.js専用の管理API)。公開ドメインではあるが、
+# 推測困難なサブドメインに置き、実際の防御はHMAC署名+タイムスタンプ
+# (server.mjs側)で行う(2026-11設計レビュー: Vercelの送信元IPが固定
+# できないため、IP制限ではなくシークレットベースの認証を主とする方針)。
+{$INDIGO_WS_ADMIN_DOMAIN} {
+  reverse_proxy localhost:{$ADMIN_PORT}
+}
