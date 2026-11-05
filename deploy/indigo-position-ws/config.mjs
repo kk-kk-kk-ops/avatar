@@ -96,6 +96,20 @@ export const MEETING_ENTRY_STEP_PX = envInt("MEETING_ENTRY_STEP_PX", 30);
 // teleport:trueの受理頻度上限(正規の操作は稀なため厳しめに設定)。
 export const TELEPORT_RATE_LIMIT = envInt("TELEPORT_RATE_LIMIT", 2);
 export const TELEPORT_RATE_WINDOW_MS = envInt("TELEPORT_RATE_WINDOW_MS", 5000);
+// implausible-speedによる拒否が連続してこの時間(ms)を超えて続いた場合、
+// 次の1件に限り座標をteleport扱いで受理し、見た目のフリーズを解消する
+// (2026-11追加、Tech Lead指摘: 再接続直後等の一時的な誤判定で、他の
+// 参加者の画面上で当該プレイヤーが止まって見える問題への対策)。
+// isValidShape/isWithinMapBounds(型・マップ範囲)は従来通り必須のまま
+// (これらを通過した座標のみが対象)。乱用防止のため、この復帰も通常の
+// teleportと同じTELEPORT_RATE_LIMIT/TELEPORT_RATE_WINDOW_MSの予算を
+// 共有して消費する(無制限に多用できないようにする)。施錠された会議室へ
+// 抜け道になることは無い(施錠はクライアント側の当たり判定で座標自体が
+// ゾーン内に入らないよう制限する設計のため、速度チェックのバイパスとは
+// 無関係。lockedMeetingZoneId等のロック状態は元々このサーバーが一切
+// 検証していない=Supabase経由の既存設計と同じ前提であり、本機能で新たに
+// 生まれる抜け道ではない)。
+export const SPEED_RECOVERY_GRACE_MS = envInt("SPEED_RECOVERY_GRACE_MS", 2000);
 
 // ---- state(非位置情報)の送信制御 ----
 // Supabase presenceの「30秒5回」制限とは完全に無関係な、このWSサーバー
