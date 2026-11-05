@@ -14,6 +14,15 @@ import {
   type RemoteTrackPublication,
 } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
+import {
+  POSITION_TRANSPORT,
+  MOVE_SEND_INTERVAL_MS,
+} from "@/lib/positionTransport";
+import {
+  createIndigoPositionClient,
+  type IndigoPositionClient,
+  type MovePayload,
+} from "@/lib/indigoPositionClient";
 import BugReportModal from "@/components/BugReportModal";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { translate, type Locale } from "@/lib/i18n/translations";
@@ -1772,6 +1781,14 @@ export default function AvatarSpace({
   const [forceLeaveMessage, setForceLeaveMessage] = useState<string | null>(
     null,
   );
+  // IndigoPro位置情報WSサーバーとの接続が自動再接続しない形で終了した際の
+  // 通知(2026-11追加、POSITION_TRANSPORT==="indigo"の場合のみ使う)。
+  // forceLeaveMessageと違い、位置情報の同期が止まるだけでチャット・通話等
+  // (Supabase経由)は引き続き使えるため、自動リロードはせず手動での
+  // 再読み込みを促すだけに留める。
+  const [indigoTerminalMessage, setIndigoTerminalMessage] = useState<
+    string | null
+  >(null);
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(
     "/map-background.webp",
   );
@@ -1912,6 +1929,18 @@ export default function AvatarSpace({
   } | null>(null);
   const wasMovingRef = useRef(false);
   const lastMoveSentAt = useRef(0);
+  // ワープ(瞬間移動)直後の次回move送信に teleport:true を付けるためのフラグ
+  // (2026-11追加、POSITION_TRANSPORT==="indigo"の場合のみ参照する)。
+  // ワープ自体は専用のmove送信を持たず、次にこのrAFループが送信する
+  // タイミングで新しい座標が自然に乗るため、「teleportだった」という
+  // 事実だけをここに記録しておき、実際に送信する時に消費する。
+  const justTeleportedRef = useRef(false);
+  // indigoモードのmove送信で、直近に送った時点のdirを記録する(2026-11
+  // 追加、POSITION_TRANSPORT==="indigo"の場合のみ参照する)。向きが変わった
+  // 瞬間に定期送信を待たず即座に送るための比較用(下のlastSyncedDirRefは
+  // 自分のローカル表示state用の別物で、ネットワーク送信のタイミングには
+  // 使っていないため、送信専用にこちらを新設する)。
+  const lastIndigoSentDirRef = useRef<PlayerState["dir"] | null>(null);
   // 向き(dir)が変わった瞬間だけ即座にplayers stateへ反映するための記録。
   // 位置の同期は0.2秒おきのままで十分だが、向き(スプライト画像)の切り替えは
   // それだと最大0.2秒の遅延に感じられてしまうため、変化した瞬間だけここで
@@ -1993,6 +2022,56 @@ export default function AvatarSpace({
     presenceTrackTimestampsRef.current = [];
     forceNextPresenceTrackRef.current = false;
   }, []);
+
+  // IndigoPro位置情報WSサーバーへの接続(2026-11追加)。POSITION_TRANSPORT
+  // が"indigo"の場合にのみ使う。presence・チャット等は引き続き上の
+  // channelRef(Supabase)のまま変わらない(moveのみがこちらに切り替わる)。
+  const indigoClientRef = useRef<IndigoPositionClient | null>(null);
+  // getIndigoTokenはSupabaseチャンネルのuseEffect(依存配列は[joined,
+  // roomId, maxPeoplePerRoom]のまま)の中で一度だけindigoClient.connect()に
+  // 渡され、以後はトークン更新(25分おき)・AUTH_FAILED時の再接続のたびに
+  // 繰り返し呼ばれる。viewOnlyInviteTokenはpropなので、effect再実行後まで
+  // 更新されない閉じ込め(クロージャ)が起きないよう、refで常に最新値を
+  // 読む(2026-11、レビューで指摘)。roomIdはeffectの依存配列に含まれて
+  // おり、変化時は必ずeffect自体が再実行されてconnect()もやり直される
+  // ため、こちらはrefにする必要はない。
+  const viewOnlyInviteTokenRef = useRef(viewOnlyInviteToken);
+  useEffect(() => {
+    viewOnlyInviteTokenRef.current = viewOnlyInviteToken;
+  }, [viewOnlyInviteToken]);
+  // IndigoPro用トークンの取得(app/api/livekit-token/route.tsと同じ入力・
+  // 同じ呼び出しパターン)。useCallbackにせず素朴な関数にしているのは、
+  // POSITION_TRANSPORT==="supabase"の既定では一度も呼ばれないため。
+  const getIndigoToken = useCallback(async () => {
+    const res = await fetch("/api/indigo-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        roomId,
+        identity: selfId.current,
+        inviteToken: viewOnlyInviteTokenRef.current,
+      }),
+    });
+    if (!res.ok) throw new Error("indigo-token取得失敗");
+    return (await res.json()) as { token: string; wsUrl: string };
+  }, [roomId]);
+  // indigoモードのmove送信ペイロードを組み立てる(2026-11追加)。専用の
+  // stateイベント(B案)がまだ配線されていない間の暫定措置として、座標・
+  // 向き以外のPlayerStateの状態一式も乗せる(Supabase側のmove(payload:
+  // self)と同じ考え方)。idは中継時にサーバー側で送信者の検証済み身元に
+  // 強制上書きされる(なりすまし対策)ため送らない。screenPreviewDataUrl
+  // (画面共有の静止画、base64で大きくなりうる)はmoveには乗せない
+  // (presence/専用のscreen-previewイベント経由で既に届くため不要)。
+  const buildIndigoMovePayload = useCallback(
+    (
+      self: PlayerState,
+      extra: { t: number; teleport?: boolean },
+    ): MovePayload => {
+      const { id: _id, screenPreviewDataUrl: _preview, ...rest } = self;
+      return { ...rest, ...extra };
+    },
+    [],
+  );
   // 「自分が設定しているステータス」(設定画面で選んだ値)。会議室への
   // 入退室・タブの非表示/復帰による自動ステータス変更(共にapplyAuto
   // PresenceStatus経由)はselfState.current.statusを一時的に書き換える
@@ -5767,6 +5846,95 @@ export default function AvatarSpace({
     }
   }, [inCall, stopVideoCall, startVideoCall]);
 
+  // 相手の位置更新(座標+在室の強い証拠としてのlastMoveAtRef更新)を
+  // 反映する共通処理(2026-11追加)。元はSupabaseのmove broadcastハンドラ
+  // 内に直接書かれていたのを、IndigoPro経由のmove受信でも同じ処理が
+  // 必要になったためここへ切り出した(処理内容・順序は変更していない)。
+  const applyIncomingPosition = useCallback(
+    (id: string, x: number, y: number) => {
+      // 直近で位置を受信した相手は「実在する」ことの強い証拠なので、
+      // 下の在室状況の自己修復(2回連続不在で削除)の対象から外すために
+      // 記録しておく。
+      lastMoveAtRef.current.set(id, Date.now());
+      // 同じ理由で、leaveイベント由来の削除猶予タイマーも取り消す
+      // (動き続けている=実際には在室している)。
+      const pendingLeaveTimer = pendingLeaveTimersRef.current.get(id);
+      if (pendingLeaveTimer) {
+        clearTimeout(pendingLeaveTimer);
+        pendingLeaveTimersRef.current.delete(id);
+      }
+
+      // 位置(見た目)はReactのstateを介さず、補間(interpolation)用の
+      // target座標だけを更新する。実際の描画は毎フレームのrAFループで行う。
+      const posEntry = peerPositionsRef.current.get(id);
+      if (posEntry) {
+        posEntry.targetX = x;
+        posEntry.targetY = y;
+      } else {
+        peerPositionsRef.current.set(id, {
+          currentX: x,
+          currentY: y,
+          targetX: x,
+          targetY: y,
+        });
+      }
+    },
+    [],
+  );
+
+  // 名前・アバター画像・マイク状態など「見た目以外の情報」が変わった場合、
+  // または初めて見る相手の場合だけReactのstateを更新する共通処理
+  // (2026-11、元はSupabaseのmove broadcastハンドラ内に直接書かれていたのを
+  // 切り出した。比較するフィールド・マージの仕方は変更していない)。
+  // 位置(x, y)の変化だけでは再描画を起こさない(近接判定などロジック用には、
+  // 下の定期的な同期処理で低頻度に反映する)。
+  const applyIncomingPlayerState = useCallback((p: PlayerState) => {
+    setPlayers((prev) => {
+      const current = prev[p.id];
+      if (!current) {
+        return { ...prev, [p.id]: p };
+      }
+      if (
+        current.name !== p.name ||
+        current.color !== p.color ||
+        current.avatarImage !== p.avatarImage ||
+        current.carImage !== p.carImage ||
+        current.carVisible !== p.carVisible ||
+        current.micOn !== p.micOn ||
+        current.announcementOn !== p.announcementOn ||
+        current.recordingOn !== p.recordingOn ||
+        current.sharingScreen !== p.sharingScreen ||
+        current.inCall !== p.inCall ||
+        current.meetingZoneId !== p.meetingZoneId ||
+        current.message !== p.message ||
+        current.showMessage !== p.showMessage ||
+        current.dir !== p.dir ||
+        current.status !== p.status ||
+        current.transcriptionStatus !== p.transcriptionStatus
+      ) {
+        return {
+          ...prev,
+          [p.id]: { ...current, ...p, x: current.x, y: current.y },
+        };
+      }
+      return prev;
+    });
+  }, []);
+
+  // IndigoPro経由でmoveを受信した時の処理(2026-11追加、POSITION_TRANSPORT
+  // === "indigo"の場合のみ使われる)。専用のstateイベント(B案)がまだ配線
+  // されていない間の暫定措置として、moveのペイロードにPlayerState一式
+  // (screenPreviewDataUrlを除く)が乗っているため、Supabase側と同じ
+  // applyIncomingPlayerStateで「見た目」情報も同様に反映する。
+  const handleIndigoMove = useCallback(
+    (id: string, payload: Omit<MovePayload, "t" | "teleport">) => {
+      if (id === selfId.current) return;
+      applyIncomingPosition(id, payload.x, payload.y);
+      applyIncomingPlayerState({ ...payload, id } as PlayerState);
+    },
+    [applyIncomingPosition, applyIncomingPlayerState],
+  );
+
   // ---- Supabase Realtimeチャンネルの接続 ----
   useEffect(() => {
     if (!joined) return;
@@ -5944,67 +6112,14 @@ export default function AvatarSpace({
           const p = payload as PlayerState;
           if (p.id === selfId.current) return;
 
-          // 直近で位置broadcastを受信した相手は「実在する」ことの強い証拠
-          // なので、下の在室状況の自己修復(2回連続不在で削除)の対象から
-          // 外すために記録しておく。
-          lastMoveAtRef.current.set(p.id, Date.now());
-          // 同じ理由で、leaveイベント由来の削除猶予タイマーも取り消す
-          // (動き続けている=実際には在室している)。
-          const pendingLeaveTimer = pendingLeaveTimersRef.current.get(p.id);
-          if (pendingLeaveTimer) {
-            clearTimeout(pendingLeaveTimer);
-            pendingLeaveTimersRef.current.delete(p.id);
-          }
+          // lastMoveAtRef更新・leave猶予タイマー取り消し・補間target更新
+          // (2026-11、applyIncomingPositionへ切り出し。処理内容は従来と
+          // 同一)。
+          applyIncomingPosition(p.id, p.x, p.y);
 
-          // 位置(見た目)はReactのstateを介さず、補間(interpolation)用の
-          // target座標だけを更新する。実際の描画は毎フレームのrAFループで行う。
-          const posEntry = peerPositionsRef.current.get(p.id);
-          if (posEntry) {
-            posEntry.targetX = p.x;
-            posEntry.targetY = p.y;
-          } else {
-            peerPositionsRef.current.set(p.id, {
-              currentX: p.x,
-              currentY: p.y,
-              targetX: p.x,
-              targetY: p.y,
-            });
-          }
-
-          // 名前・アバター画像・マイク状態など「見た目以外の情報」が変わった場合、
-          // または初めて見る相手の場合だけReactのstateを更新する。位置(x, y)の
-          // 変化だけでは再描画を起こさない(近接判定などロジック用には、下の
-          // 定期的な同期処理で低頻度に反映する)。
-          setPlayers((prev) => {
-            const current = prev[p.id];
-            if (!current) {
-              return { ...prev, [p.id]: p };
-            }
-            if (
-              current.name !== p.name ||
-              current.color !== p.color ||
-              current.avatarImage !== p.avatarImage ||
-              current.carImage !== p.carImage ||
-              current.carVisible !== p.carVisible ||
-              current.micOn !== p.micOn ||
-              current.announcementOn !== p.announcementOn ||
-              current.recordingOn !== p.recordingOn ||
-              current.sharingScreen !== p.sharingScreen ||
-              current.inCall !== p.inCall ||
-              current.meetingZoneId !== p.meetingZoneId ||
-              current.message !== p.message ||
-              current.showMessage !== p.showMessage ||
-              current.dir !== p.dir ||
-              current.status !== p.status ||
-              current.transcriptionStatus !== p.transcriptionStatus
-            ) {
-              return {
-                ...prev,
-                [p.id]: { ...current, ...p, x: current.x, y: current.y },
-              };
-            }
-            return prev;
-          });
+          // 見た目情報の反映(2026-11、applyIncomingPlayerStateへ切り出し。
+          // 比較するフィールド・マージの仕方は従来と同一)。
+          applyIncomingPlayerState(p);
         })
         .on("broadcast", { event: "layout-update" }, ({ payload }) => {
           const {
@@ -6527,6 +6642,47 @@ export default function AvatarSpace({
 
     connectChannel();
 
+    // IndigoPro位置情報WSサーバーへの接続(2026-11追加)。POSITION_TRANSPORT
+    // === "indigo"の場合のみ、Supabaseチャンネル(presence・チャット等、
+    // 上のconnectChannelで変わらず接続)に加えてこちらも接続する。既定
+    // ("supabase")ではこのブロックは一切実行されない。
+    if (POSITION_TRANSPORT === "indigo") {
+      const indigoClient = createIndigoPositionClient(selfId.current);
+      indigoClientRef.current = indigoClient;
+      indigoClient.onMove(handleIndigoMove);
+      indigoClient.onMoveBatch((entries) => {
+        entries.forEach((e) => handleIndigoMove(e.id, e));
+      });
+      indigoClient.onTerminal((reason) => {
+        // 4001(強制切断)・4002(同一ユーザーの新しい接続に取って代わられた)
+        // ・4005(不正メッセージ連打)・4004(ルーム拒否)はindigoPositionClient
+        // 側で既に自動再接続しない判断をしている(2026-11追加)。
+        console.warn(`[indigo] 接続が終了しました(理由: ${reason})`);
+        if (reason === "force-disconnected") {
+          // 既存のforceLeaveMessage(管理者による強制退出)と同じ見せ方・
+          // 同じリロードの流れにする(どちらも「管理者に切断された」という
+          // 意味では同じ事象のため)。
+          setForceLeaveMessage(t("room.kickedByAdmin"));
+          setTimeout(() => window.location.reload(), 1500);
+        } else if (reason === "superseded") {
+          // 位置情報の同期だけが止まる状態であり、チャット・通話等は
+          // Supabase経由で引き続き使えるため、自動リロードはせず手動での
+          // 再読み込みを促す(同時に複数のタブ/デバイスから接続した場合に
+          // 起こりうる)。
+          setIndigoTerminalMessage(
+            "別の場所でこのセッションの接続が開始されたため、位置情報の同期を終了しました。引き続きご利用の場合はページを再読み込みしてください。",
+          );
+        } else {
+          // protocol-abuse・room-rejected。バグ・不正な挙動の可能性がある
+          // ため、自動再接続はせず再読み込みを促すに留める。
+          setIndigoTerminalMessage(
+            "位置情報の同期でエラーが発生しました。ページを再読み込みしてください。",
+          );
+        }
+      });
+      indigoClient.connect(roomId, getIndigoToken);
+    }
+
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -6539,7 +6695,22 @@ export default function AvatarSpace({
       pendingLeaveTimersRef.current.clear();
       channelRef.current?.unsubscribe();
       channelRef.current = null;
+      if (indigoClientRef.current) {
+        indigoClientRef.current.disconnect();
+        indigoClientRef.current = null;
+      }
     };
+    // applyIncomingPosition/handleIndigoMove/getIndigoTokenはあえて依存配列
+    // に含めない(2026-11)。いずれも内部でrefを読むだけで値をクロージャに
+    // 閉じ込めておらず(getIndigoTokenのみroomId/viewOnlyInviteTokenに依存
+    // するが、roomIdは既にこの配列にある)、含めるとviewOnlyInviteToken
+    // 変化のたびにこのeffect全体(Supabaseチャンネルの再接続を含む)が
+    // 走ってしまい、POSITION_TRANSPORT==="supabase"の既定時にも再接続
+    // 頻度が変わってしまう(今回の変更前には存在しなかった再トリガー)。
+    // 「切替フラグ未設定なら現状と完全に同じ動作」を保つための意図的な除外。
+    // requestPresenceTrack/resetPresenceTrackLimiterは依存配列に含めても
+    // 実害が無い(どちらもuseCallback(..., [])で参照が不変なため、含めても
+    // 再トリガーは発生しない)。
   }, [
     joined,
     roomId,
@@ -6696,11 +6867,17 @@ export default function AvatarSpace({
       if (document.visibilityState !== "visible") return;
       if (selfState.current && channelRef.current) {
         requestPresenceTrack();
-        channelRef.current.send({
-          type: "broadcast",
-          event: "move",
-          payload: selfState.current,
-        });
+        if (POSITION_TRANSPORT === "indigo") {
+          indigoClientRef.current?.sendMove(
+            buildIndigoMovePayload(selfState.current, { t: Date.now() }),
+          );
+        } else {
+          channelRef.current.send({
+            type: "broadcast",
+            event: "move",
+            payload: selfState.current,
+          });
+        }
       }
       // 非アクティブの間、上の在室状況の自己修復(setInterval)は動き続けて
       // いるが、rAFの停止で自分からの送信も止まっているため、この間に
@@ -7105,6 +7282,7 @@ export default function AvatarSpace({
             window.setTimeout(() => {
               self.x = warpDestination.x;
               self.y = warpDestination.y;
+              justTeleportedRef.current = true;
               insideWarpIdRef.current = warpDestination.id;
               setPlayers((prev) => {
                 const current = prev[self.id];
@@ -7332,22 +7510,52 @@ export default function AvatarSpace({
         // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
         // 止まった瞬間を送らないと、相手の画面では最後に動いていた位置のまま
         // 止まって見えてしまい、キーを離してから反映されるようなラグに感じられる。
-        // 移動中の送信は約14回/秒に間引く(複数人が同時に動いても送信上限に
-        // 余裕を持たせ、回線が不安定になって再接続が走るのを防ぐ)。止まった
-        // 瞬間だけは間引かずに必ず送る。さらに、静止中でも3秒おきに現在位置を
-        // 送る(ハートビート)。何らかの理由で相手に届いていなかった場合でも、
-        // 数秒以内に自然と復旧するようにするため。
+        // さらに、静止中でも3秒おきに現在位置を送る(ハートビート)。何らかの
+        // 理由で相手に届いていなかった場合でも、数秒以内に自然と復旧するため。
         const justStopped = !moving && wasMovingRef.current;
-        const heartbeatDue = !moving && time - lastMoveSentAt.current >= 3000;
-        const intervalElapsed = time - lastMoveSentAt.current >= 70; // 約14回/秒
-        if ((moving && intervalElapsed) || justStopped || heartbeatDue) {
-          if (channelRef.current) {
-            channelRef.current.send({
-              type: "broadcast",
-              event: "move",
-              payload: self,
-            });
+        if (POSITION_TRANSPORT === "indigo") {
+          // indigoモードはSupabase側(下のelse、約70ms=14.3回/秒のまま
+          // 無変更)とは独立した送信間隔(既定100ms=10回/秒、lib/
+          // positionTransport.tsのMOVE_SEND_INTERVAL_MS、設定ファイルで
+          // 変更可能)を使う。向きが変わった瞬間も、定期送信を待たず即座に
+          // 送る(2026-11設計レビューの結論)。
+          const dirChanged = self.dir !== lastIndigoSentDirRef.current;
+          const indigoHeartbeatDue =
+            !moving && time - lastMoveSentAt.current >= 3000;
+          const indigoIntervalElapsed =
+            time - lastMoveSentAt.current >= MOVE_SEND_INTERVAL_MS;
+          if (
+            (moving && indigoIntervalElapsed) ||
+            justStopped ||
+            indigoHeartbeatDue ||
+            dirChanged
+          ) {
+            const teleport = justTeleportedRef.current;
+            if (teleport) justTeleportedRef.current = false;
+            lastIndigoSentDirRef.current = self.dir;
+            indigoClientRef.current?.sendMove(
+              buildIndigoMovePayload(self, {
+                t: time,
+                ...(teleport ? { teleport: true } : {}),
+              }),
+            );
             lastMoveSentAt.current = time;
+          }
+        } else {
+          // 移動中の送信は約14回/秒に間引く(複数人が同時に動いても送信
+          // 上限に余裕を持たせ、回線が不安定になって再接続が走るのを
+          // 防ぐ)。止まった瞬間だけは間引かずに必ず送る。
+          const heartbeatDue = !moving && time - lastMoveSentAt.current >= 3000;
+          const intervalElapsed = time - lastMoveSentAt.current >= 70; // 約14回/秒
+          if ((moving && intervalElapsed) || justStopped || heartbeatDue) {
+            if (channelRef.current) {
+              channelRef.current.send({
+                type: "broadcast",
+                event: "move",
+                payload: self,
+              });
+              lastMoveSentAt.current = time;
+            }
           }
         }
         wasMovingRef.current = moving;
@@ -7435,11 +7643,20 @@ export default function AvatarSpace({
       if (!current) return prev;
       return { ...prev, [self.id]: { ...current, meetingZoneId: zoneId } };
     });
-    channelRef.current?.send({
-      type: "broadcast",
-      event: "move",
-      payload: self,
-    });
+    if (POSITION_TRANSPORT === "indigo") {
+      // 会議室入室は30px分の瞬間移動(MEETING_ENTRY_STEP)のため、必ず
+      // teleport:trueを付けて送る(サーバー側の速度チェックを正しく
+      // バイパスし、ゾーンとの照合で正規の瞬間移動と検証してもらうため)。
+      indigoClientRef.current?.sendMove(
+        buildIndigoMovePayload(self, { t: Date.now(), teleport: true }),
+      );
+    } else {
+      channelRef.current?.send({
+        type: "broadcast",
+        event: "move",
+        payload: self,
+      });
+    }
     // 会議室の外で画面共有を開始したまま入室した場合、この時点まで一度も
     // 主張(claim)を送っておらず排他制御に参加できていなかった
     // (2026-09報告)。ここで改めて主張を送り直す。
@@ -13947,6 +14164,25 @@ export default function AvatarSpace({
             <p className="text-sm font-semibold text-slate-800">
               {forceLeaveMessage}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* IndigoPro位置情報WSサーバーの接続終了通知(2026-11追加)。
+          forceLeaveMessageと違い全画面ブロックはしない(位置同期が止まる
+          だけでチャット・通話は引き続き使えるため)。手動での再読み込みを
+          促す非ブロッキングの通知バー。 */}
+      {indigoTerminalMessage && (
+        <div className="pointer-events-none fixed inset-x-0 top-6 z-[60] flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-md items-center gap-3 rounded-lg bg-black/80 px-4 py-2 text-sm text-white shadow-xl">
+            <span>{indigoTerminalMessage}</span>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="shrink-0 rounded bg-white/20 px-2 py-1 text-xs font-semibold hover:bg-white/30"
+            >
+              再読み込み
+            </button>
           </div>
         </div>
       )}

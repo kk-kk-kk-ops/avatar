@@ -30,7 +30,10 @@ function secretForMode() {
 
 // トークンのclaims形状(Next.js側の発行APIが守るべき契約):
 // {
-//   sub: string,        // ユーザーID
+//   sub: string,        // identity(components/AvatarSpace.tsxのselfId相当。
+//                        // ブラウザごとのランダムID、再読み込みで変わる)
+//   ownerUserId: string,// 認証済みSupabaseユーザーID(auth.uid())。subとは
+//                        // 別物(2026-11追加、なりすまし対策。下記参照)
 //   roomId: string,
 //   kid: string,        // "production" | "loadtest"(鍵IDと一致必須)
 //   exp: number,        // 短命(〜30分目安)
@@ -38,6 +41,16 @@ function secretForMode() {
 //   warpPairs: [[x1,y1,x2,y2], ...],
 //   zones: [{ id, kind, x, y, w, h }, ...],
 // }
+//
+// ownerUserIdについて(2026-11、トークン発行API実装時に発見したセキュリティ
+// 対応): subの値(identity)は同室の他参加者がSupabase presence経由で知る
+// ことができるため、検証なしに「sub一致なら既存接続を取って代わってよい」
+// としてしまうと、他人のidentityを騙ってトークンを取得し、本物の接続を
+// 強制的に蹴り出せてしまう(app/api/livekit-token/route.tsのLiveKit側
+// なりすまし対策と同種の脆弱性)。ownerUserIdは常にNext.js側でSupabase
+// セッションから取得した値のみが入るため、クライアントが偽装できない。
+// server.mjsのsetupAfterAuthで、既存接続への「取って代わり」を許可する
+// 前にownerUserIdの一致を必須条件とする。
 export function verifyToken(token) {
   const { secret, expectedKid } = secretForMode();
   let decoded;
@@ -57,6 +70,9 @@ export function verifyToken(token) {
   }
   if (typeof decoded.sub !== "string" || !decoded.sub) {
     throw new AuthError("missing sub claim");
+  }
+  if (typeof decoded.ownerUserId !== "string" || !decoded.ownerUserId) {
+    throw new AuthError("missing ownerUserId claim");
   }
   if (typeof decoded.roomId !== "string" || !decoded.roomId) {
     throw new AuthError("missing roomId claim");
@@ -78,6 +94,7 @@ export function verifyToken(token) {
   }
   return {
     userId: decoded.sub,
+    ownerUserId: decoded.ownerUserId,
     roomId: decoded.roomId,
     mapW: decoded.mapW,
     mapH: decoded.mapH,

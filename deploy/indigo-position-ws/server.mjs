@@ -45,6 +45,7 @@ function closeConn(conn, code, reason) {
 
 function applyClaims(conn, claims) {
   conn.userId = claims.userId;
+  conn.ownerUserId = claims.ownerUserId;
   conn.roomId = claims.roomId;
   conn.mapW = claims.mapW;
   conn.mapH = claims.mapH;
@@ -53,7 +54,28 @@ function applyClaims(conn, claims) {
   conn.tokenExpiresAt = claims.expiresAtSec * 1000;
 }
 
+// trueを返せば認証成立、falseを返せば(なりすまし拒否により)connを
+// 切断済みで呼び出し元は追加の処理をしてはいけない。
 function setupAfterAuth(conn, claims) {
+  // 同一ユーザー(sub+roomId)の既存接続があるかを、conn.authenticatedを
+  // 立てる前に確認する(2026-11追加、セキュリティレビュー)。
+  // sub(identity)はSupabase presence経由で他の参加者にも見える値のため、
+  // 検証なしに「sub一致なら取って代わってよい」とすると、他人のidentityを
+  // 騙ってトークンを取得した攻撃者が、本物の接続を強制的に蹴り出せて
+  // しまう。ownerUserId(認証済みSupabaseユーザーID、クライアントが
+  // 偽装できない)が一致する場合だけ「本人の再接続」として取って代わりを
+  // 許可し、不一致の場合は新しい接続の方を拒否する(既存の正規接続には
+  // 一切触れない)。
+  const existing = findExistingConnection(claims.roomId, claims.userId, conn);
+  if (existing && existing.ownerUserId !== claims.ownerUserId) {
+    closeConn(
+      conn,
+      CLOSE_CODE.AUTH_FAILED,
+      "identity already in use by a different account",
+    );
+    return false;
+  }
+
   conn.authenticated = true;
   applyClaims(conn, claims);
   conn.lastAcceptedMove = null;
@@ -73,15 +95,16 @@ function setupAfterAuth(conn, claims) {
     mode: "coalesce",
   });
 
-  // 同一ユーザー(sub+roomId)の既存接続があれば、新しい接続を優先して
-  // 古い方を切断する(「後勝ち」方式。2026-11設計レビューの結論)。
-  const existing = findExistingConnection(conn.roomId, conn.userId, conn);
+  // 同一ユーザー(sub+roomId、かつownerUserId一致を上で確認済み)の既存
+  // 接続があれば、新しい接続を優先して古い方を切断する(「後勝ち」方式。
+  // 2026-11設計レビューの結論)。
   if (existing) {
     leaveRoom(existing.roomId, existing);
     closeConn(existing, CLOSE_CODE.SUPERSEDED, "superseded by new connection");
   }
   joinRoom(conn.roomId, conn);
   startTickLoopIfNeeded();
+  return true;
 }
 
 function disposeConn(conn) {
@@ -143,7 +166,11 @@ function handleAuthenticate(conn, msg) {
   try {
     const claims = verifyToken(msg.token);
     clearTimeout(conn.authGraceTimer);
-    setupAfterAuth(conn, claims);
+    // setupAfterAuthがfalseを返した場合、なりすまし拒否により既にconnを
+    // 切断済みなので、ここでは何もしてはいけない(戻り値を無視すると、
+    // 現状は実害が無いものの将来この後に処理を追加した際にバグを埋め込み
+    // やすいため、契約通りチェックする。2026-11レビューで指摘)。
+    if (!setupAfterAuth(conn, claims)) return;
   } catch (err) {
     const isRoomRejected =
       err instanceof AuthError && /roomId prefix/.test(err.message);
@@ -176,18 +203,15 @@ function handleMove(conn, msg) {
   }
 
   conn.lastAcceptedMove = { x: msg.x, y: msg.y, at: now };
-  relayMove(conn.roomId, conn, {
-    x: msg.x,
-    y: msg.y,
-    dir: msg.dir,
-    moving: msg.moving,
-    t: msg.t,
-    // teleportも中継する(2026-11追加、Tech Lead指摘)。受信側がこれを
-    // 見れば、補間で滑らせず瞬間移動として描画できる。また
-    // lib/rooms.mjsのisCriticalMovePayloadが送信バッファ詰まり時の
-    // スキップ対象から除外する判定にも使う。
-    ...(msg.teleport ? { teleport: true } : {}),
-  });
+  // 専用のstateイベントがクライアント側でまだ配線されていない間の暫定
+  // 措置として、x/y/dir/moving/t/teleport以外にクライアントが乗せてきた
+  // フィールド(名前・マイク状態等)もそのまま中継する(2026-11、Tech Lead
+  // 指摘。Supabase側のmove(payload: self)と同じ「状態一式を運ぶ」挙動に
+  // 合わせる)。typeだけは制御用フィールドなので中継しない。isValidShape
+  // (lib/validateMove.mjs)は必須フィールドの型だけを見ており、余分な
+  // フィールドの有無では拒否しないため、ここでそのまま展開してよい。
+  const { type: _type, ...rest } = msg;
+  relayMove(conn.roomId, conn, rest);
 }
 
 function handleState(conn, msg) {
@@ -289,6 +313,9 @@ heartbeatTimer.unref?.();
 
 export function forceDisconnect(roomId, userId, code) {
   // adminApi.mjsから呼ばれる。roomId内の該当ユーザーの接続を切断する。
+  // userIdがnullの場合はそのルームの全接続が対象(2026-11追加。プラン
+  // 変更・ルーム変更時の強制退出は、現在誰が接続中か呼び出し側が
+  // 知らないため)。
   let count = 0;
   for (const client of wss.clients) {
     // wss.clientsはwsインスタンスの集合であり、ここに紐づくconnオブジェクトは
@@ -296,7 +323,12 @@ export function forceDisconnect(roomId, userId, code) {
     // 実装簡略化のため、authenticate成功時にws自身へconnへの参照を
     // 持たせておく(下記 conn.ws.__conn 参照)。
     const conn = client.__conn;
-    if (conn && conn.authenticated && conn.roomId === roomId && conn.userId === userId) {
+    if (
+      conn &&
+      conn.authenticated &&
+      conn.roomId === roomId &&
+      (userId === null || conn.userId === userId)
+    ) {
       closeConn(conn, code, "force-disconnected by admin");
       count += 1;
     }

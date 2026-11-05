@@ -85,13 +85,20 @@ export function startAdminServer({ forceDisconnect }) {
         failureLimiter.recordSuccess(ip);
 
         const body = JSON.parse(rawBody);
-        if (typeof body.roomId !== "string" || typeof body.userId !== "string") {
+        // userIdを省略した場合はルーム全体を対象にする(2026-11追加。
+        // Next.js側のプラン変更時・ルーム変更時の強制退出(app/admin/
+        // actions.ts・lib/broadcastForceLeave.ts)は、現在誰が接続中かを
+        // 知らないため特定の1人を名指しできない。roomIdは必須のまま)。
+        if (
+          typeof body.roomId !== "string" ||
+          (body.userId !== undefined && typeof body.userId !== "string")
+        ) {
           res.writeHead(400).end();
           return;
         }
         const count = forceDisconnect(
           body.roomId,
-          body.userId,
+          body.userId ?? null,
           CLOSE_CODE.FORCE_DISCONNECTED,
         );
         res.writeHead(200, { "content-type": "application/json" }).end(
