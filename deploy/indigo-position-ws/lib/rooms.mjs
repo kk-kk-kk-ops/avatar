@@ -58,11 +58,21 @@ function sendLatestOnly(conn, data) {
   conn.ws.send(data);
 }
 
+// 「止まった瞬間」とteleportは稀にしか起きない上に、受信側がこれを
+// 取りこぼすと見た目が不自然になる(止まったのに動き続けて見える、
+// 瞬間移動が補間で滑って見える等)ため、送信バッファが詰まっていても
+// 最新値優先のスキップ対象にしない(2026-11、Tech Lead指摘)。通常の
+// 移動中の更新(次が高頻度ですぐ来る)だけがスキップ対象。
+function isCriticalMovePayload(payload) {
+  return payload.moving === false || payload.teleport === true;
+}
+
 function relayImmediate(roomId, fromConn, type, payload) {
   const set = rooms.get(roomId);
   if (!set) return;
   const data = JSON.stringify({ type, id: fromConn.userId, ...payload });
-  const sender = type === "move" ? sendLatestOnly : send;
+  const sender =
+    type === "move" && !isCriticalMovePayload(payload) ? sendLatestOnly : send;
   for (const conn of set) {
     if (conn === fromConn) continue;
     sender(conn, data);
@@ -110,7 +120,14 @@ function flushTicks() {
       // 実装)でid === 自分のidの要素を無視すればよい(Supabase broadcast
       // が送信者自身に返らない挙動と同じ結果になる)。サーバー側で
       // 接続ごとに除外版を作り直すコストの方が高いため、受信側フィルタ
-      // 方式を採用する。move-batchもmove由来のため最新値優先送信を使う。
+      // 方式を採用する。
+      // 既知の制約(tickモード限定、2026-11時点では未解消): あるユーザーの
+      // 「止まった」状態が乗ったtickが、特定の受信者の送信バッファ詰まりで
+      // スキップされると、その受信者だけはそのユーザーが再度動くまで古い
+      // 位置のまま見える(immediateモードと違い、tickバッファは1回の
+      // flushで消費されるため再送されない)。tickモードは現状デフォルトでは
+      // なく、負荷試験で実際に採用を検討する際に「ユーザーごとの直近状態を
+      // 保持し毎tick必ず含める」方式へ拡張するかを判断する。
       sendLatestOnly(conn, data);
     }
   }

@@ -173,12 +173,50 @@ docker compose up -d --build
 #      INDIGO_WS_ADMIN_DOMAIN=position-ws-admin.yourdomain.com   # 推測困難なサブドメインにする
 #      INDIGO_WS_PORT=8787        # indigo-position-ws/.envのWS_PORTと一致させる
 #      INDIGO_WS_ADMIN_PORT=8788  # indigo-position-ws/.envのADMIN_PORTと一致させる
-# 変更後、LiveKit側のCaddyコンテナを再起動する:
-#   cd ~/<livekit-nodeのディレクトリ> && docker compose restart caddy
 ```
 
 **注意**: `.env`を変更した場合は`docker compose up -d --build`を再実行する
 こと(`restart`だけでは環境変数の変更が反映されない)。
+
+### 3) 既存Caddyfileへの追記を本番VPSへ反映する手順(本番反映自体は別途承認)
+
+この追記(`{$INDIGO_WS_DOMAIN}`/`{$INDIGO_WS_ADMIN_DOMAIN}`ブロック)は、
+LiveKitの音声・映像を扱っている既存のCaddyコンテナに対する変更のため、
+通常の`docker compose restart`(コンテナを一度止めて起動し直す=一瞬
+でも通信が切れる)ではなく、**設定の構文チェック→無停止リロード**の
+手順で反映する。2026-11設計レビューの指示により、以下を必ず守ること。
+
+```bash
+# 事前準備: VPS上のLiveKitノードのディレクトリで作業する
+cd ~/<livekit-nodeのディレクトリ>
+
+# ① 反映前のCaddyfileを必ずバックアップする(ロールバック用)
+cp Caddyfile Caddyfile.bak.$(date +%Y%m%d%H%M%S)
+
+# ② 新しいCaddyfile(本リポジトリのdeploy/livekit/livekit-node/Caddyfile、
+#    追記済みのもの)をVPSへ転送して上書きする
+scp deploy/livekit/livekit-node/Caddyfile user@<ノードIP>:~/<livekit-nodeのディレクトリ>/Caddyfile
+# (事前に①のINDIGO_WS_DOMAIN等の環境変数をLiveKitノードの.envへ
+#  追加しておくこと。上記2)参照)
+
+# ③ 反映前に構文チェックする(ここで止まればまだ何も変わっていない)
+docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+
+# ④ 問題なければ、再起動ではなく reload で反映する(LiveKitの接続を
+#    切らずに設定だけ入れ替えられる)
+docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+# ⑤ 反映後、LiveKit(音声・ビデオ)が既存ルームで正常に使えることを
+#    実際に確認する(reload直後に少なくとも1回は入室して試す)。
+#    あわせて、新しい{$INDIGO_WS_DOMAIN}/{$INDIGO_WS_ADMIN_DOMAIN}
+#    宛てにも疎通確認する(例: curlでHTTPSハンドシェイクが通るか)。
+
+# ⑥ 問題が起きた場合は①のバックアップへ戻し、同様に
+#    caddy validate → caddy reload で復旧する
+# cp Caddyfile.bak.<タイムスタンプ> Caddyfile
+# docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+# docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+```
 
 ### スタンドアロン運用(LiveKitと同居しない場合)
 

@@ -182,6 +182,11 @@ function handleMove(conn, msg) {
     dir: msg.dir,
     moving: msg.moving,
     t: msg.t,
+    // teleportも中継する(2026-11追加、Tech Lead指摘)。受信側がこれを
+    // 見れば、補間で滑らせず瞬間移動として描画できる。また
+    // lib/rooms.mjsのisCriticalMovePayloadが送信バッファ詰まり時の
+    // スキップ対象から除外する判定にも使う。
+    ...(msg.teleport ? { teleport: true } : {}),
   });
 }
 
