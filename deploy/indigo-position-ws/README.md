@@ -5,15 +5,47 @@ GlobyのアバターWS位置同期サーバー(Supabase Realtime Broadcastのmov
 引き続きSupabase Realtimeに残る。このサーバーが担当するのは以下の2種類の
 イベントの中継のみ:
 
-- `move`: 座標(x, y, dir, moving, t, teleport?)
+- `move`: 座標(x, y, dir, moving, t, teleport?)。**2026-11時点では、専用の
+  `state`イベント(下記)がクライアント側でまだ配線されていないため、
+  `components/AvatarSpace.tsx`はindigoモードでもmoveに状態一式(名前・
+  マイク状態等。巨大になりうる画面共有プレビュー画像だけは除外)を
+  乗せて送っている。Supabase側の既存move(`payload: self`)と同じ考え方の
+  暫定措置で、`state`イベントの配線が完了次第、moveは座標専用に縮小する
+  予定(2026-11設計レビューの結論)。
 - `state`: 非位置情報(マイク/車/ステータス等、中身はこのサーバーの関心事では
-  ない不透明なJSON)
+  ない不透明なJSON)。**サーバー側の中継処理(`server.mjs`の`handleState`)は
+  実装済みだが、クライアント側(`lib/indigoPositionClient.ts`)からはまだ
+  一度も呼ばれていない(2026-11時点)**。
 
 **重要な設計方針**: このサーバーはSupabaseの認証情報を一切保持しない。
 ルーム参加権限の確認・マップサイズ/ワープ地点/会議室ゾーン情報の取得は、
-全てNext.js側のトークン発行API(別ブランチで実装予定)がSupabase側で済ませ、
-その結果を署名付きJWTに埋め込んでクライアントへ渡す。このサーバーは
+全てNext.js側のトークン発行API(`app/api/indigo-token/route.ts`)がSupabase側
+で済ませ、その結果を署名付きJWTに埋め込んでクライアントへ渡す。このサーバーは
 JWTの署名検証だけを行えばよい。
+
+## クライアント側の切替(`NEXT_PUBLIC_POSITION_TRANSPORT`)
+
+`components/AvatarSpace.tsx`がSupabase/IndigoProのどちらを使うかは、
+`lib/positionTransport.ts`が読む環境変数`NEXT_PUBLIC_POSITION_TRANSPORT`
+(未設定または`"indigo"`以外は常に`"supabase"`)で全体一括切り替えする
+(2026-11時点ではこの1段階のみ。アカウント単位の切替は未実装、下記参照)。
+
+- **`NEXT_PUBLIC_`接頭辞の環境変数はビルド時にクライアントバンドルへ
+  埋め込まれるため、切替にも切り戻しにも必ずVercelでの再デプロイが必要**
+  (環境変数を変えてダッシュボードで保存しただけでは反映されない)。
+  Vercelの通常ビルドは数分(このプロジェクトの規模ではおおむね2〜5分)
+  程度を目安にすること。
+- **切替の瞬間、Supabase側のまま(旧ページを開いたまま)のユーザーと、
+  再デプロイ後に新しくページを開いた(indigo側になった)ユーザーは、
+  互いの位置情報が一切見えなくなる**(move配信経路が完全に分かれるため。
+  presence・チャット等は引き続き共通なので、入退室やチャットは見える)。
+  本番で切り替える際は、利用者に再読み込みを促す告知を必ず行うこと
+  (本番デプロイ自体は別途承認)。
+- **将来アカウント単位で切り替える場合の拡張方法**: `lib/positionTransport.ts`
+  の`POSITION_TRANSPORT`を単純な環境変数読み取りから、`lib/livekitServers.ts`
+  と同様にアカウントごとの設定を解決する関数に差し替える(DBに列を足さず、
+  コード内のアカウントIDリストで管理する案を含め、2026-11設計レビューで
+  アカウント単位移行が必要になった時点で改めて設計する)。
 
 ## 認証フロー
 
