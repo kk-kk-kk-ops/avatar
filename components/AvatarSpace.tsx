@@ -17,6 +17,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   POSITION_TRANSPORT,
   MOVE_SEND_INTERVAL_MS,
+  USE_LEGACY_INTERPOLATION,
 } from "@/lib/positionTransport";
 import {
   createIndigoPositionClient,
@@ -2158,6 +2159,31 @@ export default function AvatarSpace({
     Map<
       string,
       { currentX: number; currentY: number; targetX: number; targetY: number }
+    >
+  >(new Map());
+  // indigoモード専用の予測補間(先読み)用の状態(2026-11追加)。
+  // peerPositionsRef(上記、実測値のtarget/current)はSupabaseモードの
+  // 既存ロジックのままに保ち、こちらは追加で保持する別系統の状態。
+  // 直近2点の実測値(baseX/Y・prevX/Y、それぞれの送信側時刻t)から速度
+  // (vx/vy, px/秒)を算出し、次の実測値が届くまでの間その速度で位置を
+  // 先読みする。USE_LEGACY_INTERPOLATION(デバッグ切替)がtrueの場合は
+  // 参照されず、Supabaseモードと同じ現行方式(静的ターゲット+EASE_RATE)
+  // のまま描画される。
+  const indigoPeerMotionRef = useRef<
+    Map<
+      string,
+      {
+        // 直近に受信した実測値(次回受信時は「1つ前の受信」として速度
+        // 計算に使う)。
+        latest: { x: number; y: number; t: number; moving: boolean };
+        receivedAt: number; // latestを受信した時刻(Date.now())
+        vx: number;
+        vy: number;
+        // 直近の「通常(フォールバックでない)」実測間隔のEMA(ms)。
+        // predictionCapMsの算出、および次回の「間隔が長すぎるか」判定に使う。
+        typicalIntervalMs: number | null;
+        predictionCapMs: number;
+      }
     >
   >(new Map());
   // 相手ごとに「直近で位置broadcastを受信した時刻」を記録する。在室状況の
@@ -5921,18 +5947,139 @@ export default function AvatarSpace({
     });
   }, []);
 
+  // indigoモードの予測補間(先読み)用の定数(2026-11追加)。
+  const PREDICTION_CAP_MIN_MS = 150;
+  const PREDICTION_CAP_MAX_MS = 500;
+  const DEFAULT_TYPICAL_INTERVAL_MS = 100; // 実測が無い間の既定の仮定(10Hz相当)
+  const TOO_LONG_GAP_MULTIPLIER = 3;
+  const DIR_UNIT_VECTORS: Record<PlayerState["dir"], { dx: number; dy: number }> = {
+    up: { dx: 0, dy: -1 },
+    down: { dx: 0, dy: 1 },
+    left: { dx: -1, dy: 0 },
+    right: { dx: 1, dy: 0 },
+  };
+
+  // 直近2点の実測値から速度(vx/vy, px/秒)を算出し、次の実測値が届くまで
+  // その速度で位置を先読みするための状態を更新する(2026-11追加、
+  // POSITION_TRANSPORT === "indigo"の場合のみ呼ばれる)。Supabaseモードの
+  // peerPositionsRef(実測値のtarget/current)はapplyIncomingPositionが
+  // 従来通り別途更新しており、こちらには一切影響しない。
+  const updateIndigoPeerMotion = useCallback(
+    (
+      id: string,
+      x: number,
+      y: number,
+      dir: PlayerState["dir"],
+      moving: boolean,
+      carVisible: boolean,
+      carImage: string | null | undefined,
+      serverT: number,
+      teleport: boolean,
+    ) => {
+      const map = indigoPeerMotionRef.current;
+      const existing = map.get(id);
+      const maxSpeed = carVisible
+        ? MOVE_SPEED * getCarMoveSpeedMultiplier(carImage || CAR_IMAGES[0])
+        : MOVE_SPEED;
+      const dirFallbackVelocity = () => {
+        const unit = DIR_UNIT_VECTORS[dir] ?? { dx: 0, dy: 0 };
+        return { vx: unit.dx * maxSpeed, vy: unit.dy * maxSpeed };
+      };
+
+      const previous = existing?.latest ?? null;
+      let vx = 0;
+      let vy = 0;
+      let typicalIntervalMs = existing?.typicalIntervalMs ?? null;
+
+      if (!moving) {
+        vx = 0;
+        vy = 0;
+      } else if (teleport || !previous) {
+        // 初回(速度がまだ求められない)、またはteleport直後(古い実測値を
+        // 引きずらない)は、dirと速度定数(車の倍率込み)で代用する。
+        ({ vx, vy } = dirFallbackVelocity());
+      } else {
+        const gapMs = serverT - previous.t;
+        const tooLong =
+          typicalIntervalMs !== null && gapMs > typicalIntervalMs * TOO_LONG_GAP_MULTIPLIER;
+        if (previous.moving === false || tooLong || gapMs <= 0) {
+          // 歩き出しの瞬間(直前が静止)・間隔が異常に空いた場合は、
+          // 止まっていた位置からの古い差分で速度を求めると歩き出しが
+          // 遅く見えるため、dirと速度定数で代用する(typicalIntervalMsは
+          // 更新しない=この異常値を「通常の間隔」に含めない)。
+          ({ vx, vy } = dirFallbackVelocity());
+        } else {
+          const dt = gapMs / 1000;
+          vx = (x - previous.x) / dt;
+          vy = (y - previous.y) / dt;
+          const speed = Math.hypot(vx, vy);
+          if (speed > maxSpeed) {
+            const scale = maxSpeed / speed;
+            vx *= scale;
+            vy *= scale;
+          }
+          typicalIntervalMs =
+            typicalIntervalMs === null
+              ? gapMs
+              : typicalIntervalMs * 0.7 + gapMs * 0.3;
+        }
+      }
+
+      const predictionCapMs = Math.min(
+        PREDICTION_CAP_MAX_MS,
+        Math.max(
+          PREDICTION_CAP_MIN_MS,
+          (typicalIntervalMs ?? DEFAULT_TYPICAL_INTERVAL_MS) * 2,
+        ),
+      );
+
+      map.set(id, {
+        latest: { x, y, t: serverT, moving },
+        receivedAt: Date.now(),
+        vx,
+        vy,
+        typicalIntervalMs,
+        predictionCapMs,
+      });
+    },
+    [],
+  );
+
   // IndigoPro経由でmoveを受信した時の処理(2026-11追加、POSITION_TRANSPORT
   // === "indigo"の場合のみ使われる)。専用のstateイベント(B案)がまだ配線
   // されていない間の暫定措置として、moveのペイロードにPlayerState一式
   // (screenPreviewDataUrlを除く)が乗っているため、Supabase側と同じ
   // applyIncomingPlayerStateで「見た目」情報も同様に反映する。
   const handleIndigoMove = useCallback(
-    (id: string, payload: Omit<MovePayload, "t" | "teleport">) => {
+    (id: string, payload: MovePayload) => {
       if (id === selfId.current) return;
       applyIncomingPosition(id, payload.x, payload.y);
       applyIncomingPlayerState({ ...payload, id } as PlayerState);
+      updateIndigoPeerMotion(
+        id,
+        payload.x,
+        payload.y,
+        payload.dir,
+        payload.moving,
+        !!payload.carVisible,
+        payload.carImage,
+        payload.t,
+        !!payload.teleport,
+      );
+      // teleport受信時は、予測補間を使う場合(USE_LEGACY_INTERPOLATION=false)
+      // に限り見た目も即座にスナップする(補間でじわじわ追従させない)。
+      // Supabaseモード・legacy切替時はpeerPositionsRefの通常のease処理の
+      // ままにする(この分岐はindigoモードでしか呼ばれないため、
+      // Supabaseモードの挙動には影響しない)。
+      if (payload.teleport && !USE_LEGACY_INTERPOLATION) {
+        const pos = peerPositionsRef.current.get(id);
+        if (pos) {
+          pos.currentX = payload.x;
+          pos.currentY = payload.y;
+        }
+      }
     },
-    [applyIncomingPosition, applyIncomingPlayerState],
+    [applyIncomingPosition, applyIncomingPlayerState, updateIndigoPeerMotion],
   );
 
   // ---- Supabase Realtimeチャンネルの接続 ----
@@ -7491,9 +7638,34 @@ export default function AvatarSpace({
         // target座標へ、フレームレートに依存しない速度で滑らかに近づけていく。
         const EASE_RATE = 12; // 大きいほど素早くtargetへ追いつく
         const easeFactor = 1 - Math.exp(-EASE_RATE * dt);
+        // indigoモード(かつUSE_LEGACY_INTERPOLATIONでない)の場合のみ、
+        // 静的なtargetX/Yではなく、直近2点の実測値から求めた速度による
+        // 予測位置へ補間する(2026-11追加、updateIndigoPeerMotion参照)。
+        // Supabaseモード・legacy切替時はpeerPositionsRef.targetX/Yへそのまま
+        // 補間する従来通りの挙動(この分岐に入らない)。
+        const usePredictiveInterpolation =
+          POSITION_TRANSPORT === "indigo" && !USE_LEGACY_INTERPOLATION;
+        const now = Date.now();
         peerPositionsRef.current.forEach((pos, peerId) => {
-          pos.currentX += (pos.targetX - pos.currentX) * easeFactor;
-          pos.currentY += (pos.targetY - pos.currentY) * easeFactor;
+          let targetX = pos.targetX;
+          let targetY = pos.targetY;
+          if (usePredictiveInterpolation) {
+            const motion = indigoPeerMotionRef.current.get(peerId);
+            if (motion) {
+              const elapsedSec =
+                Math.min(now - motion.receivedAt, motion.predictionCapMs) / 1000;
+              targetX = Math.min(
+                Math.max(motion.latest.x + motion.vx * elapsedSec, 0),
+                mapSizeRef.current.width,
+              );
+              targetY = Math.min(
+                Math.max(motion.latest.y + motion.vy * elapsedSec, 0),
+                mapSizeRef.current.height,
+              );
+            }
+          }
+          pos.currentX += (targetX - pos.currentX) * easeFactor;
+          pos.currentY += (targetY - pos.currentY) * easeFactor;
           avatarRefs.current
             .get(peerId)
             ?.updatePosition(pos.currentX, pos.currentY);
