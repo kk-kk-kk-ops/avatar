@@ -14,6 +14,7 @@ import {
   MAX_PAYLOAD_BYTES,
   METRICS_LOG_INTERVAL_MS,
   MOVE_RATE_LIMIT,
+  SPEED_RECOVERY_GRACE_MS,
   STATE_RATE_LIMIT,
   STATE_RATE_WINDOW_MS,
   TELEPORT_RATE_LIMIT,
@@ -34,7 +35,12 @@ import {
 } from "./lib/rooms.mjs";
 import { createRateLimiter } from "./lib/rateLimiter.mjs";
 import { validateMove } from "./lib/validateMove.mjs";
-import { recordMoveAccepted, recordMoveRejected, snapshotMetrics } from "./lib/metrics.mjs";
+import {
+  recordMoveAccepted,
+  recordMoveRecovered,
+  recordMoveRejected,
+  snapshotMetrics,
+} from "./lib/metrics.mjs";
 
 // recordInvalid(4005切断のカウント対象)に含める拒否理由(2026-11見直し:
 // Tech Lead指摘により、再接続直後や境界付近での一時的な誤判定が起こり
@@ -98,6 +104,9 @@ function setupAfterAuth(conn, claims) {
   conn.authenticated = true;
   applyClaims(conn, claims);
   conn.lastAcceptedMove = null;
+  // implausible-speedで連続拒否され始めた時刻(2026-11追加、下の
+  // handleMoveのSPEED_RECOVERY_GRACE_MS参照)。
+  conn.speedRejectionSince = null;
   conn.moveLimiter = createRateLimiter({
     limit: MOVE_RATE_LIMIT,
     windowMs: 1000,
@@ -201,6 +210,26 @@ function handleAuthenticate(conn, msg) {
   }
 }
 
+// 受理したmoveを記録・中継する共通処理。通常受理(validateMove成功)・
+// 速度誤判定からの自動復帰(下記)の両方から呼ばれる。teleportOverrideを
+// trueにすると、実際のmsg.teleportの値に関わらずteleport:trueとして中継する
+// (自動復帰時、受信側に瞬間移動として描画させ、見た目の補間でのスムーズな
+// 追従によってフリーズしたように見える時間を作らないため)。
+function acceptMove(conn, msg, now, { teleportOverride = false } = {}) {
+  recordMoveAccepted();
+  conn.lastAcceptedMove = { x: msg.x, y: msg.y, at: now };
+  conn.speedRejectionSince = null;
+  // 専用のstateイベントがクライアント側でまだ配線されていない間の暫定
+  // 措置として、x/y/dir/moving/t/teleport以外にクライアントが乗せてきた
+  // フィールド(名前・マイク状態等)もそのまま中継する(2026-11、Tech Lead
+  // 指摘。Supabase側のmove(payload: self)と同じ「状態一式を運ぶ」挙動に
+  // 合わせる)。typeだけは制御用フィールドなので中継しない。isValidShape
+  // (lib/validateMove.mjs)は必須フィールドの型だけを見ており、余分な
+  // フィールドの有無では拒否しないため、ここでそのまま展開してよい。
+  const { type: _type, ...rest } = msg;
+  relayMove(conn.roomId, conn, teleportOverride ? { ...rest, teleport: true } : rest);
+}
+
 function handleMove(conn, msg) {
   if (!conn.moveLimiter.tryConsume()) return; // 上限超過分は静かに間引く
 
@@ -218,6 +247,26 @@ function handleMove(conn, msg) {
     if (INVALID_COUNT_REASONS.has(result.reason)) {
       recordInvalid(conn);
     }
+
+    // implausible-speedによる連続拒否からの自動復帰(2026-11追加)。
+    // isValidShape/isWithinMapBoundsは既に通過した座標のみが対象
+    // (validateMoveの判定順序上、ここに来る時点で保証されている)。
+    // 乱用防止のため、通常のteleportと同じ予算(teleportLimiter)を消費
+    // できた場合のみ復帰させる(無制限に多用できないようにする)。
+    if (result.reason === "implausible-speed") {
+      if (conn.speedRejectionSince === null) {
+        conn.speedRejectionSince = now;
+      } else if (
+        now - conn.speedRejectionSince >= SPEED_RECOVERY_GRACE_MS &&
+        conn.teleportLimiter.tryConsume()
+      ) {
+        recordMoveRecovered();
+        console.warn(
+          `[move-recovered] room=${conn.roomId} user=${conn.userId} after implausible-speed streak`,
+        );
+        acceptMove(conn, msg, now, { teleportOverride: true });
+      }
+    }
     return;
   }
 
@@ -225,17 +274,7 @@ function handleMove(conn, msg) {
     if (!conn.teleportLimiter.tryConsume()) return; // teleportの頻度超過は静かに間引く
   }
 
-  recordMoveAccepted();
-  conn.lastAcceptedMove = { x: msg.x, y: msg.y, at: now };
-  // 専用のstateイベントがクライアント側でまだ配線されていない間の暫定
-  // 措置として、x/y/dir/moving/t/teleport以外にクライアントが乗せてきた
-  // フィールド(名前・マイク状態等)もそのまま中継する(2026-11、Tech Lead
-  // 指摘。Supabase側のmove(payload: self)と同じ「状態一式を運ぶ」挙動に
-  // 合わせる)。typeだけは制御用フィールドなので中継しない。isValidShape
-  // (lib/validateMove.mjs)は必須フィールドの型だけを見ており、余分な
-  // フィールドの有無では拒否しないため、ここでそのまま展開してよい。
-  const { type: _type, ...rest } = msg;
-  relayMove(conn.roomId, conn, rest);
+  acceptMove(conn, msg, now);
 }
 
 function handleState(conn, msg) {
@@ -339,9 +378,9 @@ heartbeatTimer.unref?.();
 // 日次の健全性確認ができるよう、累積件数を理由別に出力する(プロセス内の
 // 累積値であり、再起動でリセットされる)。
 const metricsTimer = setInterval(() => {
-  const { moveAccepted, moveRejectedByReason } = snapshotMetrics();
+  const { moveAccepted, moveRecovered, moveRejectedByReason } = snapshotMetrics();
   console.log(
-    `[metrics] rooms=${roomCount()} connections=${connectionCount()} moveAccepted=${moveAccepted} moveRejectedByReason=${JSON.stringify(moveRejectedByReason)}`,
+    `[metrics] rooms=${roomCount()} connections=${connectionCount()} moveAccepted=${moveAccepted} moveRecovered=${moveRecovered} moveRejectedByReason=${JSON.stringify(moveRejectedByReason)}`,
   );
 }, METRICS_LOG_INTERVAL_MS);
 metricsTimer.unref?.();
