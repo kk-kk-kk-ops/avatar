@@ -85,6 +85,12 @@ export function createLoadTestClient({
   let y = mapH / 2 + (Math.random() - 0.5) * 200;
   let dir = randomDir();
   let lastDirChangeAt = 0;
+  // 配信取りこぼし率の集計用(2026-11追加)。sentCountは自分が実際に送信
+  // したmove件数、receivedCount/receivedBytesは他の参加者から実際に
+  // 受信した件数・バイト数。run.mjs側で、同じルームの他クライアントの
+  // sentCountの合計(=本来届くはずだった件数)と突き合わせて配信成功率を
+  // 算出する。
+  const counters = { sentCount: 0, receivedCount: 0, receivedBytes: 0 };
 
   function scheduleReconnect() {
     if (disposed || reconnectTimer) return;
@@ -119,18 +125,22 @@ export function createLoadTestClient({
     }, 300);
 
     socket.addEventListener("message", (event) => {
+      const raw = event.data.toString();
+      counters.receivedBytes += Buffer.byteLength(raw);
       let msg;
       try {
-        msg = JSON.parse(event.data.toString());
+        msg = JSON.parse(raw);
       } catch {
         return;
       }
       const now = Date.now();
       if (msg.type === "move" && typeof msg.t === "number" && msg.id !== userId) {
+        counters.receivedCount += 1;
         onLatencySample?.(now - msg.t);
       } else if (msg.type === "move-batch" && Array.isArray(msg.players)) {
         for (const p of msg.players) {
           if (p.id !== userId && typeof p.t === "number") {
+            counters.receivedCount += 1;
             onLatencySample?.(now - p.t);
           }
         }
@@ -174,6 +184,7 @@ export function createLoadTestClient({
         ...extra,
       }),
     );
+    counters.sentCount += 1;
   }
 
   function startMoving(socket) {
@@ -209,6 +220,9 @@ export function createLoadTestClient({
   }
 
   return {
+    roomId,
+    userId,
+    counters,
     start: connect,
     stop() {
       disposed = true;
