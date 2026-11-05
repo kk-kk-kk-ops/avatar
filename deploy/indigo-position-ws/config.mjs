@@ -35,6 +35,12 @@ export const JWT = {
 
 // ---- WebSocketサーバー ----
 export const WS_PORT = envInt("WS_PORT", 8787);
+// 待ち受けアドレス(2026-11追加、Tech Lead指摘)。本番・スタンドアロン
+// どちらもCaddyと同じVPS上に`network_mode: host`で同居する構成のため、
+// 既定は127.0.0.1(ループバックのみ)にし、Caddy経由(reverse_proxy
+// localhost:...)以外からの直接アクセスを受け付けない。WS_PORT/ADMIN_PORT
+// 両方がこの値を共有する(個別に分ける必要が生じた場合のみ分離を検討)。
+export const BIND_HOST = envStr("BIND_HOST", "127.0.0.1");
 // ping/pongによる無応答接続の切断間隔(ms)。この間隔の前回チェックから
 // pongが一度も返っていない接続はterminate()する(2026-11追加、Tech Lead
 // レビューの指摘。死んだ接続がルームに残り続けるのを防ぐ)。ついでに、

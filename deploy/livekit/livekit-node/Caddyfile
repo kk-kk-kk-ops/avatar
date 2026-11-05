@@ -15,14 +15,17 @@
 # アバター位置情報WSサーバー(deploy/indigo-position-ws/、2026-11追加)。
 # 同じVPS上でLiveKitと同居させるため、専用のCaddyコンテナを別途立てずに
 # このCaddyへ追記する(1台のVPSでポート80/443を奪い合わないため)。
-{$INDIGO_WS_DOMAIN} {
-  reverse_proxy localhost:{$INDIGO_WS_PORT}
+# ドメイン名・ポートは環境変数ではなく直接記載する(2026-11設計レビュー:
+# .envの変更はcaddy reloadでは反映されず、Caddyコンテナの再作成
+# =LiveKitの一時停止を伴うため、.envを経由しない方式にした)。
+position-ws.grovina-studio.com {
+  reverse_proxy localhost:8787
 }
 
 # /internal/disconnect(Next.js専用の管理API)。公開ドメインではあるが、
 # 推測困難なサブドメインに置き、実際の防御はHMAC署名+タイムスタンプ
 # (indigo-position-ws側)で行う(2026-11設計レビュー: Vercelの送信元IPが
 # 固定できないため、IP制限ではなくシークレットベースの認証を主とする方針)。
-{$INDIGO_WS_ADMIN_DOMAIN} {
-  reverse_proxy localhost:{$INDIGO_WS_ADMIN_PORT}
+ws-admin.grovina-studio.com {
+  reverse_proxy localhost:8788
 }
