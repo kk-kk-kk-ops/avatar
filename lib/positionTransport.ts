@@ -58,3 +58,20 @@ function resolveMoveSendIntervalMs(): number {
 }
 
 export const MOVE_SEND_INTERVAL_MS = resolveMoveSendIntervalMs();
+
+// indigoモード専用の予測補間(先読み)を使うかどうかのデバッグ切替
+// (2026-11追加)。既定は新しい予測補間。ブラウザのコンソールで
+// `localStorage.setItem("globy-debug-interpolation", "legacy")`してから
+// ページを再読み込みすると、現行の静的ターゲット+EASE_RATE方式に戻せる
+// (`localStorage.removeItem("globy-debug-interpolation")`で新方式に戻る)。
+// Supabaseモードの挙動には一切影響しない(そちらは常に現行方式のまま)。
+function resolveUseLegacyInterpolation(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem("globy-debug-interpolation") === "legacy";
+  } catch {
+    return false;
+  }
+}
+
+export const USE_LEGACY_INTERPOLATION = resolveUseLegacyInterpolation();
