@@ -343,6 +343,61 @@ docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 `INDIGO_WS_TEST_SECRET`等)で第2のコンテナとして起動する。本番とは
 別のVPS(または別のCaddyドメイン)を使うことを推奨する。
 
+## 緊急時の手順
+
+### implausible-speed自動復帰(`SPEED_RECOVERY_GRACE_MS`)を無効化する
+
+自動復帰機能(連続する`implausible-speed`拒否を一定時間後にteleport扱いで
+受理する仕組み、上の「implausible-speedによる連続拒否からの自動復帰」
+参照)に問題が見つかった場合、コードを変更せず`.env`の値を変更するだけで
+無効化できる。`0`にすると逆に即座に発動してしまうため、現実的に到達
+しない程度の大きな値にすること。
+
+```bash
+# VPS上のindigo-position-wsディレクトリで実行する
+cd ~/indigo-position-ws
+
+# .envに既に行がある場合は値を書き換え、無い場合は追記する
+# (sedのs///で一致しなかった場合のために、grep -qで存在確認してから分岐する)
+if grep -q "^SPEED_RECOVERY_GRACE_MS=" .env; then
+  sed -i "s/^SPEED_RECOVERY_GRACE_MS=.*/SPEED_RECOVERY_GRACE_MS=999999999/" .env
+else
+  echo "SPEED_RECOVERY_GRACE_MS=999999999" >> .env
+fi
+
+# .envの変更はcaddy reloadと違い、コンテナの再作成が必要
+# (env_fileはコンテナ起動時にしか読み込まれないため)
+docker compose up -d --build
+```
+
+**無効化できたことの確認方法**:
+
+```bash
+# 1) .envの値を確認する
+grep "^SPEED_RECOVERY_GRACE_MS=" .env
+
+# 2) 起動直後のログで、意図した値が読み込まれているか直接は分からないため
+#    (config.mjsは値をログに出力していない)、実際にimplausible-speedを
+#    誘発する動作(急激なワープのような移動)をして、[move-recovered]ログが
+#    一定時間待っても出ないことを確認する。通常は[move-rejected]
+#    (reason=implausible-speed)が出続け、復帰しないまま数秒で自然に収まる
+#    (dtが伸びることで速度計算上の閾値を自然に下回るため)。
+docker logs indigo-position-ws-indigo-position-ws-1 --tail 50 | grep "move-recovered\|move-rejected"
+```
+
+再度有効化する場合は、同じ`.env`の値を既定の`2000`(または省略して行ごと
+削除)に戻し、`docker compose up -d --build`を再実行する。
+
+### 根本的に切り戻す(コードごと)
+
+```bash
+# ローカルのリポジトリで実行する(マージコミットのハッシュは都度確認)
+git revert -m 1 <マージコミットのハッシュ>
+git push origin main
+```
+
+その後、通常のデプロイ手順(上記「デプロイ手順」参照)でVPSへ反映する。
+
 ## ファイアウォール
 
 `deploy/livekit/INDIGO_SETUP.md`のLiveKitノード用設定に加え、以下を開放する:
