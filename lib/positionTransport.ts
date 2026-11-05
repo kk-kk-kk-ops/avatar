@@ -47,7 +47,8 @@ function resolveMoveSendIntervalMs(): number {
       );
       if (override) {
         const n = Number(override);
-        if (Number.isFinite(n) && n > 0) return n;
+        // 50ms未満は過大な送信頻度につながるため無視する(Tech Lead指摘)。
+        if (Number.isFinite(n) && n >= 50) return n;
       }
     } catch {
       // プライベートウィンドウ等でlocalStorageが使えない場合は既定値のまま
