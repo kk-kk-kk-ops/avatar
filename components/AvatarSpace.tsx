@@ -35,6 +35,7 @@ import {
   MOVE_SPEED,
   MESSAGE_MAX_LENGTH,
   findMeetingZoneId,
+  isPointInZoneWithMargin,
   rectIntersectsObstacle,
   rectIntersectsRect,
   resolveSpawnPosition,
@@ -1142,7 +1143,7 @@ export default function AvatarSpace({
         : undefined;
     if (self.transcriptionStatus === next) return;
     self.transcriptionStatus = next;
-    channelRef.current?.track(self);
+    requestPresenceTrack();
     setPlayers((prev) => {
       const current = prev[self.id];
       if (!current) return prev;
@@ -1855,6 +1856,8 @@ export default function AvatarSpace({
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const lastTrackedZoneId = useRef<string | null>(null);
+  // pointZoneId算出のヒステリシス用(2026-11、下のPOINT_ZONE_HYSTERESIS_PX参照)。
+  const lastPointZoneIdRef = useRef<string | null>(null);
 
   // ---- 会議室(conference)ゾーンの入室確認・施錠機能 ----
   // 「いいえ」を選んだ相手は、当たり判定から完全に外れるまで再表示しない
@@ -1918,6 +1921,78 @@ export default function AvatarSpace({
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+
+  // presence(track())送信の一元化(2026-11)。Supabase Realtimeの制限
+  // (クライアントあたり30秒間に5回まで、超えるとチャンネルごと強制切断
+  // される)に対し、ぴったりの5ではなく4までを自分の上限とする(Tech Lead
+  // 指示により余裕を持たせる)。直近の送信時刻をスライディングウィンドウで
+  // 保持し、上限に達している間は実送信を遅らせる。track()を直接呼んでいた
+  // 箇所(入室時の初回track含む)は全てこの関数経由に統一する(引数は取らず、
+  // 送信時点のselfState.currentを常に読む。呼び出し側は事前にselfState.
+  // currentを更新してから呼べばよい)。
+  const PRESENCE_TRACK_LIMIT = 4;
+  const PRESENCE_TRACK_WINDOW_MS = 30_000;
+  const presenceTrackTimestampsRef = useRef<number[]>([]);
+  const presenceTrackFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  // レート制限超過による切断の直後の再接続時にだけ立てるフラグ(2026-11
+  // 追加)。この場合、手元の送信記録は意図的に前の接続から引き継ぐが
+  // (ループ防止)、Supabase側の制限は接続単位のため、新しい接続での
+  // 最初の1回(=入室登録)だけは記録に関わらず即座に送ってよい。これが
+  // 無いと、枠が埋まった状態を引き継いだ直後は入室登録自体が遅延し、
+  // 管理画面の在室表示から一時的に消えてしまう。2回目以降は通常通り
+  // 記録に従う。
+  const forceNextPresenceTrackRef = useRef(false);
+  const requestPresenceTrack = useCallback(() => {
+    const channel = channelRef.current;
+    const self = selfState.current;
+    if (!channel || !self) return;
+    const now = Date.now();
+    const timestamps = presenceTrackTimestampsRef.current.filter(
+      (t) => now - t < PRESENCE_TRACK_WINDOW_MS,
+    );
+    if (forceNextPresenceTrackRef.current) {
+      forceNextPresenceTrackRef.current = false;
+      // 強制送信分もSupabase側のカウントには実際に乗るため、こちらの
+      // 記録にも反映しておく(次回以降の判定を正しく保つため)。
+      timestamps.push(now);
+      presenceTrackTimestampsRef.current = timestamps;
+      channel.track(self);
+      return;
+    }
+    if (timestamps.length < PRESENCE_TRACK_LIMIT) {
+      timestamps.push(now);
+      presenceTrackTimestampsRef.current = timestamps;
+      channel.track(self);
+      return;
+    }
+    presenceTrackTimestampsRef.current = timestamps;
+    // 既に保留中のフラッシュがあれば、新たに予約し直さなくても最新の
+    // selfState.currentを拾って送られるため何もしない(複数リクエストを
+    // 1つに合流させる)。
+    if (presenceTrackFlushTimerRef.current) return;
+    const oldest = timestamps[0];
+    const waitMs = PRESENCE_TRACK_WINDOW_MS - (now - oldest) + 50; // 枠が空くまでの時間+念のための余裕
+    presenceTrackFlushTimerRef.current = setTimeout(() => {
+      presenceTrackFlushTimerRef.current = null;
+      requestPresenceTrack();
+    }, waitMs);
+  }, []);
+  // チャンネルの切断(退室・部屋切替・アンマウント)・再接続のたびに呼ぶ。
+  // 保留中のフラッシュタイマーを確実に止めないと、別のチャンネル
+  // インスタンス(部屋切替後の新しい接続等)に対して意図せずtrack()が
+  // 発火してしまう(2026-11報告のレビューで指摘)。送信回数の記録も
+  // チャンネルが変わるたびにリセットし、直前の接続の履歴で新しい接続の
+  // 初回track()が遅延しないようにする。
+  const resetPresenceTrackLimiter = useCallback(() => {
+    if (presenceTrackFlushTimerRef.current) {
+      clearTimeout(presenceTrackFlushTimerRef.current);
+      presenceTrackFlushTimerRef.current = null;
+    }
+    presenceTrackTimestampsRef.current = [];
+    forceNextPresenceTrackRef.current = false;
+  }, []);
   // 「自分が設定しているステータス」(設定画面で選んだ値)。会議室への
   // 入退室・タブの非表示/復帰による自動ステータス変更(共にapplyAuto
   // PresenceStatus経由)はselfState.current.statusを一時的に書き換える
@@ -4857,7 +4932,7 @@ export default function AvatarSpace({
           setScreenSharing(false);
           if (selfState.current) {
             selfState.current.sharingScreen = false;
-            channelRef.current?.track(selfState.current);
+            requestPresenceTrack();
           }
           setShareError(t("screenShare.disconnected"));
         }
@@ -5341,7 +5416,7 @@ export default function AvatarSpace({
             selfState.current.y = resolved.y;
             const updated = selfState.current;
             setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
-            channelRef.current?.track(updated);
+            requestPresenceTrack();
           }
         }
 
@@ -5444,7 +5519,7 @@ export default function AvatarSpace({
     if (selfState.current) {
       selfState.current.sharingScreen = false;
       selfState.current.screenPreviewDataUrl = null;
-      channelRef.current?.track(selfState.current);
+      requestPresenceTrack();
     }
     const room = livekitRoomRef.current;
     if (room) {
@@ -5535,7 +5610,7 @@ export default function AvatarSpace({
 
       if (selfState.current) {
         selfState.current.sharingScreen = true;
-        channelRef.current?.track(selfState.current);
+        requestPresenceTrack();
       }
 
       // 画面共有は同じ会議室内では同時に1人まで(必須機能。会議室の外・
@@ -5562,7 +5637,7 @@ export default function AvatarSpace({
       captureFirstFrame(track.mediaStreamTrack).then((dataUrl) => {
         if (dataUrl && selfState.current) {
           selfState.current.screenPreviewDataUrl = dataUrl;
-          channelRef.current?.track(selfState.current);
+          requestPresenceTrack();
           channelRef.current?.send({
             type: "broadcast",
             event: "screen-preview",
@@ -5612,7 +5687,7 @@ export default function AvatarSpace({
     setInCall(false);
     if (selfState.current) {
       selfState.current.inCall = false;
-      channelRef.current?.track(selfState.current);
+      requestPresenceTrack();
     }
     const room = livekitRoomRef.current;
     if (room) {
@@ -5663,7 +5738,7 @@ export default function AvatarSpace({
 
       if (selfState.current) {
         selfState.current.inCall = true;
-        channelRef.current?.track(selfState.current);
+        requestPresenceTrack();
       }
 
       // 以前はカメラのトラックが終了した際に自動でビデオ通話をOFFにして
@@ -6373,7 +6448,7 @@ export default function AvatarSpace({
         })
         // webrtc-offer/webrtc-answer/webrtc-iceの自前シグナリングは
         // LiveKit移行(Phase2〜4)により不要になったためPhase6で削除した。
-        .subscribe(async (status) => {
+        .subscribe(async (status, err) => {
           if (status === "SUBSCRIBED" && selfState.current) {
             // 人数上限チェック(プランごとのルーム定員)。presenceの状態は
             // SUBSCRIBED時点で既にサーバーから受け取っているものを見る。
@@ -6390,7 +6465,12 @@ export default function AvatarSpace({
               setJoined(false);
               return;
             }
-            await channel.track(selfState.current);
+            // 入室時の初回presence送信も、他の箇所と同じ送信枠でカウント
+            // する(2026-11報告のレビューで指摘。以前はここだけchannel.
+            // track()を直接呼んでおり、回数制限の対象外になっていた)。
+            // この時点ではresetPresenceTrackLimiter()直後で枠は必ず空いて
+            // いるため、遅延は発生しない。
+            requestPresenceTrack();
           }
           if (
             status === "CHANNEL_ERROR" ||
@@ -6403,10 +6483,42 @@ export default function AvatarSpace({
             // 「tried to join multiple times」エラーになるため避ける)。
             if (channelRef.current !== channel) return; // すでに別の接続に置き換わっている
             if (reconnectTimer) return; // 予約は1つだけにする
+            // presenceの回数制限(クライアントあたり30秒5回)はSupabase側の
+            // 公式情報によると接続(WebSocket)単位のため、再接続自体は
+            // チャット等を止めないよう通常通り短い待機(1.5秒)で行う
+            // (Tech Lead指示、2026-11)。ただし切断理由がこの制限超過
+            // だった場合に限り、手元の送信記録(30秒4回の枠)をリセットせず
+            // 次の接続にそのまま引き継ぐことで、「超過→切断→再接続→即
+            // 超過」のループを防ぐ(新しい接続側は制限が無くても、こちらの
+            // 記録上は枠がまだ埋まっているとみなし、自然に数秒〜数十秒分
+            // 送信を抑える)。Supabase側のエラー文言が変わった場合に
+            // 気付けるよう、検知時はconsoleにログを残す。
+            const isPresenceRateLimitError =
+              typeof err?.message === "string" &&
+              /rate.?limit/i.test(err.message);
+            if (isPresenceRateLimitError) {
+              console.warn(
+                "[presence] rate limit error detected on disconnect, carrying over send history to next connection:",
+                err?.message,
+              );
+            }
             reconnectTimer = setTimeout(() => {
               reconnectTimer = null;
               if (cancelled) return;
               channel.unsubscribe();
+              if (isPresenceRateLimitError) {
+                // 記録は引き継ぐが(ループ防止)、Supabase側の制限は接続
+                // 単位のため、新しい接続での最初の1回(=入室登録)だけは
+                // 記録に関わらず即座に送れるようにする(2026-11追加。無いと
+                // 入室登録自体が遅延し、管理画面の在室表示から一時的に
+                // 消えてしまう)。
+                forceNextPresenceTrackRef.current = true;
+              } else {
+                // 切断前の送信回数を次の接続に持ち越さない(2026-11報告の
+                // レビューで指摘。持ち越すと、切断直前に送信が集中していた
+                // 場合、再接続後の初回track()が最大30秒近く遅延しうった)。
+                resetPresenceTrackLimiter();
+              }
               connectChannel();
             }, 1500);
           }
@@ -6418,12 +6530,23 @@ export default function AvatarSpace({
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      // 保留中のpresence送信タイマーも、このチャンネルの終了(退室・部屋
+      // 切替・アンマウント)と同時に必ず止める(2026-11報告のレビューで
+      // 指摘。放置すると、部屋切替後に新しいチャンネルへ向けて意図しない
+      // track()が発火することがあった)。
+      resetPresenceTrackLimiter();
       pendingLeaveTimersRef.current.forEach((timer) => clearTimeout(timer));
       pendingLeaveTimersRef.current.clear();
       channelRef.current?.unsubscribe();
       channelRef.current = null;
     };
-  }, [joined, roomId, maxPeoplePerRoom]);
+  }, [
+    joined,
+    roomId,
+    maxPeoplePerRoom,
+    requestPresenceTrack,
+    resetPresenceTrackLimiter,
+  ]);
 
   // ---- 在室状況の自己修復 ----
   // 何らかの理由でpresenceのsync/leaveイベントを取りこぼした場合に備え、
@@ -6572,7 +6695,7 @@ export default function AvatarSpace({
     const onVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
       if (selfState.current && channelRef.current) {
-        channelRef.current.track(selfState.current);
+        requestPresenceTrack();
         channelRef.current.send({
           type: "broadcast",
           event: "move",
@@ -6599,7 +6722,7 @@ export default function AvatarSpace({
     selfState.current.carVisible = !selfState.current.carVisible;
     const updated = selfState.current;
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
-    channelRef.current?.track(updated);
+    requestPresenceTrack();
   }, []);
 
   // ---- キーボード入力 ----
@@ -6874,7 +6997,7 @@ export default function AvatarSpace({
                 // よう、下の出入り判定effectのtrack()を待たずここで送る。
                 if (self.lockedMeetingZoneId === zone.id) {
                   self.lockedMeetingZoneId = null;
-                  channelRef.current?.track(self);
+                  requestPresenceTrack();
                 }
                 // 他の会議室にも所属していなければ、在席ステータスを
                 // 自分が設定している値に戻す(タブ非表示による自動離席中
@@ -6991,7 +7114,7 @@ export default function AvatarSpace({
                   [self.id]: { ...current, x: self.x, y: self.y },
                 };
               });
-              channelRef.current?.track(self);
+              requestPresenceTrack();
             }, 180);
             window.setTimeout(() => setWarpFading(false), 500);
           } else {
@@ -7008,11 +7131,39 @@ export default function AvatarSpace({
         // 優先する(中心点の点判定だけだと境界ぴったりで所属がゆらぐため)。
         // それが無ければ(作業エリア・全体アナウンスエリアなど)従来通り
         // 中心点の点判定にフォールバックする。
-        const pointZoneId = findMeetingZoneId(
-          self.x,
-          self.y,
-          meetingZonesRef.current,
-        );
+        // 境界ぴったりでの判定ゆらぎ対策(2026-11)。work/announcementは
+        // 当たり判定ベースの補正を持たないため、境界線上でpointZoneIdが
+        // 毎フレームin/outを繰り返すと、下のtrack()が無制限に連打され、
+        // Supabaseのレート制限(クライアントあたり30秒5回)に抵触していた。
+        // 既に居るとみなしているゾーンは、境界をPOINT_ZONE_HYSTERESIS_PX
+        // 分広げてから「出た」と判定することで、境界上のジッターを吸収する。
+        // ヒステリシスはwork/announcementのみに限定する(meeting/conference
+        // はeligiblePeerIds(LiveKitの音声・映像購読範囲)の判定にも
+        // self.meetingZoneIdが使われており、この2種のゾーンの判定基準を
+        // 変えるとLiveKit側の挙動に影響してしまうため、Tech Lead指示により
+        // 従来通り中心点の厳密な境界判定のままにする。meetingは既に
+        // stickyMeetingZone(当たり判定ベース)が優先されるため実害はないが、
+        // conferenceは従来からpointZoneIdのフォールバックを経由しており、
+        // ここでヒステリシスを効かせると退室判定が最大6px遅れてしまう)。
+        const POINT_ZONE_HYSTERESIS_PX = 6;
+        const stickyPointZone =
+          lastPointZoneIdRef.current &&
+          meetingZonesRef.current.find(
+            (z) =>
+              z.id === lastPointZoneIdRef.current &&
+              (z.kind === "work" || z.kind === "announcement"),
+          );
+        const pointZoneId =
+          stickyPointZone &&
+          isPointInZoneWithMargin(
+            self.x,
+            self.y,
+            stickyPointZone,
+            POINT_ZONE_HYSTERESIS_PX,
+          )
+            ? stickyPointZone.id
+            : findMeetingZoneId(self.x, self.y, meetingZonesRef.current);
+        lastPointZoneIdRef.current = pointZoneId;
         const stickyMeetingZone = meetingZonesRef.current.find(
           (z) => z.kind === "meeting" && insideMeetingZoneIdsRef.current.has(z.id),
         );
@@ -7025,7 +7176,7 @@ export default function AvatarSpace({
           // 中心点ベースの判定で境界の基準が異なるため、解錠処理は持たせない
           // (異常切断時はpresenceのleave検知で自動解錠される)。
           // presence情報も更新しておく(入室直後の相手にも最新状態が伝わるように)
-          channelRef.current?.track(self);
+          requestPresenceTrack();
           // 画面共有中に会議室へ入室した場合、その場で改めて排他制御の
           // 主張を送り直す(通常はconfirmMeetingEntry側で行うが、稀に
           // このパスで先にzoneIdが確定した場合の保険。排他制御は会議室
@@ -7274,7 +7425,7 @@ export default function AvatarSpace({
         return { ...prev, [self.id]: { ...current, announcementOn: false } };
       });
     }
-    channelRef.current?.track(self);
+    requestPresenceTrack();
     // 移動loop側の同種の更新箇所と同じ理由で、自分のplayers上のエントリ
     // にもmeetingZoneIdを反映する(会議室=conferenceは常にこの確認
     // ポップアップ経由で入室するため、ここで反映しないと会議室入室時は
@@ -7372,7 +7523,7 @@ export default function AvatarSpace({
       const lockedMeetingZoneAt = nowLocking ? Date.now() : undefined;
       self.lockedMeetingZoneId = lockedMeetingZoneId;
       self.lockedMeetingZoneAt = lockedMeetingZoneAt;
-      channelRef.current?.track(self);
+      requestPresenceTrack();
       // presenceの同期を待たず、broadcastで即座に他の参加者へ通知する
       // (2026-09報告: presenceだけだと反映に数百ms〜のラグがあったため)。
       // presence(track)自体も引き続き行い、後から入室した人や、broadcastを
@@ -7411,7 +7562,7 @@ export default function AvatarSpace({
     if (locker?.id === self.id) return;
     self.lockedMeetingZoneId = null;
     self.lockedMeetingZoneAt = undefined;
-    channelRef.current?.track(self);
+    requestPresenceTrack();
     setPlayers((prev) => {
       const current = prev[self.id];
       if (!current) return prev;
@@ -7565,7 +7716,7 @@ export default function AvatarSpace({
       setMicEnabled(next);
       if (selfState.current) {
         selfState.current.micOn = next;
-        channelRef.current?.track(selfState.current);
+        requestPresenceTrack();
         // selfState.current(ref)を書き換えただけではReactが再レンダリング
         // しないため、その場で動かなくてもマイクアイコンの表示/非表示が
         // 即時に反映されるよう、players Stateも明示的に更新する。
@@ -7593,7 +7744,7 @@ export default function AvatarSpace({
     setAnnouncementOn(next);
     if (selfState.current) {
       selfState.current.announcementOn = next;
-      channelRef.current?.track(selfState.current);
+      requestPresenceTrack();
       const self = selfState.current;
       setPlayers((prev) => {
         const current = prev[self.id];
@@ -8817,7 +8968,7 @@ export default function AvatarSpace({
       const self = selfState.current;
       if (self) {
         self.recordingOn = true;
-        channelRef.current?.track(self);
+        requestPresenceTrack();
         setPlayers((prev) => {
           const current = prev[self.id];
           if (!current) return prev;
@@ -8863,7 +9014,7 @@ export default function AvatarSpace({
       const self = selfState.current;
       if (self) {
         self.recordingOn = false;
-        channelRef.current?.track(self);
+        requestPresenceTrack();
         setPlayers((prev) => {
           const current = prev[self.id];
           if (!current) return prev;
@@ -9056,7 +9207,7 @@ export default function AvatarSpace({
     setMicEnabled(false);
     if (selfState.current) {
       selfState.current.micOn = false;
-      channelRef.current?.track(selfState.current);
+      requestPresenceTrack();
       const self = selfState.current;
       setPlayers((prev) => {
         const current = prev[self.id];
@@ -9304,7 +9455,7 @@ export default function AvatarSpace({
     isWatchingScreenRef.current = isWatching;
     if (selfState.current && selfState.current.watchingScreen !== isWatching) {
       selfState.current.watchingScreen = isWatching;
-      channelRef.current?.track(selfState.current);
+      requestPresenceTrack();
     }
   }, [players, eligiblePeerIds, remoteScreenStreams, joined]);
 
@@ -9537,7 +9688,7 @@ export default function AvatarSpace({
     selfState.current.status = status;
     const updated = selfState.current;
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
-    channelRef.current?.track(updated);
+    requestPresenceTrack();
   }, []);
 
   // タブ非表示からの復帰時など、「離席中」等の一時的な自動ステータスを
@@ -9964,7 +10115,7 @@ export default function AvatarSpace({
     Object.assign(selfState.current, patch);
     const updated = selfState.current;
     setPlayers((prev) => ({ ...prev, [updated.id]: { ...updated } }));
-    channelRef.current?.track(updated);
+    requestPresenceTrack();
   }, []);
 
   // アバター/アイコンの連打対策(2026-10追加)。選択・切り替え直後から
