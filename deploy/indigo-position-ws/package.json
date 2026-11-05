@@ -6,7 +6,8 @@
   "description": "GlobyのアバターWS位置同期サーバー(Supabase Realtime moveの移行先、第1段階)",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs"
+    "check": "node --check server.mjs",
+    "loadtest": "node loadtest/run.mjs"
   },
   "engines": {
     "node": ">=18"
