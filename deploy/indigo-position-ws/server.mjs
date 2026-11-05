@@ -313,6 +313,9 @@ heartbeatTimer.unref?.();
 
 export function forceDisconnect(roomId, userId, code) {
   // adminApi.mjsから呼ばれる。roomId内の該当ユーザーの接続を切断する。
+  // userIdがnullの場合はそのルームの全接続が対象(2026-11追加。プラン
+  // 変更・ルーム変更時の強制退出は、現在誰が接続中か呼び出し側が
+  // 知らないため)。
   let count = 0;
   for (const client of wss.clients) {
     // wss.clientsはwsインスタンスの集合であり、ここに紐づくconnオブジェクトは
@@ -320,7 +323,12 @@ export function forceDisconnect(roomId, userId, code) {
     // 実装簡略化のため、authenticate成功時にws自身へconnへの参照を
     // 持たせておく(下記 conn.ws.__conn 参照)。
     const conn = client.__conn;
-    if (conn && conn.authenticated && conn.roomId === roomId && conn.userId === userId) {
+    if (
+      conn &&
+      conn.authenticated &&
+      conn.roomId === roomId &&
+      (userId === null || conn.userId === userId)
+    ) {
       closeConn(conn, code, "force-disconnected by admin");
       count += 1;
     }

@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:indigo": "node scripts/dev-indigo.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

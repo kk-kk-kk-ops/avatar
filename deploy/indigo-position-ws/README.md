@@ -1,5 +1,18 @@
 # indigo-position-ws
 
+## ローカルで試す(3ステップ、非エンジニア向け)
+
+1. パソコンでこのリポジトリのフォルダを開き、ターミナル(コマンドを打つ
+   画面)で`npm run dev:indigo`と入力してEnterキーを押す。
+2. 少し待つと「Ready」のような表示が出る(初回だけ追加で少し時間が
+   かかります)。これで、位置情報用の新しいサーバーと、Globy本体の両方が
+   自動的に起動した状態です(ローカル専用の鍵も自動で生成されるので、
+   設定ファイルを手で書く必要はありません)。
+3. ブラウザで`http://localhost:3000`を開き、いつも通りログインしてルームに
+   入室する。別のブラウザ(またはシークレットウィンドウ)でもう1つ開けば、
+   2人分の動きを見比べられます。終了するときはターミナルで`Ctrl+C`を
+   押してください。
+
 GlobyのアバターWS位置同期サーバー(Supabase Realtime Broadcastのmoveイベントの
 移行先、第1段階)。presence・チャット・DM・施錠・強制退出・録画・字幕等は
 引き続きSupabase Realtimeに残る。このサーバーが担当するのは以下の2種類の
@@ -72,7 +85,9 @@ JWTの署名検証だけを行えばよい。
 
 ```
 {
-  sub: string,        // ユーザーID
+  sub: string,        // identity(components/AvatarSpace.tsxのselfId相当)
+  ownerUserId: string,// 認証済みSupabaseユーザーID(auth.uid())。subとは
+                       // 別物。なりすまし対策(下記参照)
   roomId: string,
   kid: string,        // "production" | "loadtest"(鍵IDと一致必須)
   exp: number,        // 短命(〜30分目安)
@@ -89,6 +104,16 @@ JWTの署名検証だけを行えばよい。
 トークン発行側(Next.js API、別ブランチ)で必要に応じてサイズの監視・
 トリミング(粗い範囲チェックのみに簡略化する等)を検討してください
 (このWSサーバー側での対応は不要、という2026-11設計レビューの整理)。
+
+**なりすまし対策(ownerUserId)**: `sub`(identity)はSupabase presence経由で
+他の参加者にも分かる値のため、検証なしに「sub一致なら既存接続に取って
+代わってよい」とすると、他人のidentityを騙ってトークンを取得した攻撃者が
+本物の接続を強制的に蹴り出せてしまう(`app/api/livekit-token/route.ts`の
+LiveKit側なりすまし対策と同種の脆弱性)。`ownerUserId`(常にNext.js側で
+Supabaseセッションから取得した値のみが入り、クライアントは偽装できない)が
+一致する場合だけ、既存接続への「取って代わり」(後勝ち、同一セッションの
+再接続を想定)を許可する。不一致の場合は新しい接続の方を拒否し(`4003`)、
+既存の正規接続には一切触れない。
 
 ## 鍵の分離(本番/負荷試験)
 
@@ -128,6 +153,21 @@ OSへまだ渡せていないバイト数)が`MAX_BUFFERED_BYTES_FOR_MOVE`(既�
   入室地点)かどうかを検証する。該当しなければ拒否。さらに受理頻度にも
   上限を設ける(デフォルト5秒に2回まで)。
 
+## クライアント側の送信頻度(`components/AvatarSpace.tsx`)
+
+indigoモードのmoveは、Supabase側(約70ms=14.3回/秒、無変更)とは独立して
+`lib/positionTransport.ts`の`MOVE_SEND_INTERVAL_MS`(既定100ms=10回/秒、
+`NEXT_PUBLIC_MOVE_SEND_INTERVAL_MS`で変更可能)を使う。移動開始・停止・
+**向きが変わった瞬間**は、この定期送信を待たず即座に送る。
+
+**14.3Hz/10Hzの比較確認(開発用)**: ブラウザのコンソールで
+`localStorage.setItem("globy-debug-move-interval-ms", "70")`としてから
+ページを再読み込みすると、indigoモードでもSupabase相当の70ms間隔になる
+(見比べたら`localStorage.removeItem("globy-debug-move-interval-ms")`で
+既定の100msに戻せる)。体感に違和感があれば、補間(interpolation)側の
+`EASE_RATE`(`components/AvatarSpace.tsx`の移動ループ内、現状12)を
+調整する案で対応する。
+
 ## 送信制御(レート制限)
 
 - move: 1接続あたり秒間上限(デフォルト25回/秒)を超えた分は間引く。
@@ -136,6 +176,35 @@ OSへまだ渡せていないバイト数)が`MAX_BUFFERED_BYTES_FOR_MOVE`(既�
   上限到達時は捨てずに、枠が空いた時点で最新のpayloadを1回送る
   (coalesce方式。`components/AvatarSpace.tsx`のSupabase presence向け
   `requestPresenceTrack()`と同じ考え方)。
+
+## 帯域見積もり(状態一式を乗せた暫定措置の影響、2026-11再計算)
+
+moveに状態一式(`screenPreviewDataUrl`除く)を乗せる暫定措置により、座標
+専用の最小ペイロード(約150バイト)を前提にした従来の見積もりより帯域が
+増える。実測(本番データに基づく、下記参照)した典型的なペイロードは
+**約256バイト**、全フィールドが埋まった理論上の最悪ケースでも**約800
+バイト程度**(本番の`avatarImage`/`avatar_icon_url`は常にURLで139バイト
+程度、base64等の巨大データは含まれないことを確認済み。下記参照)。
+
+10回/秒・50人ルームで全員移動中の場合(即時中継、ファンアウトあり):
+
+| | 座標専用(約150B、旧見積もり) | 状態一式・典型(約256B) | 状態一式・最悪(約800B) |
+|---|---|---|---|
+| 受信(サーバー) | 約0.6Mbps | 約1.0Mbps | 約3.2Mbps |
+| 配信(ファンアウト) | 約29.4Mbps | 約50Mbps | 約157Mbps |
+
+状態一式を乗せている間は、座標専用ペイロードの**1.7〜5倍程度**の帯域を
+要する。`maxPayload`(8KB)には引き続き十分な余裕があるため拒否される
+心配はないが、50人規模の大部屋で即時中継のまま運用する場合は帯域コストが
+無視できなくなる。**専用のstateイベント(B案)を完成させ、moveを座標専用に
+縮小することを、利用者が増える前に片付けるべき次の課題として記録する**
+(tick集約モードへの切替も帯域削減の選択肢だが、根本解決はB案の完成)。
+
+**実データの確認(読み取りのみ、DBは変更していない)**: 本番Supabaseの
+`profiles.avatar_icon_url`を確認したところ、設定されている1件は139バイト
+(Supabase Storageの公開URL)で、base64等の巨大データは含まれていなかった。
+`avatarImage`(アバター選択時)・`carImage`は`/avatar/xxx`・`/car/xxx`形式の
+短いパス文字列で、こちらも巨大化の心配はない。
 
 ## 配信方式
 
@@ -149,9 +218,16 @@ OSへまだ渡せていないバイト数)が`MAX_BUFFERED_BYTES_FOR_MOVE`(既�
 
 ## 管理API: POST /internal/disconnect
 
-Next.jsの強制退出処理から、該当ユーザーのWS接続を即座に切断するための
-内部APIです。
+Next.jsの強制退出処理(`app/admin/actions.ts`の管理者キック・ルーム変更、
+`lib/broadcastForceLeave.ts`のプラン変更時。いずれも`lib/
+broadcastIndigoDisconnect.ts`経由で呼ばれる)から、該当ユーザーのWS接続を
+即座に切断するための内部APIです。`INDIGO_WS_ADMIN_URL`/`INDIGO_WS_ADMIN_
+SECRET`が未設定の場合(indigoモード未導入時、本番で当面はこの状態)は
+何もしない。
 
+- `userId`を指定すると特定の1接続だけを切断する(管理者によるキック)。
+  `userId`を省略すると、その`roomId`の全接続を切断する(プラン変更・
+  ルーム変更時。Next.js側は現在誰が接続中か分からないため)。
 - 認証は固定シークレットをヘッダーでそのまま送る方式**ではなく**、
   HMAC署名+タイムスタンプ方式(リプレイ対策)。Vercelの送信元IPが
   固定できないため、IPアドレス制限ではなくこの方式を主な防御とする

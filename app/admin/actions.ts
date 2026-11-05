@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { broadcastForceLeaveForAccount } from "@/lib/broadcastForceLeave";
+import { disconnectIndigoConnections } from "@/lib/broadcastIndigoDisconnect";
 import { PLANS, type PlanId } from "@/lib/types";
 import { translate, type Locale } from "@/lib/i18n/translations";
 
@@ -105,6 +106,9 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
     // eslint-disable-next-line no-console
     console.error("強制退出の送信に失敗しました", err);
   }
+  // position-sync経路(IndigoPro WSサーバー)の接続も合わせて切断する
+  // (2026-11追加)。indigoモード未導入時は何もしない。
+  await disconnectIndigoConnections(roomId);
 
   revalidatePath("/admin");
 }
@@ -221,6 +225,10 @@ export async function kickParticipant(
     console.error("強制退出の送信に失敗しました", err);
     return { ok: false, error: translate(locale, "admin.forceLeaveFailed") };
   }
+  // position-sync経路(IndigoPro WSサーバー)の接続も合わせて切断する
+  // (2026-11追加)。indigoモード未導入時は何もしない。participantIdは
+  // selfId相当の値(force-leaveのtargetIdと同じ)。
+  await disconnectIndigoConnections(roomId, participantId);
 
   revalidatePath("/admin");
   if (banFailed) {

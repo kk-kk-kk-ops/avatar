@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { disconnectIndigoConnections } from "@/lib/broadcastIndigoDisconnect";
 
 // プラン変更が反映された瞬間、そのアカウントのルームに入室中の全員を
 // 強制退出させる。既存のチャット等と同じavatar-room-{roomId}チャンネルへ
@@ -26,5 +27,12 @@ export async function broadcastForceLeaveForAccount(
           // いずれ新しいプランの制限が反映されるため)ので握りつぶす。
         }),
     ),
+  );
+
+  // position-sync経路(IndigoPro WSサーバー)の接続も合わせて切断する
+  // (2026-11追加)。indigoモード未導入時は何もしない(disconnectIndigo
+  // Connections内部で判定)。userIdを指定しない=ルーム全体が対象。
+  await Promise.all(
+    (rooms ?? []).map((room) => disconnectIndigoConnections(room.id)),
   );
 }

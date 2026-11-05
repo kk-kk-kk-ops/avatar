@@ -14,7 +14,10 @@ import {
   type RemoteTrackPublication,
 } from "livekit-client";
 import { createClient } from "@/lib/supabase/client";
-import { POSITION_TRANSPORT } from "@/lib/positionTransport";
+import {
+  POSITION_TRANSPORT,
+  MOVE_SEND_INTERVAL_MS,
+} from "@/lib/positionTransport";
 import {
   createIndigoPositionClient,
   type IndigoPositionClient,
@@ -1929,6 +1932,12 @@ export default function AvatarSpace({
   // タイミングで新しい座標が自然に乗るため、「teleportだった」という
   // 事実だけをここに記録しておき、実際に送信する時に消費する。
   const justTeleportedRef = useRef(false);
+  // indigoモードのmove送信で、直近に送った時点のdirを記録する(2026-11
+  // 追加、POSITION_TRANSPORT==="indigo"の場合のみ参照する)。向きが変わった
+  // 瞬間に定期送信を待たず即座に送るための比較用(下のlastSyncedDirRefは
+  // 自分のローカル表示state用の別物で、ネットワーク送信のタイミングには
+  // 使っていないため、送信専用にこちらを新設する)。
+  const lastIndigoSentDirRef = useRef<PlayerState["dir"] | null>(null);
   // 向き(dir)が変わった瞬間だけ即座にplayers stateへ反映するための記録。
   // 位置の同期は0.2秒おきのままで十分だが、向き(スプライト画像)の切り替えは
   // それだと最大0.2秒の遅延に感じられてしまうため、変化した瞬間だけここで
@@ -7346,18 +7355,29 @@ export default function AvatarSpace({
         // 動いた時、および「今まさに止まった瞬間」だけ他プレイヤーへブロードキャスト。
         // 止まった瞬間を送らないと、相手の画面では最後に動いていた位置のまま
         // 止まって見えてしまい、キーを離してから反映されるようなラグに感じられる。
-        // 移動中の送信は約14回/秒に間引く(複数人が同時に動いても送信上限に
-        // 余裕を持たせ、回線が不安定になって再接続が走るのを防ぐ)。止まった
-        // 瞬間だけは間引かずに必ず送る。さらに、静止中でも3秒おきに現在位置を
-        // 送る(ハートビート)。何らかの理由で相手に届いていなかった場合でも、
-        // 数秒以内に自然と復旧するようにするため。
+        // さらに、静止中でも3秒おきに現在位置を送る(ハートビート)。何らかの
+        // 理由で相手に届いていなかった場合でも、数秒以内に自然と復旧するため。
         const justStopped = !moving && wasMovingRef.current;
-        const heartbeatDue = !moving && time - lastMoveSentAt.current >= 3000;
-        const intervalElapsed = time - lastMoveSentAt.current >= 70; // 約14回/秒
-        if ((moving && intervalElapsed) || justStopped || heartbeatDue) {
-          if (POSITION_TRANSPORT === "indigo") {
+        if (POSITION_TRANSPORT === "indigo") {
+          // indigoモードはSupabase側(下のelse、約70ms=14.3回/秒のまま
+          // 無変更)とは独立した送信間隔(既定100ms=10回/秒、lib/
+          // positionTransport.tsのMOVE_SEND_INTERVAL_MS、設定ファイルで
+          // 変更可能)を使う。向きが変わった瞬間も、定期送信を待たず即座に
+          // 送る(2026-11設計レビューの結論)。
+          const dirChanged = self.dir !== lastIndigoSentDirRef.current;
+          const indigoHeartbeatDue =
+            !moving && time - lastMoveSentAt.current >= 3000;
+          const indigoIntervalElapsed =
+            time - lastMoveSentAt.current >= MOVE_SEND_INTERVAL_MS;
+          if (
+            (moving && indigoIntervalElapsed) ||
+            justStopped ||
+            indigoHeartbeatDue ||
+            dirChanged
+          ) {
             const teleport = justTeleportedRef.current;
             if (teleport) justTeleportedRef.current = false;
+            lastIndigoSentDirRef.current = self.dir;
             indigoClientRef.current?.sendMove(
               buildIndigoMovePayload(self, {
                 t: time,
@@ -7365,13 +7385,22 @@ export default function AvatarSpace({
               }),
             );
             lastMoveSentAt.current = time;
-          } else if (channelRef.current) {
-            channelRef.current.send({
-              type: "broadcast",
-              event: "move",
-              payload: self,
-            });
-            lastMoveSentAt.current = time;
+          }
+        } else {
+          // 移動中の送信は約14回/秒に間引く(複数人が同時に動いても送信
+          // 上限に余裕を持たせ、回線が不安定になって再接続が走るのを
+          // 防ぐ)。止まった瞬間だけは間引かずに必ず送る。
+          const heartbeatDue = !moving && time - lastMoveSentAt.current >= 3000;
+          const intervalElapsed = time - lastMoveSentAt.current >= 70; // 約14回/秒
+          if ((moving && intervalElapsed) || justStopped || heartbeatDue) {
+            if (channelRef.current) {
+              channelRef.current.send({
+                type: "broadcast",
+                event: "move",
+                payload: self,
+              });
+              lastMoveSentAt.current = time;
+            }
           }
         }
         wasMovingRef.current = moving;
