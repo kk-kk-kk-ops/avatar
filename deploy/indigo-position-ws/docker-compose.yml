@@ -24,3 +24,12 @@ services:
     # `docker compose up`でも確実に効くトップレベルの短縮記法を使う。
     cpus: "1.0"
     mem_limit: 512m
+    # Dockerのjson-fileログドライバは既定で容量無制限のため、
+    # 無期限に増え続けないようローテーションを明示する(2026-11追加)。
+    # 10MB x 5世代(合計50MB)。[metrics]は5分おき、move-rejected等も
+    # 現状の実測ペースなら数週間分は残る見込み。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
