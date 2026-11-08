@@ -91,6 +91,35 @@ export async function POST(request: Request) {
     .select("account_id")
     .eq("id", roomId)
     .maybeSingle();
+
+  // BAN済みユーザーへの対策(2026-11追加、app/api/indigo-token/route.ts等と
+  // 同じ方式)。画像アップロードは画面(app/page.tsx)のガードを経由せず
+  // 直接このAPIを呼べるため、ここでも直接確認する。クエリ自体が失敗した
+  // 場合は「BANなし」として通さず、確認できるまで拒否する(2026-11修正)。
+  if (roomRow?.account_id) {
+    const { data: ban, error: banError } = await supabase
+      .from("banned_participants")
+      .select("user_id")
+      .eq("account_id", roomRow.account_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (banError) {
+      console.error("BAN確認に失敗しました", banError);
+      await serviceClient.storage.from("chat-images").remove([rawPath]);
+      return NextResponse.json(
+        { error: "アクセス権の確認に失敗しました。時間を置いて再度お試しください" },
+        { status: 503 },
+      );
+    }
+    if (ban) {
+      await serviceClient.storage.from("chat-images").remove([rawPath]);
+      return NextResponse.json(
+        { error: "このルームへのアクセスが制限されています" },
+        { status: 403 },
+      );
+    }
+  }
+
   let plan: PlanId = "free";
   if (roomRow?.account_id) {
     const { data: accountRow } = await serviceClient
