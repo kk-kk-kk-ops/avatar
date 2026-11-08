@@ -1,6 +1,6 @@
 # deploy/livekit/のようにDocker公式イメージをそのまま使えないため
 # (自前のNode.jsアプリのため)、軽量なNodeイメージでビルドする。
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
