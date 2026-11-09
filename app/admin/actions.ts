@@ -234,16 +234,30 @@ export async function kickParticipant(
   // LiveKit(音声・映像・画面共有)側も、相手のクライアントの協力に頼らず
   // サーバー側から強制退去させる(2026-11追加。既存のforce-leave
   // ブロードキャストは改造クライアントに無視され得るため)。
-  const { data: livekitAccount } = await supabase
+  const { data: livekitAccount, error: livekitAccountError } = await supabase
     .from("accounts")
     .select("livekit_server_id")
     .eq("id", account.id)
     .maybeSingle();
-  await disconnectLivekitParticipant(
-    livekitAccount?.livekit_server_id ?? null,
-    roomId,
-    participantId,
-  );
+  if (livekitAccountError) {
+    // (2026-11修正) 取得に失敗した場合、以前はnullとして扱い
+    // resolveLivekitServerCredentialsの既定サーバーへ無言でフォールバック
+    // していた。2台目以降を追加した際、別サーバーにいる対象者に対して
+    // 誤ったサーバーへremoveParticipantを送ってしまう(LiveKit側は
+    // 「見つからない」エラーになり、disconnectLivekitParticipant内で
+    // 握りつぶされて管理者に気づかれない)ため、ログを残しスキップする。
+    // eslint-disable-next-line no-console
+    console.error(
+      "LiveKitサーバー割り当ての取得に失敗したため、LiveKit強制退去をスキップします",
+      livekitAccountError,
+    );
+  } else {
+    await disconnectLivekitParticipant(
+      livekitAccount?.livekit_server_id ?? null,
+      roomId,
+      participantId,
+    );
+  }
 
   revalidatePath("/admin");
   if (banFailed) {
