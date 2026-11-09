@@ -91,14 +91,25 @@ export async function POST(request: Request) {
   // 表示前のガードでBANユーザーはAvatarSpace.tsxに到達せずこのAPIも
   // 呼ばれないが、Server Action/Route Handlerはページを経由せず直接
   // 呼び出すこともできるため、ここでも直接確認する(Tech Lead指摘)。
-  // ※app/api/livekit-token/route.tsには同じチェックが無く同様の穴が
-  // あるが、今回はこのAPI(新設分)のみ対応し、別件として報告する。
-  const { data: ban } = await supabase
+  // ※app/api/livekit-token/route.ts側にも同じBANチェックを追加済み
+  // (fix/livekit-token-ban-checkブランチ、別コミット)。
+  // クエリ自体が失敗した場合は「BANなし」として通さず、確認できるまで
+  // 拒否する(2026-11修正。確認できないことを通行許可にしない。
+  // app/api/livekit-token/route.ts側の同種の修正とあわせて対応)。
+  const { data: ban, error: banError } = await supabase
     .from("banned_participants")
     .select("user_id")
     .eq("account_id", accountId)
     .eq("user_id", user.id)
     .maybeSingle();
+  if (banError) {
+    // eslint-disable-next-line no-console
+    console.error("BAN確認に失敗しました", banError);
+    return NextResponse.json(
+      { error: "アクセス権の確認に失敗しました。時間を置いて再度お試しください" },
+      { status: 503 },
+    );
+  }
   if (ban) {
     return NextResponse.json(
       { error: "このルームへのアクセスが制限されています" },
