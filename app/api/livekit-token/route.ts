@@ -57,6 +57,33 @@ export async function POST(request: Request) {
     );
   }
 
+  // BAN済みユーザーへの対策(2026-11追加、app/api/indigo-token/route.tsと
+  // 同じ方式)。通常はapp/page.tsxのページ表示前のガードでBANユーザーは
+  // AvatarSpace.tsxに到達せずこのAPIも呼ばれないが、Route Handlerは
+  // ページを経由せず直接呼び出すこともできるため、ここでも直接確認する。
+  // クエリ自体が失敗した場合は「BANなし」として通さず、確認できるまで
+  // 拒否する(2026-11修正。確認できないことを通行許可にしない)。
+  const { data: ban, error: banError } = await supabase
+    .from("banned_participants")
+    .select("user_id")
+    .eq("account_id", accountId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (banError) {
+    // eslint-disable-next-line no-console
+    console.error("BAN確認に失敗しました", banError);
+    return NextResponse.json(
+      { error: "アクセス権の確認に失敗しました。時間を置いて再度お試しください" },
+      { status: 503 },
+    );
+  }
+  if (ban) {
+    return NextResponse.json(
+      { error: "このルームへのアクセスが制限されています" },
+      { status: 403 },
+    );
+  }
+
   // このルームが属するアカウントに固定で割り当てられたLiveKitサーバーを使う
   // (単一送信元からの同時接続50人規模でWebARENA Indigo側の遮断が発生する
   // ことが判明したため、契約時点でサーバーを固定する方式にした。
