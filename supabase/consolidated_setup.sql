@@ -567,6 +567,136 @@ create policy "user-icons: delete own"
 
 
 -- ------------------------------------------------------------
+-- 8b. banned_participants: 管理画面ダッシュボードの「強制退出」で
+--     BANされた参加者を、管理者が「解除」するまでそのアカウントの
+--     ルームへ再入室できないようにするためのリスト。
+--     (2026-11、節番号「15」から移動。chat_messages・招待リンクRPC
+--     〈節9以降〉がis_banned_for_room/is_banned_for_accountを参照する
+--     ため、このファイルを上から再実行する際にそれらより前に存在する
+--     必要がある。元の節番号はこのファイル末尾側の記録と合わせるため
+--     そのまま残している箇所もあるので、節番号は上から順の厳密な
+--     連番ではない。)
+-- ------------------------------------------------------------
+create table if not exists public.banned_participants (
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  banned_at timestamptz not null default now(),
+  primary key (account_id, user_id)
+);
+
+alter table public.banned_participants enable row level security;
+
+-- 本人は自分がBANされているか(ルーム入室時のガードに使う)、
+-- 管理者は自分のアカウント分のBAN一覧を閲覧できる。
+drop policy if exists "banned_participants: select" on public.banned_participants;
+create policy "banned_participants: select"
+  on public.banned_participants for select
+  using (
+    auth.uid() = user_id
+    or account_id in (
+      select id from public.accounts where owner_user_id = auth.uid()
+    )
+  );
+
+-- 追加・削除(強制退出・解除)は自分がオーナーのアカウント分のみ。
+drop policy if exists "banned_participants: modify own account as owner" on public.banned_participants;
+create policy "banned_participants: modify own account as owner"
+  on public.banned_participants for all
+  using (
+    account_id in (
+      select id from public.accounts where owner_user_id = auth.uid()
+    )
+  )
+  with check (
+    account_id in (
+      select id from public.accounts where owner_user_id = auth.uid()
+    )
+  );
+
+-- BAN一覧を表示名付きで取得する関数。profilesは本人しかSELECTできない
+-- RLS("profiles: select own")のため、管理者が他人のdisplay_nameを
+-- 見るにはSECURITY DEFINER経由が必要。
+drop function if exists public.list_banned_participants(uuid);
+
+create function public.list_banned_participants(p_account_id uuid)
+returns table (
+  user_id uuid,
+  display_name text,
+  banned_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (
+    select 1 from public.accounts
+    where id = p_account_id and owner_user_id = auth.uid()
+  ) then
+    raise exception '権限がありません';
+  end if;
+
+  return query
+    select b.user_id, p.display_name, b.banned_at
+    from public.banned_participants b
+    left join public.profiles p on p.user_id = b.user_id
+    where b.account_id = p_account_id
+    order by b.banned_at desc;
+end;
+$$;
+
+revoke all on function public.list_banned_participants(uuid) from public;
+revoke all on function public.list_banned_participants(uuid) from anon;
+grant execute on function public.list_banned_participants(uuid) to authenticated;
+
+-- 8c. チャット・DM・招待リンクRPC向けのBAN判定ヘルパー(2026-11追加)。
+-- 引数でuser_idを受け取らず、常に呼び出し本人(auth.uid())のBAN状態のみを
+-- 判定する(authenticated/anonなら誰でも実行できるため、他人のBAN状態を
+-- 調べられないようにする)。auth.uid()がnull(anonロール)の場合は常に
+-- falseを返すだけで情報は漏れないため、anonにもEXECUTEを許可する。これを
+-- 怠ると、chat_messagesのポリシーに"to authenticated"指定がないため、
+-- anonロールがREST経由でchat_messagesに触れた際に「空の結果」ではなく
+-- 「関数の実行権限エラー(42501)」になってしまう(既存のis_chat_group_member/
+-- is_masterで同種の問題が本番に既に存在することを2026-11-09に確認済み。
+-- それらは別件のため本節では対応しない)。
+create or replace function public.is_banned_for_account(p_account_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.banned_participants
+    where account_id = p_account_id and user_id = auth.uid()
+  );
+$$;
+
+revoke all on function public.is_banned_for_account(uuid) from public;
+grant execute on function public.is_banned_for_account(uuid) to anon, authenticated;
+
+-- room単位の判定(room_id → rooms.account_idを解決してis_banned_for_account
+-- に委譲する)。
+create or replace function public.is_banned_for_room(p_room_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.rooms r
+    where r.id = p_room_id
+      and public.is_banned_for_account(r.account_id)
+  );
+$$;
+
+revoke all on function public.is_banned_for_room(uuid) from public;
+grant execute on function public.is_banned_for_room(uuid) to anon, authenticated;
+
+
+-- ------------------------------------------------------------
 -- 9. 招待トークンからアカウントを検索する関数(最終形: id/name/plan/
 --    owner_user_id/invite_inviter_nameを返す)。未ログインのTOP
 --    ページでも招待者名を表示するため、anonにも実行権限を付与する。
@@ -614,10 +744,12 @@ language sql
 security definer
 set search_path = public
 as $$
+  -- BANされている場合は一覧から除く(2026-11追加)。
   select r.id, r.account_id, r.template_id, r.name, r.preview_image
   from public.rooms r
   join public.accounts a on a.id = r.account_id
   where a.invite_token = token
+    and not public.is_banned_for_account(a.id)
   order by r.created_at asc;
 $$;
 
@@ -1226,11 +1358,18 @@ create policy "chat_messages: insert own dm"
 -- 自分が送信したメッセージの編集・削除用。sender_user_id = auth.uid()の
 -- 行だけを対象にする(recipient側は更新できない)。編集・削除どちらも
 -- 同じ行に対するUPDATEのため、1つのポリシーで両方をカバーする。
+-- BANされている場合は編集・削除(論理更新)もできない(2026-11追加)。
 drop policy if exists "chat_messages: update own dm" on public.chat_messages;
 create policy "chat_messages: update own dm"
   on public.chat_messages for update
-  using (sender_user_id = auth.uid())
-  with check (sender_user_id = auth.uid());
+  using (
+    sender_user_id = auth.uid()
+    and not public.is_banned_for_room(room_id)
+  )
+  with check (
+    sender_user_id = auth.uid()
+    and not public.is_banned_for_room(room_id)
+  );
 
 -- 9f-1a. sender_nameのなりすまし防止トリガー(2026-09 QA指摘)。
 --   sender_nameは元々「メッセージ送信時点の表示名スナップショット」として
@@ -1318,6 +1457,7 @@ language sql
 security definer
 set search_path = public
 as $$
+  -- BANされている場合は一切見えない(2026-11追加)。
   select m.id, m.sender_user_id, m.sender_name, m.message, m.created_at,
     m.edited_at, m.deleted_at, m.image_path, m.thumbnail_path
   from public.chat_messages m
@@ -1325,6 +1465,7 @@ as $$
   join public.accounts a on a.id = r.account_id
   where a.invite_token = token
     and r.id = target_room_id
+    and not public.is_banned_for_account(a.id)
     and (
       (m.sender_user_id = auth.uid() and m.recipient_user_id = peer_user_id)
       or (m.sender_user_id = peer_user_id and m.recipient_user_id = auth.uid())
@@ -1382,6 +1523,11 @@ begin
 
   if v_room_id is null then
     raise exception 'このルームへのアクセス権がありません';
+  end if;
+
+  -- BAN済みユーザーへの対策(2026-11追加)。
+  if public.is_banned_for_room(v_room_id) then
+    raise exception 'このルームへのアクセスが制限されています';
   end if;
 
   -- 画像・サムネイル添付時のなりすまし防止(通常ルートのRLSと同じ検証)。
@@ -1449,6 +1595,11 @@ begin
     raise exception 'このメッセージは編集できません';
   end if;
 
+  -- BAN済みユーザーへの対策(2026-11追加)。
+  if public.is_banned_for_room(v_room_id) then
+    raise exception 'このルームへのアクセスが制限されています';
+  end if;
+
   update public.chat_messages
   set message = p_new_message, edited_at = p_edited_at
   where id = p_message_id;
@@ -1489,6 +1640,11 @@ begin
 
   if v_room_id is null then
     raise exception 'このメッセージは削除できません';
+  end if;
+
+  -- BAN済みユーザーへの対策(2026-11追加)。
+  if public.is_banned_for_room(v_room_id) then
+    raise exception 'このルームへのアクセスが制限されています';
   end if;
 
   update public.chat_messages
@@ -1740,25 +1896,30 @@ create index if not exists chat_messages_group_id_created_at_idx
 
 -- 1対1のRLSに、グループ宛てメッセージの分岐を追加する(既存の1対1部分は
 -- 条件を変えていない)。
+-- BANされている場合は一切読めない(2026-11追加。送信者・宛先・グループ
+-- メンバーいずれであっても、自分がBANされていれば読めない)。
 drop policy if exists "chat_messages: select own dm" on public.chat_messages;
 create policy "chat_messages: select own dm"
   on public.chat_messages for select
   using (
     (
-      recipient_user_id is not null
-      and (sender_user_id = auth.uid() or recipient_user_id = auth.uid())
-      and room_id in (
-        select r.id from public.rooms r
-        join public.profiles p on p.account_id = r.account_id
-        where p.user_id = auth.uid()
+      (
+        recipient_user_id is not null
+        and (sender_user_id = auth.uid() or recipient_user_id = auth.uid())
+        and room_id in (
+          select r.id from public.rooms r
+          join public.profiles p on p.account_id = r.account_id
+          where p.user_id = auth.uid()
+        )
+      )
+      or (
+        group_id is not null
+        and group_id in (
+          select group_id from public.chat_group_members where user_id = auth.uid()
+        )
       )
     )
-    or (
-      group_id is not null
-      and group_id in (
-        select group_id from public.chat_group_members where user_id = auth.uid()
-      )
-    )
+    and not public.is_banned_for_room(room_id)
   );
 
 drop policy if exists "chat_messages: insert own dm" on public.chat_messages;
@@ -1794,6 +1955,7 @@ create policy "chat_messages: insert own dm"
         )
       )
     )
+    and not public.is_banned_for_room(room_id)
   );
 
 -- グループ作成。グループ本体・メンバー行(自分含む)をまとめて作る
@@ -1905,6 +2067,11 @@ begin
     where r.id = target_room_id and a.invite_token = token
   ) then
     raise exception 'このルームへのアクセス権がありません';
+  end if;
+
+  -- BAN済みユーザーへの対策(2026-11追加)。
+  if public.is_banned_for_room(target_room_id) then
+    raise exception 'このルームへのアクセスが制限されています';
   end if;
 
   -- 重複作成防止(2026-08-30追加。create_chat_group()と同じロジック)。
@@ -2290,11 +2457,16 @@ security definer
 set search_path = public
 stable
 as $$
+  -- BANされている場合は一切見えない(2026-11追加)。allowedはDM側
+  -- (peers経由)で元々参照していたが、グループ側(group_rows)は参照して
+  -- いなかったため、末尾のunionの両方をallowedでゲートするよう変更する。
   with allowed as (
     select 1
     from public.rooms r
     join public.accounts a on a.id = r.account_id
-    where r.id = target_room_id and a.invite_token = token
+    where r.id = target_room_id
+      and a.invite_token = token
+      and not public.is_banned_for_account(a.id)
   ),
   peers as (
     select distinct
@@ -2393,9 +2565,9 @@ as $$
     left join group_last gl on gl.group_id = mg.group_id
     left join group_unread gu on gu.group_id = mg.group_id
   )
-  select * from dm_rows
+  select * from dm_rows where exists (select 1 from allowed)
   union all
-  select * from group_rows
+  select * from group_rows where exists (select 1 from allowed)
   order by last_message_at desc;
 $$;
 
@@ -2610,12 +2782,13 @@ set search_path = public
 as $$
 declare
   v_recipient uuid;
+  v_room_id uuid;
 begin
   if auth.uid() is null then
     raise exception 'ログインが必要です';
   end if;
 
-  select m.recipient_user_id into v_recipient
+  select m.recipient_user_id, r.id into v_recipient, v_room_id
   from public.chat_messages m
   join public.rooms r on r.id = m.room_id
   join public.accounts a on a.id = r.account_id
@@ -2626,6 +2799,11 @@ begin
 
   if v_recipient is null then
     raise exception 'このメッセージにはメンション通知を作成できません';
+  end if;
+
+  -- BAN済みユーザーへの対策(2026-11追加)。
+  if public.is_banned_for_room(v_room_id) then
+    raise exception 'このルームへのアクセスが制限されています';
   end if;
 
   insert into public.chat_mentions
@@ -2826,6 +3004,11 @@ begin
     raise exception 'このメッセージにはリアクションできません';
   end if;
 
+  -- BAN済みユーザーへの対策(2026-11追加)。
+  if public.is_banned_for_room(v_room_id) then
+    raise exception 'このルームへのアクセスが制限されています';
+  end if;
+
   insert into public.chat_message_reactions (message_id, user_id, emoji)
   values (p_message_id, auth.uid(), p_emoji)
   on conflict (message_id, user_id)
@@ -2847,9 +3030,26 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_room_id uuid;
 begin
   if auth.uid() is null then
     raise exception 'ログインが必要です';
+  end if;
+
+  -- BAN済みユーザーへの対策(2026-11追加)。削除対象が見つからない場合は
+  -- このチェックをスキップし、下のDELETE文(0件になるだけ)に委ねる。
+  select rm.id into v_room_id
+  from public.chat_message_reactions r
+  join public.chat_messages m on m.id = r.message_id
+  join public.rooms rm on rm.id = m.room_id
+  join public.accounts a on a.id = rm.account_id
+  where a.invite_token = token
+    and r.message_id = p_message_id
+    and r.user_id = auth.uid();
+
+  if v_room_id is not null and public.is_banned_for_room(v_room_id) then
+    raise exception 'このルームへのアクセスが制限されています';
   end if;
 
   delete from public.chat_message_reactions r
@@ -2887,6 +3087,7 @@ begin
     raise exception 'ログインが必要です';
   end if;
 
+  -- BANされている場合は一切見えない(2026-11追加)。
   return query
     select r.message_id, r.user_id, r.emoji
     from public.chat_message_reactions r
@@ -2894,7 +3095,8 @@ begin
     join public.rooms rm on rm.id = m.room_id
     join public.accounts a on a.id = rm.account_id
     where a.invite_token = token
-      and r.message_id = any(p_message_ids);
+      and r.message_id = any(p_message_ids)
+      and not public.is_banned_for_account(a.id);
 end;
 $$;
 
@@ -3188,84 +3390,6 @@ begin
     where id = v_room_id and template_id is null;
   end if;
 end $$;
-
--- ------------------------------------------------------------
--- 15. banned_participants: 管理画面ダッシュボードの「強制退出」で
---     BANされた参加者を、管理者が「解除」するまでそのアカウントの
---     ルームへ再入室できないようにするためのリスト。
--- ------------------------------------------------------------
-create table if not exists public.banned_participants (
-  account_id uuid not null references public.accounts(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  banned_at timestamptz not null default now(),
-  primary key (account_id, user_id)
-);
-
-alter table public.banned_participants enable row level security;
-
--- 本人は自分がBANされているか(ルーム入室時のガードに使う)、
--- 管理者は自分のアカウント分のBAN一覧を閲覧できる。
-drop policy if exists "banned_participants: select" on public.banned_participants;
-create policy "banned_participants: select"
-  on public.banned_participants for select
-  using (
-    auth.uid() = user_id
-    or account_id in (
-      select id from public.accounts where owner_user_id = auth.uid()
-    )
-  );
-
--- 追加・削除(強制退出・解除)は自分がオーナーのアカウント分のみ。
-drop policy if exists "banned_participants: modify own account as owner" on public.banned_participants;
-create policy "banned_participants: modify own account as owner"
-  on public.banned_participants for all
-  using (
-    account_id in (
-      select id from public.accounts where owner_user_id = auth.uid()
-    )
-  )
-  with check (
-    account_id in (
-      select id from public.accounts where owner_user_id = auth.uid()
-    )
-  );
-
--- BAN一覧を表示名付きで取得する関数。profilesは本人しかSELECTできない
--- RLS("profiles: select own")のため、管理者が他人のdisplay_nameを
--- 見るにはSECURITY DEFINER経由が必要。
-drop function if exists public.list_banned_participants(uuid);
-
-create function public.list_banned_participants(p_account_id uuid)
-returns table (
-  user_id uuid,
-  display_name text,
-  banned_at timestamptz
-)
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if not exists (
-    select 1 from public.accounts
-    where id = p_account_id and owner_user_id = auth.uid()
-  ) then
-    raise exception '権限がありません';
-  end if;
-
-  return query
-    select b.user_id, p.display_name, b.banned_at
-    from public.banned_participants b
-    left join public.profiles p on p.user_id = b.user_id
-    where b.account_id = p_account_id
-    order by b.banned_at desc;
-end;
-$$;
-
-revoke all on function public.list_banned_participants(uuid) from public;
-revoke all on function public.list_banned_participants(uuid) from anon;
-grant execute on function public.list_banned_participants(uuid) to authenticated;
-
 
 -- ------------------------------------------------------------
 -- 16. 権限昇格防止トリガー
