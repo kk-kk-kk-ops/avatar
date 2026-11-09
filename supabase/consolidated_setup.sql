@@ -2318,11 +2318,19 @@ security definer
 set search_path = public
 stable
 as $$
+  -- BANされている場合は一切見えない(2026-11追加)。この関数はSECURITY
+  -- DEFINERでchat_messagesを直接読むため、chat_messages自体のSELECT
+  -- ポリシーに入れたBAN判定を迂回してしまう(last_messageとして本文を
+  -- 返すため、本文漏洩になる)。list_chat_threads_by_invite_tokenと同じ
+  -- 形で、allowedにBAN条件を追加し、末尾のunionの両方をallowedでゲート
+  -- する。
   with allowed as (
     select 1
     from public.rooms r
     join public.profiles p on p.account_id = r.account_id
-    where r.id = p_room_id and p.user_id = auth.uid()
+    where r.id = p_room_id
+      and p.user_id = auth.uid()
+      and not public.is_banned_for_account(r.account_id)
   ),
   peers as (
     select distinct
@@ -2421,9 +2429,9 @@ as $$
     left join group_last gl on gl.group_id = mg.group_id
     left join group_unread gu on gu.group_id = mg.group_id
   )
-  select * from dm_rows
+  select * from dm_rows where exists (select 1 from allowed)
   union all
-  select * from group_rows
+  select * from group_rows where exists (select 1 from allowed)
   order by last_message_at desc;
 $$;
 
