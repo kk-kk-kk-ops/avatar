@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { broadcastForceLeaveForAccount } from "@/lib/broadcastForceLeave";
 import { disconnectIndigoConnections } from "@/lib/broadcastIndigoDisconnect";
+import { disconnectLivekitParticipant } from "@/lib/disconnectLivekitParticipant";
 import { PLANS, type PlanId } from "@/lib/types";
 import { translate, type Locale } from "@/lib/i18n/translations";
 
@@ -229,6 +230,20 @@ export async function kickParticipant(
   // (2026-11追加)。indigoモード未導入時は何もしない。participantIdは
   // selfId相当の値(force-leaveのtargetIdと同じ)。
   await disconnectIndigoConnections(roomId, participantId);
+
+  // LiveKit(音声・映像・画面共有)側も、相手のクライアントの協力に頼らず
+  // サーバー側から強制退去させる(2026-11追加。既存のforce-leave
+  // ブロードキャストは改造クライアントに無視され得るため)。
+  const { data: livekitAccount } = await supabase
+    .from("accounts")
+    .select("livekit_server_id")
+    .eq("id", account.id)
+    .maybeSingle();
+  await disconnectLivekitParticipant(
+    livekitAccount?.livekit_server_id ?? null,
+    roomId,
+    participantId,
+  );
 
   revalidatePath("/admin");
   if (banFailed) {
