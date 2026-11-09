@@ -91,8 +91,8 @@ export async function POST(request: Request) {
   // 表示前のガードでBANユーザーはAvatarSpace.tsxに到達せずこのAPIも
   // 呼ばれないが、Server Action/Route Handlerはページを経由せず直接
   // 呼び出すこともできるため、ここでも直接確認する(Tech Lead指摘)。
-  // ※app/api/livekit-token/route.tsには同じチェックが無く同様の穴が
-  // あるが、今回はこのAPI(新設分)のみ対応し、別件として報告する。
+  // ※app/api/livekit-token/route.ts側にも同じBANチェックを追加済み
+  // (fix/livekit-token-ban-checkブランチ、別コミット)。
   // クエリ自体が失敗した場合は「BANなし」として通さず、確認できるまで
   // 拒否する(2026-11修正。確認できないことを通行許可にしない。
   // app/api/livekit-token/route.ts側の同種の修正とあわせて対応)。
