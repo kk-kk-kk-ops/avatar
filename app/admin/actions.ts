@@ -217,19 +217,16 @@ export async function kickParticipant(
     }
   }
 
-  try {
-    await supabase
-      .channel(`avatar-room-${roomId}`)
-      .httpSend("force-leave", { reason: "admin-kicked", targetId: participantId });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("強制退出の送信に失敗しました", err);
-    return { ok: false, error: translate(locale, "admin.forceLeaveFailed") };
-  }
-  // position-sync経路(IndigoPro WSサーバー)の接続も合わせて切断する
-  // (2026-11追加)。indigoモード未導入時は何もしない。participantIdは
-  // selfId相当の値(force-leaveのtargetIdと同じ)。
-  await disconnectIndigoConnections(roomId, participantId);
+  // LiveKit→位置同期WS→force-leaveブロードキャストの順で実行する
+  // (2026-11-10変更。以前はforce-leaveを最初に送っていたが、force-leaveを
+  // 受け取ったクライアントがwindow.location.reload()で自分から先に
+  // LiveKitから退出してしまい〈CLIENT_REQUEST_LEAVE〉、その直後に届く
+  // サーバー側のLiveKit removeParticipant呼び出しが「本人はもう存在しない」
+  // 扱いで404 Not Foundになるレースが実機のログで確認された。force-leaveを
+  // 最後に送ることで、クライアントが自分から動き出す前にLiveKit側の
+  // 強制退去を確実に先着させる。なお、RoomEvent.Disconnected〈クライアント
+  // 側〉はPARTICIPANT_REMOVED理由では再接続を試みない作りのため、この
+  // 順序変更によるクライアントの見た目の変化は無い想定)。
 
   // LiveKit(音声・映像・画面共有)側も、相手のクライアントの協力に頼らず
   // サーバー側から強制退去させる(2026-11追加。既存のforce-leave
@@ -257,6 +254,21 @@ export async function kickParticipant(
       roomId,
       participantId,
     );
+  }
+
+  // position-sync経路(IndigoPro WSサーバー)の接続も合わせて切断する
+  // (2026-11追加)。indigoモード未導入時は何もしない。participantIdは
+  // selfId相当の値(force-leaveのtargetIdと同じ)。
+  await disconnectIndigoConnections(roomId, participantId);
+
+  try {
+    await supabase
+      .channel(`avatar-room-${roomId}`)
+      .httpSend("force-leave", { reason: "admin-kicked", targetId: participantId });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("強制退出の送信に失敗しました", err);
+    return { ok: false, error: translate(locale, "admin.forceLeaveFailed") };
   }
 
   revalidatePath("/admin");
