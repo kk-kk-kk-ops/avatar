@@ -6680,10 +6680,21 @@ export default function AvatarSpace({
           if (recordingOwnerIdRef.current === null) return;
           const msg = payload as {
             id: string;
+            senderId: string;
             senderName: string;
             text: string;
             at: number;
           };
+          // 応急処置(2026-11追加、根本対策ではない): 字幕はルーム全体の
+          // チャンネルに流れるため、これまでゾーンの区別なく誰でも受信
+          // できてしまっていた(施錠会議室の中の発言が外にも届く)。
+          // 音声・映像の購読対象(eligiblePeerIds、同じ考え方で近接・
+          // 施錠会議室/ミーティングエリアの隔離を判定)と同じ相手からの
+          // 字幕だけを表示するようにし、改造なしでも読めてしまっていた
+          // 状態を塞ぐ。送信者側のクライアントがmeetingZoneIdを偽れば
+          // この制限も回避できてしまう点は未解決(サーバー側で検証する
+          // 根本対応は別途検討中)。
+          if (!eligiblePeerIdsRef.current.includes(msg.senderId)) return;
           // 2026-10報告のバグ修正: 以前はslice(-50)で古い発言を切り捨てて
           // いたため、録画開始者が最後にテキスト保存した際、長めの会議だと
           // 冒頭の発言が欠落してしまっていた。録画中は全件保持し、画面
@@ -8565,6 +8576,7 @@ export default function AvatarSpace({
         addCaptionLine(line);
         channelRef.current?.httpSend("caption", {
           id: line.id,
+          senderId: self.id,
           senderName: line.senderName,
           text: line.text,
           at: line.at,
@@ -8847,6 +8859,7 @@ export default function AvatarSpace({
       addCaptionLine(line);
       channelRef.current?.httpSend("caption", {
         id: line.id,
+        senderId: self.id,
         senderName: line.senderName,
         text: line.text,
         at: line.at,
