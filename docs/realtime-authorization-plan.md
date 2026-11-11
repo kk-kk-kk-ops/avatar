@@ -430,27 +430,11 @@ create policy "user-channel: insert same account"
 | `lib/broadcastForceLeave.ts:23` | avatar-room | **service_roleクライアント** | 同上。9-1節で検証済み(service_roleはRLSをバイパスするため追加対応不要) |
 | `lib/useSessionGuard.ts:88` | user-session | セッションクライアント | `config: { private: true }` |
 | `components/auth/LogoutButton.tsx:35` | user-session | セッションクライアント | 同上 |
-| `deploy/livekit/monitor/check-load-score.mjs:82` | avatar-room(負荷監視cron) | secretキー(service_role相当) | `config: { presence: {...}, private: true }` |
+| `deploy/livekit/monitor/check-load-score.mjs:82` | avatar-room(負荷監視cron) | secretキー(service_role相当) | `config: { presence: {...}, private: true }`。**2026-11-11確認:target-proに未デプロイ(確認範囲:ubuntu/rootのcrontab、/etc/cron.d、systemdタイマー、稼働中のDockerコンテナ、/root・/home・/opt・/srv配下)。デプロイする際は最初から`private: true`を付ける。段階7・9の対象外** |
 
 これらは**全部同じデプロイで一斉に切り替える**(1つでも古いまま残ると、そのチャンネルだけ新しいprivateチャンネルと分断される。Realtime公式ドキュメントで「privateチャンネルとpublicチャンネルは同じトピック名でも別物として扱われ、互いにメッセージを交換しない」ことを確認済み)。
 
-**`check-load-score.mjs`は上記の「同じデプロイで一斉に切り替える」対象外の例外である。** このスクリプトはVercel(mainへのマージ)では配信されない。**VPS上での実行実態(配置先・定期実行の有無)は確認中。**
-
-**いつ反映するか:** 9-1節で検証済みなのは、**service_role相当のキーによる送信(REST経由のbroadcast、`lib/broadcastForceLeave.ts`と同じ方式)がRLSをバイパスすること**のみ。このスクリプトは在室状況(presence)の**購読**(WebSocket経由)であり、`private:true`化後にservice_role相当のキーで購読が通るかは**別途未検証**。そのため、反映時は以下を徹底する。
-1. `private:true`化を反映した後、**1回手動実行し、通常時と同様の人数(負荷スコア)が取得できることを確認する**。
-2. 確認が取れるまでは古い(`private:true`を送らない)コードのまま保留してもよい(段階9より前に確認・反映できていれば問題ない)。
-
-遅くとも段階9(Allow public accessオフ)より前に完了していればよい(未対応のままAllow public accessがオフになると、このスクリプトは動かなくなる)。
-
-**反映手順の概要(WSサーバーと同じ方式に統一、git pullは使わない。ローカルはGit Bash・GNU tarを想定):**
-1. VPS上の既存ディレクトリを日付付きで**コピー**してバックアップ(`mv`ではなく`cp -r`。`.env`を含むディレクトリ全体を複製するだけで、元の場所には何も残さない`mv`だと新しいフォルダに`.env`が無くなり動かなくなるため): `cp -r ~/<配置先>/monitor ~/<配置先>/monitor.bak.$(date +%Y%m%d%H%M%S)`(配置先は質問1で確認)
-2. ローカル(Git Bash、GNU tar)で更新後のコードをtar化。**`--exclude`はまとめる対象より前に書く**(後ろに書くと無視される場合があるため確実な方で統一する): `tar --exclude='monitor/node_modules' --exclude='monitor/.env' -czf monitor-update.tar.gz -C deploy/livekit monitor`
-3. **転送前に、アーカイブの中身を一覧表示して`.env`・`node_modules`が含まれていないことを確認する**(含まれていたら転送しない): `tar -tzf monitor-update.tar.gz`
-4. `scp monitor-update.tar.gz ubuntu@<VPS>:~/`で転送
-5. VPS上で**既存フォルダへ上書き展開**(`.env`・`node_modules`は除外されているため、既存のものがそのまま残る): `tar -xzf ~/monitor-update.tar.gz -C ~/<配置先>/`
-6. **展開後、`.env`が残っていることを確認(中身は表示しない)**: `ls -la ~/<配置先>/monitor/.env`
-7. 転送した`monitor-update.tar.gz`をVPS・ローカルの両方から削除
-8. 上記「いつ反映するか」の手動実行確認を行う。再起動は不要(cron起動のたびに新しいプロセスが立つスクリプトのため)
+**`check-load-score.mjs`は上記の「同じデプロイで一斉に切り替える」対象外の例外である。** このスクリプトはVercel(mainへのマージ)では配信されない。**2026-11-11確認:target-pro上には未デプロイ(crontab・/etc/cron.d・systemdタイマー・稼働中のDockerコンテナのいずれにも登録なし)。** 現在は実行されていないため、段階7・段階9のどちらにおいても対応の対象外とする。デプロイする場合は、Realtimeの非公開化とは別の作業(`.env`の作成・配置場所・定期実行の設定等)として別途手順を設計する([[project_globy_task_list]]参照)。
 
 ---
 
