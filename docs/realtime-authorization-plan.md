@@ -413,6 +413,106 @@ create policy "user-channel: insert same account"
 
 「付け外しが2回起きて元に戻る」ような問題が起きないのは、現在の`dm-reaction`/`group-reaction`がトグルではなく「reactorの現在の状態をemoji値で明示する」設計だからである。方式C側の新しい通知ハンドラを実装する際も、この「絶対値による置き換え」の性質を保つこと。
 
+### 6-2. 段階0の設計(2026-11-14)
+
+**目的:** 段階7(全チャンネルの`private:true`一斉切替)以降に、未対応の古いタブが残っていると分断が起きる。それを防ぐため、新しい版のデプロイを検知し、画面に更新を促す(通常)・強制的に再読み込みさせる(必須)仕組みを導入する。
+
+#### 仕組み
+
+1. **版ファイル(通常更新の検知用)**: ビルド時に`public/version.json`(`{"deploymentId": "..."}`、`VERCEL_DEPLOYMENT_ID`から生成)を書き出す。クライアントは自分のビルド時に焼き込まれた`NEXT_PUBLIC_DEPLOYMENT_ID`と、定期的に取得した`version.json`の値を比較し、異なれば「新しい版があります」バナーを表示する(押すまで再読み込みしない)。
+   - **キャッシュ対策**: 取得URLに毎回変わる値を付ける(`/version.json?t=${Date.now()}`)。ブラウザキャッシュは確実に回避できるが、**Vercelの静的ファイルはキャッシュをバイパスできない設計との記載があり、Vercel側のキャッシュにどこまで効くかは未検証**。デプロイ直後にどれくらいの遅延で反映されるかは、確認手順で実測する。
+2. **世代番号(必須更新の判定用)**: コードに`BUILD_GENERATION`という整数定数を持つ(人が手で増やす、通常デプロイでは変えない)。DBの`app_settings.min_build_generation`より小さい場合だけ「必須」と判定する。**最初の段階0デプロイでは`BUILD_GENERATION = 1`、`min_build_generation = 0`とする(誰も強制されない状態で導入する)。**
+3. **安全装置**: 強制再読み込みの前に`sessionStorage`へ実行回数・時刻を記録し、**同一タブ2分以内に2回以上**発生したら3回目以降は自動実行を止め、「更新が必要です。他のタブを閉じて再読み込みしてください」という手動操作のバナーに切り替える。
+4. **ルートレイアウトへの一元化と役割分担**:
+   - `app/layout.tsx`(唯一のレイアウト、全ページを包む)に`VersionWatcherProvider`を追加し、版ファイルの定期取得・バナー表示・`min_build_generation`の既定の問い合わせを行う。
+   - `/`ページ(ログイン〜ロビー〜会議室)の**入室中(`joined`)の間だけ**、ルートレイアウト側の既定の問い合わせを止め(`setInRoomPollingActive(true)`をContext経由で伝える)、既存の20秒ポーリング(`components/AvatarSpace.tsx:6961-6996`、`app_settings`を参照)に`min_build_generation`列を追加して相乗りする(新しい通信は増えない)。必須判定時は既存の`setForceLeaveMessage`→1.5秒後`reload()`をそのまま使う(新しいUIを作らない)。
+   - それ以外の画面(ログイン・ロビー・管理画面・マスター画面・プラン選択画面等)は、ルートレイアウトの既定の問い合わせ(下記)を使う。必須判定時は即座に`reload()`する(保護すべき状態が無いため)。
+
+#### 相乗り先クエリの列追加に伴う注意(2026-11-14追記)
+
+既存コード(`components/AvatarSpace.tsx:6970-6978`)を確認したところ、`checkMaintenance`は`const { data } = await supabase.from("app_settings").select(...)...; if (cancelled || !data) return;`という形で**`error`を受け取っていない**。PostgRESTは存在しない列を`select`すると全体をエラーにして`data`を`null`で返すため、**`min_build_generation`列が無い状態でこの列を追加したコードが動くと、クエリ全体が失敗し`data`が`null`になり、`if (!data) return`でメンテナンス検知自体も毎回スキップされる(クラッシュはしないが、検知が静かに止まる)**。
+
+- **導入時の順番: SQLで列を追加 → その後にコードをデプロイ**(逆順だと、コードデプロイ後から列追加までの間、メンテナンス検知が停止する)。
+- **切り戻し時の順番: コードを前の版に戻す(列を参照しなくなる) → その後に列を削除**(逆順だと同じ理由で検知が一時停止する)。
+- **保険(推奨)**: 上記の順番を守っても人為的なミスはあり得るため、コード側でも`error`を見て縮退運転する。`min_build_generation`列を含むselectが`error`を返した場合、メンテナンス項目だけの`select`(列無し版)を即座にフォールバックで再実行し、メンテナンス検知は継続させる(世代判定はその回だけ「不明」として強制対象にしない)。列が存在する通常時はフォールバックが発生しないため、追加コストは無い。
+
+#### ルートレイアウト側の`min_build_generation`問い合わせ
+
+- **頻度**: 版ファイルの確認と同じタイミングに相乗りする(タブ表示中のみ、3〜5分間隔+`visibilitychange`でタブに戻った時、直前チェックから60秒以上空いていれば実行)。1回の間隔につき1回のSupabaseへの問い合わせ(`select min_build_generation`のみ、軽量)。
+- **見積もり**: 対象は入室中以外の画面(ログイン・ロビー・管理・マスター・プラン等)のみ。150人・4分間隔・1日8時間アクティブ・30日と仮定すると、150×(8h×3600/240秒=120回/日)×30日=**約54万リクエスト/月**。Supabaseの上限は月間ではなく秒単位のため、ピーク時でも1秒あたり1件未満程度で軽微。
+- **未ログイン画面(`/login`・`/signup`等)が`app_settings`を読めるか**: 現行RLS(`supabase/consolidated_setup.sql`)は`app_settings: select authenticated`ポリシーで`auth.uid() is not null`を要求しており、**未ログインでは読めない**。ただし`/login`・`/signup`は滞在時間が短く通話等の保護対象も無いため、**本設計では対象外としてよい**(通常のページ遷移で最新化される)。将来含めたくなった場合のSQL案(テーブル構造を確認済み: `app_settings`は`id text primary key default 'default'`の1行のみのテーブルのため、`where id = 'default'`は実際の構造と一致している):
+  ```sql
+  -- 適用はしない。将来、未ログイン画面もカバーしたくなった場合のみ。
+  -- app_settings全体のSELECT権限は緩めず、世代番号だけを公開する
+  -- 専用関数を新設する。
+  create or replace function public.get_min_build_generation()
+  returns integer
+  language sql
+  security definer
+  set search_path = public
+  stable
+  as $$
+    select min_build_generation from public.app_settings where id = 'default';
+  $$;
+  revoke all on function public.get_min_build_generation() from public;
+  grant execute on function public.get_min_build_generation() to anon;
+  grant execute on function public.get_min_build_generation() to authenticated;
+  ```
+- **入室中画面との二重問い合わせ防止**: 上記の通り、`joined`の間はルートレイアウト側の問い合わせを止める(Context経由のフラグで分担)。
+
+#### SQL案(`app_settings`への列追加)
+
+テーブル構造確認済み(`id text primary key default 'default'`、1行のみ)。
+
+```sql
+alter table public.app_settings
+  add column if not exists min_build_generation integer not null default 0;
+```
+
+**反映は、上記「相乗り先クエリの列追加に伴う注意」の順番(SQL→コード)に従うこと。承認は別途、このSQL自体はまだ適用しない。**
+
+#### presenceに載せる情報
+
+presenceのtrack payloadに`buildGeneration`(世代番号)と`deploymentId`(`NEXT_PUBLIC_DEPLOYMENT_ID`)の**両方**を追加する。管理画面・マスター画面(`OnlineCount.tsx`・`MasterOnlineStats.tsx`)で3種類に分けて表示する。
+- **デプロイIDが現行と違う人数**: **閲覧者自身のタブのdeploymentIdではなく、版ファイル(`version.json`)から取得した「現在の本番のdeploymentId」を基準にして比較する**(閲覧者自身のタブが古い場合、自分のIDを基準にすると数え方が逆転してしまうため)。異なるpresenceエントリの数を数える。
+- **世代が古い人数**: `buildGeneration`が、版ファイル経由で分かる現在の世代、または`min_build_generation`より小さいエントリの数。
+- **版不明の人数**: `buildGeneration`/`deploymentId`のいずれも無いエントリの数(段階0導入前から開かれていたタブ)。
+
+**限界(明記):** presenceをtrack()するのは**入室後(`joined`)の画面のみ**。入室前ロビーの観測用購読(`track()`しない)・`user-session`のみの画面(ログイン画面等)はカウントできない。段階7・9へ進む判断は、**「世代が古い」人数だけでなく「版不明」の人数も合わせて見て**行う(版不明が多いうちは実際には古い版が混在している可能性が高いとみなし、進めない)。
+
+#### 運用の順番(重要)
+
+1. `app_settings.min_build_generation`列を**先に**SQLで追加する(デフォルト0)。
+2. `BUILD_GENERATION`を1つ上げたコードを本番デプロイする。
+3. 本番で新しい世代が実際に動いていることを確認する(新しいタブ・版ファイル・デプロイ一覧等で)。
+4. **その後に**`app_settings.min_build_generation`を同じ値へ上げる。
+
+**順番を守らないと何が起きるか:** 先にDBの`min_build_generation`を上げてしまうと、まだ新しいコードがデプロイされていないため、**既存の全画面(新しく開いた画面も含む)が古い世代のまま**となり、全員が強制再読み込みの対象になる。再読み込みしても同じ古いコードが返ってくるため直らず、安全装置(2分以内2回)が働いた後は「更新が必要です」の手動バナーが全員に表示され続け、**新しいコードがデプロイされるまでサービスが事実上使えなくなる。**
+
+**誤ってDBをコードの世代より大きくした場合の戻し方:** `app_settings.min_build_generation`を、現在実際にデプロイされている世代の値まで下げる。各画面は次回の問い合わせ(入室中は20秒以内、他の画面は3〜5分以内またはタブに戻った時)で新しい値を取得し、以降は強制対象から外れる。すでに手動バナーが表示されている画面も、次回の問い合わせで条件が外れたことを検知してバナーを消す(再読み込み不要、コードの再デプロイも不要)。
+
+#### 確認手順
+
+1. **検知ロジック自体(ログイン不要、安全)**: Vercelの「ブランチURL」(`<project>-git-<branch>-<scope>.vercel.app`、pushごとに自動更新される)を使う。テスト用ブランチへpush→ブランチURLを開く(ログイン画面のままでよい)→同じブランチへ2つ目のコミットをpush→開いたままのタブでバナーが出ることを確認する。
+2. **「必須」の本番確認(本番デプロイを1回伴う)**:
+   - 古い世代の画面を開いたままにしておく。
+   - `BUILD_GENERATION`を1つ上げたコードを本番にデプロイする。
+   - 新しいタブを開き、新しい世代になっていることを確認する。
+   - `app_settings.min_build_generation`を上げる。
+   - 古い画面だけが(通話・録画・入力中なら1.5秒の猶予メッセージの後に)再読み込みされ、新しいタブには何も起きないことを確認する。
+   - **この確認でBUILD_GENERATIONを実際に1つ消費するため、この後の段階7本番切替では、ここで使った世代の次の番号を使う**(テストで使った世代と段階7本番切替の世代を混同しない)。
+3. 低トラフィック時間帯に行い、通話中・録画中・チャット入力中のテスト用アカウントでも必須更新の見せ方を確認する。
+
+#### 切り戻し方法
+
+- 版ファイル・presenceの追加情報・ルートレイアウトのProviderはクライアントコードのみのため、コードを前の版に戻すだけでよい。
+- `min_build_generation`列は、**「相乗り先クエリの列追加に伴う注意」の順番通り、コードを前の版に戻した後に`drop column`する**(列を先に落とすとメンテナンス検知が一時停止するため、コード→列の順を厳守する)。
+- 誤発火した場合は、上記「戻し方」の通り、DBの値を下げるだけで即座に収まる(再デプロイ不要)。
+
+#### 段階7までの間隔の判断基準
+
+presence(版不明・世代が古い人数)の表示を見て、**両方とも実質ゼロに近づいたことを確認してから**段階7に進む。目安として最低半日〜1日、可能なら数日は空け、実測で判断する(具体的な日数は実際の利用パターン次第で調整する)。
+
 ---
 
 ## 7. 段階7で`private:true`に切り替える対象ファイル一覧
