@@ -6,7 +6,7 @@
 
 - **未検証事項(9-2)**: ①「Allow public access」オフ時、既存接続中の古いタブが即座に切断されるか/②viewOnly許可証TTL(30分)の運用上の適切性。
 - **既知の制約(9-3)**: 招待リンク再発行は既発行の許可証を即時失効させない/`can_message_user_channel`で任意user_idの同アカウント所属を探索できる/宛先のBAN状態は見ていない。
-- **接続中BANの限界**: 権限評価はトークンの更新・失効時にも再判定されるため、改造クライアントが受信を続けられるのは最長でもJWTの有効期限まで(現在の有効期限は要確認)。
+- **接続中BANの限界**: 権限評価はトークンの更新・失効時にも再判定されるため、改造クライアントが受信を続けられるのは最長でもJWTの有効期限(3600秒=1時間、2026-11-14確認)まで。
 - **古いタブの検知手段が無い**: 段階9の前に、`private:true`未対応の古いタブが残っていないか確認する仕組みが現状無い(段階0として新設。6節参照)。
 
 ## 背景
@@ -459,11 +459,12 @@ create policy "user-channel: insert same account"
 1. **`private: true`指定のチャンネルは、プロジェクト設定「Allow public access」がONの状態でも、RLS(Realtime Authorizationのポリシー)が働く。** テスト用の一時ポリシー("test-private-check: authenticated only")を作成し、本番でanonキーによる**送信(publish)**が実際に`Unauthorized`で拒否されることを確認した。**受信(subscribe)側が同様に拒否されるかは未確認。** すなわち、段階7(各チャンネルを`private:true`化)は「Allow public access」のON/OFFとは独立して効力を持つ(送信拒否の限りで)。検証日は本文書の初版コミット(2026-11-09 22:14、この時点ではservice_roleの件が「未検証」だった)より後と推定する(正確な時刻は記録されていない)。検証用ポリシー・検証用一時スクリプト(`tmp-realtime-test-a.js`/`b.js`)はいずれも削除済み(`pg_policy`で残っていないことを確認済み)。
 2. **`service_role`はRLSをバイパスし、privateチャンネルにも送信できる。** `lib/broadcastForceLeave.ts`と同じ作り方・送信方法で実機確認済み。Postgres側`service_role`ロールの`rolbypassrls = true`とも整合する。したがって以前の未検証事項(下記旧1番)は解消し、段階7時点で`lib/broadcastForceLeave.ts`を`private:true`化しても追加の検証・切り戻し手順は不要と判断する。
 3. スクリプトC(テスト用アカウントでのログイン確認)は、A・Bの結果で十分と判断し、認証情報をファイルに置くリスクを避けるため、ユーザーの判断で省略した。
+4. **`can_access_avatar_room_topic()`のトピック判定(CASE式・正規表現・13文字目からの切り出し)を、本番のSQL Editorで文字列のみのSELECT(テーブル参照なし)により確認(2026-11-14)。** `avatar-room-`+UUIDのみ一致してUUIDが先頭のハイフンなしで正しく取り出され、`avatar-room-not-a-uuid`・`user-session-`+UUID・`user-`+UUID・`garbage`はいずれも不一致(NULL)でエラーなし。**※関数そのもの・ポリシーは未適用。この確認は判定式の部品のみ。**
 
 ### 9-2. 未検証事項の一覧
 
 1. **接続中の古いタブ(`private:true`を送らない旧コード)が、「Allow public access」をオフにした瞬間に即座に切断されるか、それとも次の再接続まで持続するか。** Realtime Authorizationの権限評価は「チャンネル参加(join)時に行われ、接続中はキャッシュされる」ことは確認済みだが、「Allow public access」という project-level設定自体の変更が既存の確立済み接続にどう効くかは、公式ドキュメントに明記が見当たらなかった。段階9を低トラフィック時間帯に行い、実機で確認する。
-2. **接続中にBANした場合、改造クライアントが受信を続けられる期間。** Realtime Authorizationの権限評価はチャンネル参加時だけでなく、JWTの更新・失効時にも再評価されるため、改造クライアントが受信を続けられるのは最長でも**JWTの有効期限まで**(現在の有効期限は要確認)。force-leaveブロードキャスト(クライアント協力頼み)の併用が必要(課題リストに記録済み)。
+2. **接続中にBANした場合、改造クライアントが受信を続けられる期間。** JWTの有効期限は**3600秒(1時間、Supabaseの推奨値。Authentication → Sessionsで確認、2026-11-14)**。したがって、接続中にBANされた人が改造クライアントで受信を続けられるのは最長1時間。通常のクライアントはforce-leaveで即時退出する。有効期限の短縮は、全利用者のトークン更新通信が増えるため現時点では行わない。
 3. **viewOnly許可証(`realtime_view_grants`)のTTL(30分)が実運用に適切か。** 長時間のviewOnly閲覧でハートビートが途切れた場合の挙動は未検証。
 
 ### 9-3. 既知の制約
