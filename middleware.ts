@@ -22,7 +22,11 @@ export const config = {
      *   引っかかって未ログイン時に"/"へリダイレクトされてしまって
      *   いた。マイクON操作(=ログイン後)からのfetchのみが対象で、
      *   本来この認証チェックは不要な純粋な静的アセットのため除外する)
+     * - version.json (段階0の新版デプロイ検知用。public/配下の静的
+     *   ファイルで、未ログインの画面(ログイン画面・ブランチURLでの
+     *   検知テスト等)からも取得する必要があるため、df3-assets/と同様
+     *   認証チェックの対象外にする。2026-11-14追加)
      */
-    "/((?!_next/static|_next/image|favicon.ico|df3-assets/|api/|.*\\.(?:png|svg|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|version\\.json|df3-assets/|api/|.*\\.(?:png|svg|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -496,6 +496,7 @@ presenceのtrack payloadに`buildGeneration`(世代番号)と`deploymentId`(`NEX
 
 0. **版ファイルが生成されていることの確認(本番デプロイ後、2026-11-14追記)**: 本番デプロイ後、`https://globy.grovina-studio.com/version.json`を開き、`deploymentId`に文字列が入っていること(`null`でないこと)を確認する。**VercelのBuild Commandが`npm run build`以外(例: `next build`を直接指定している等)の場合、`prebuild`スクリプト(`scripts/write-version-file.mjs`)が実行されず版ファイルが作られない。** Build Commandの設定自体はユーザー側で確認する。
 1. **検知ロジック自体(ログイン不要、安全)**: Vercelの「ブランチURL」(`<project>-git-<branch>-<scope>.vercel.app`、pushごとに自動更新される)を使う。テスト用ブランチへpush→ブランチURLを開く(ログイン画面のままでよい)→同じブランチへ2つ目のコミットをpush→開いたままのタブでバナーが出ることを確認する。
+   - **前提確認(2026-11-14追記)**: 上記を行う前に、ブランチURLの`/version.json`(例: `https://<branch-url>/version.json`)を**ログインせずに**ブラウザで直接開き、JSONがそのまま表示されること(`/lp`等へ転送されないこと)を確認する。`middleware.ts`の認証チェックが`/version.json`にも適用され、未ログイン時に転送されてしまう不具合が過去に一度あったため(2026-11-14発見・修正)。
 2. **「必須」の本番確認(本番デプロイを1回伴う)**:
    - 古い世代の画面を開いたままにしておく。
    - `BUILD_GENERATION`を1つ上げたコードを本番にデプロイする。
