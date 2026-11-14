@@ -419,13 +419,14 @@ create policy "user-channel: insert same account"
 
 #### 仕組み
 
-1. **版ファイル(通常更新の検知用)**: ビルド時に`public/version.json`(`{"deploymentId": "..."}`、`VERCEL_DEPLOYMENT_ID`から生成)を書き出す。クライアントは自分のビルド時に焼き込まれた`NEXT_PUBLIC_DEPLOYMENT_ID`と、定期的に取得した`version.json`の値を比較し、異なれば「新しい版があります」バナーを表示する(押すまで再読み込みしない)。
+1. **版ファイル(通常更新の検知用)**: ビルド時に`public/version.json`(`{"deploymentId": "...", "buildGeneration": N}`、`VERCEL_DEPLOYMENT_ID`・`BUILD_GENERATION`から生成。**2026-11-14実装時に`buildGeneration`も追加**。管理画面・マスター画面が「現在の世代」を知る基準として必要なため)を書き出す。クライアントは自分のビルド時に焼き込まれた`NEXT_PUBLIC_DEPLOYMENT_ID`と、定期的に取得した`version.json`の値を比較し、異なれば「新しい版があります」バナーを表示する(押すまで再読み込みしない。**「後で」ボタンで閉じられ、閉じた後は次の新しい`deploymentId`が出るまで再表示しない**)。
    - **キャッシュ対策**: 取得URLに毎回変わる値を付ける(`/version.json?t=${Date.now()}`)。ブラウザキャッシュは確実に回避できるが、**Vercelの静的ファイルはキャッシュをバイパスできない設計との記載があり、Vercel側のキャッシュにどこまで効くかは未検証**。デプロイ直後にどれくらいの遅延で反映されるかは、確認手順で実測する。
 2. **世代番号(必須更新の判定用)**: コードに`BUILD_GENERATION`という整数定数を持つ(人が手で増やす、通常デプロイでは変えない)。DBの`app_settings.min_build_generation`より小さい場合だけ「必須」と判定する。**最初の段階0デプロイでは`BUILD_GENERATION = 1`、`min_build_generation = 0`とする(誰も強制されない状態で導入する)。**
 3. **安全装置**: 強制再読み込みの前に`sessionStorage`へ実行回数・時刻を記録し、**同一タブ2分以内に2回以上**発生したら3回目以降は自動実行を止め、「更新が必要です。他のタブを閉じて再読み込みしてください」という手動操作のバナーに切り替える。
+   - **条件が外れた場合の復帰(2026-11-14実装時に追加)**: 次回の確認で`BUILD_GENERATION >= min_build_generation`に戻ったら、手動バナー・入室中の`forceLeaveMessage`のどちらも次回の問い合わせで自動的に消える(再読み込み不要)。入室中の画面では、メンテナンスによる`forceLeaveMessage`を誤って消さないよう、バージョン関連で自分がセットした場合だけを区別して消す。
 4. **ルートレイアウトへの一元化と役割分担**:
    - `app/layout.tsx`(唯一のレイアウト、全ページを包む)に`VersionWatcherProvider`を追加し、版ファイルの定期取得・バナー表示・`min_build_generation`の既定の問い合わせを行う。
-   - `/`ページ(ログイン〜ロビー〜会議室)の**入室中(`joined`)の間だけ**、ルートレイアウト側の既定の問い合わせを止め(`setInRoomPollingActive(true)`をContext経由で伝える)、既存の20秒ポーリング(`components/AvatarSpace.tsx:6961-6996`、`app_settings`を参照)に`min_build_generation`列を追加して相乗りする(新しい通信は増えない)。必須判定時は既存の`setForceLeaveMessage`→1.5秒後`reload()`をそのまま使う(新しいUIを作らない)。
+   - `/`ページ(ログイン〜ロビー〜会議室)の**入室中(`joined`)の間だけ**、ルートレイアウト側の既定の問い合わせを止め(`setInRoomPollingActive(true)`をContext経由で伝える)、既存の20秒ポーリング(`components/AvatarSpace.tsx:6961-6996`、`app_settings`を参照)に`min_build_generation`列を追加して相乗りする(新しい通信は増えない)。必須判定時は既存の`setForceLeaveMessage`→1.5秒後`reload()`をそのまま使う(新しいUIを作らない)。**必須更新(バージョン強制リロード)はメンテナンスと異なり、`is_master`(運営者)も対象にする**(段階7のような全チャンネル切替では運営者の画面も新しいコードである必要があるため。2026-11-14実装時の判断)。
    - それ以外の画面(ログイン・ロビー・管理画面・マスター画面・プラン選択画面等)は、ルートレイアウトの既定の問い合わせ(下記)を使う。必須判定時は即座に`reload()`する(保護すべき状態が無いため)。
 
 #### 相乗り先クエリの列追加に伴う注意(2026-11-14追記)
@@ -473,7 +474,7 @@ alter table public.app_settings
 
 #### presenceに載せる情報
 
-presenceのtrack payloadに`buildGeneration`(世代番号)と`deploymentId`(`NEXT_PUBLIC_DEPLOYMENT_ID`)の**両方**を追加する。管理画面・マスター画面(`OnlineCount.tsx`・`MasterOnlineStats.tsx`)で3種類に分けて表示する。
+presenceのtrack payloadに`buildGeneration`(世代番号)と`deploymentId`(`NEXT_PUBLIC_DEPLOYMENT_ID`)の**両方**を追加する。管理画面・マスター画面(`OnlineCount.tsx`・`MasterOnlineStats.tsx`)で3種類に分けて表示する。**「現在の本番」の基準となる`version.json`は、画面を開いた時点だけでなく、ルートレイアウトの`VersionWatcherProvider`と同じ間隔(タブ表示中のみ4分おき+タブ復帰時)で定期的に取得し直す(2026-11-14実装時に追加。表示が画面を開いた時点の値のまま固まらないようにするため)。管理画面・マスター画面とも、presenceのチャンネル購読自体はこの取得し直しのたびに張り直さず、集計(人数カウント)だけを再計算する。**
 - **デプロイIDが現行と違う人数**: **閲覧者自身のタブのdeploymentIdではなく、版ファイル(`version.json`)から取得した「現在の本番のdeploymentId」を基準にして比較する**(閲覧者自身のタブが古い場合、自分のIDを基準にすると数え方が逆転してしまうため)。異なるpresenceエントリの数を数える。
 - **世代が古い人数**: `buildGeneration`が、版ファイル経由で分かる現在の世代、または`min_build_generation`より小さいエントリの数。
 - **版不明の人数**: `buildGeneration`/`deploymentId`のいずれも無いエントリの数(段階0導入前から開かれていたタブ)。
@@ -493,6 +494,7 @@ presenceのtrack payloadに`buildGeneration`(世代番号)と`deploymentId`(`NEX
 
 #### 確認手順
 
+0. **版ファイルが生成されていることの確認(本番デプロイ後、2026-11-14追記)**: 本番デプロイ後、`https://globy.grovina-studio.com/version.json`を開き、`deploymentId`に文字列が入っていること(`null`でないこと)を確認する。**VercelのBuild Commandが`npm run build`以外(例: `next build`を直接指定している等)の場合、`prebuild`スクリプト(`scripts/write-version-file.mjs`)が実行されず版ファイルが作られない。** Build Commandの設定自体はユーザー側で確認する。
 1. **検知ロジック自体(ログイン不要、安全)**: Vercelの「ブランチURL」(`<project>-git-<branch>-<scope>.vercel.app`、pushごとに自動更新される)を使う。テスト用ブランチへpush→ブランチURLを開く(ログイン画面のままでよい)→同じブランチへ2つ目のコミットをpush→開いたままのタブでバナーが出ることを確認する。
 2. **「必須」の本番確認(本番デプロイを1回伴う)**:
    - 古い世代の画面を開いたままにしておく。

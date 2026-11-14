@@ -4,6 +4,9 @@ node_modules/
 .env.local
 .env*.local
 deploy/livekit/livekit-node/livekit.effective.yaml
+# 段階0: ビルドごとに書き出す版ファイル(scripts/write-version-file.mjs)。
+# デプロイごとに内容が変わるため追跡しない。
+public/version.json
 *.log
 .DS_Store
 tsconfig.tsbuildinfo

@@ -787,6 +787,11 @@ alter table public.app_settings
 alter table public.app_settings
   add column if not exists maintenance_ends_at timestamptz;
 
+-- 段階0(docs/realtime-authorization-plan.md 6-2節)の必須更新判定に使う
+-- 世代番号のしきい値。デフォルト0=誰も強制されない。
+alter table public.app_settings
+  add column if not exists min_build_generation integer not null default 0;
+
 alter table public.app_settings enable row level security;
 
 drop policy if exists "app_settings: select authenticated" on public.app_settings;

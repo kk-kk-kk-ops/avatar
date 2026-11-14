@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/write-version-file.mjs",
     "dev": "next dev",
     "dev:indigo": "node scripts/dev-indigo.mjs",
+    "prebuild": "node scripts/write-version-file.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

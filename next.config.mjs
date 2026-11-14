@@ -1,6 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // 段階0(docs/realtime-authorization-plan.md 6-2節): 自分がどのデプロイで
+  // ビルドされたかをクライアント側で知るための値。VERCEL_DEPLOYMENT_IDは
+  // Vercel上のビルドでのみ設定され、ローカル開発では未設定(undefined)の
+  // ままになる(lib/versionWatcher.tsがその場合チェック自体を行わない)。
+  env: {
+    NEXT_PUBLIC_DEPLOYMENT_ID: process.env.VERCEL_DEPLOYMENT_ID,
+  },
   // ページを常に最新の状態で取得させる(ブラウザ・Vercelのキャッシュを無効化)。
   // これにより、デプロイ後にリロードすればキャッシュクリア不要で最新版が表示される。
   async headers() {

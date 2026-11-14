@@ -342,6 +342,13 @@ const ja: Record<string, string> = {
   "room.planChangedByAdmin": "管理者がプランを変更したため、まもなく退出します...",
   "room.roomFull": "このルームは満員です(最大{max}人)。しばらくしてから再度お試しください。",
   "room.maintenanceForceLeave": "メンテナンスのため、まもなく退出します...",
+  "room.versionForceReload": "新しい版に更新するため、まもなく再読み込みします...",
+  "room.versionManualReloadRequired": "更新が必要です。他のタブを閉じて再読み込みしてください。",
+
+  "versionWatcher.updateAvailable": "新しい版があります。",
+  "versionWatcher.updateButton": "更新",
+  "versionWatcher.laterButton": "後で",
+  "versionWatcher.manualReloadRequired": "更新が必要です。他のタブを閉じて再読み込みしてください。",
 
   "tabs.participants": "参加者",
   "tabs.chat": "チャット",
@@ -412,6 +419,7 @@ const ja: Record<string, string> = {
 
   "admin.onlineCount": "オンライン人数",
   "admin.peopleCount": "{count}人",
+  "admin.versionCounts": "デプロイIDが現行と違う: {deployMismatch}人 / 世代が古い: {oldGeneration}人 / 版不明: {versionUnknown}人",
   "admin.forceLeave": "強制退出",
   "admin.forceLeaveConfirm":
     "{name}さんを強制退出させ、管理者が解除するまで再入室できないようにします。よろしいですか?",
@@ -827,6 +835,13 @@ const en: Record<string, string> = {
   "room.planChangedByAdmin": "An admin changed the plan, so you'll be disconnected shortly...",
   "room.roomFull": "This room is full (max {max} people). Please try again later.",
   "room.maintenanceForceLeave": "You'll be disconnected shortly for maintenance...",
+  "room.versionForceReload": "Reloading shortly to update to the latest version...",
+  "room.versionManualReloadRequired": "An update is required. Please close other tabs and reload.",
+
+  "versionWatcher.updateAvailable": "A new version is available.",
+  "versionWatcher.updateButton": "Update",
+  "versionWatcher.laterButton": "Later",
+  "versionWatcher.manualReloadRequired": "An update is required. Please close other tabs and reload.",
 
   "tabs.participants": "Participants",
   "tabs.chat": "Chat",
@@ -898,6 +913,7 @@ const en: Record<string, string> = {
 
   "admin.onlineCount": "Online now",
   "admin.peopleCount": "{count}",
+  "admin.versionCounts": "Deploy ID differs: {deployMismatch} / Old generation: {oldGeneration} / Unknown version: {versionUnknown}",
   "admin.forceLeave": "Remove",
   "admin.forceLeaveConfirm":
     "This will remove {name} and prevent them from rejoining until an admin allows it. Are you sure?",

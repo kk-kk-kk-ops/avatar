@@ -25,6 +25,12 @@ import {
   type MovePayload,
 } from "@/lib/indigoPositionClient";
 import BugReportModal from "@/components/BugReportModal";
+import { useVersionWatcher } from "@/components/VersionWatcherProvider";
+import {
+  BUILD_GENERATION,
+  DEPLOYMENT_ID,
+  recordMandatoryReloadAttempt,
+} from "@/lib/versionWatcher";
 import { useLocale } from "@/lib/i18n/LocaleContext";
 import { translate, type Locale } from "@/lib/i18n/translations";
 import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
@@ -778,6 +784,7 @@ export default function AvatarSpace({
   const [supabase] = useState(() => createClient());
 
   const { locale, setLocale, t } = useLocale();
+  const { setInRoomPollingActive } = useVersionWatcher();
   // ログイン前にブラウザのクッキーで選んだ言語より、アカウントに保存済みの
   // 言語設定(profiles.locale)を優先する。ただしクッキー側が既にenの場合
   // (この場で選んだ、あるいは別タブで既に切り替えた直後など)まで強制的に
@@ -5331,6 +5338,8 @@ export default function AvatarSpace({
       y: spawn.y,
       dir: "down",
       moving: false,
+      buildGeneration: BUILD_GENERATION,
+      deploymentId: DEPLOYMENT_ID,
     };
     selfState.current = initial;
     // 会議室退室時・タブ復帰時に「自分が設定しているステータス」へ戻す
@@ -6964,27 +6973,93 @@ export default function AvatarSpace({
   // 一定間隔でapp_settingsの最新値を取り直す。マスター以外が期間内に
   // 入ってしまっている場合は、既存のforce-leave機構(既に用意されている
   // forceLeaveMessage表示→リロード)と同じ見せ方で退出させる。
+  //
+  // 段階0(docs/realtime-authorization-plan.md 6-2節)の必須更新判定
+  // (min_build_generation)も、新しい通信を増やさないためこの同じ
+  // 問い合わせに相乗りさせる。列がまだ本番に反映されていない場合、
+  // PostgRESTは列を含むselect全体をエラーにして返す(dataがnullになる)
+  // ため、その場合はメンテナンス項目だけのselectにフォールバックして
+  // メンテナンス検知自体は止めない(縮退運転。設計書6-2節参照)。
+  // 直前のポーリングで「必須更新」のメッセージを自分がセットしたかどうか。
+  // 条件が外れた時に、メンテナンス等の別のforceLeaveMessageを誤って
+  // 消さないよう、自分がセットした場合だけ消すための目印。
+  const versionForceMessageActiveRef = useRef(false);
   useEffect(() => {
     if (!joined) return;
     let cancelled = false;
     const checkMaintenance = async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("app_settings")
         .select(
-          "maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+          "maintenance_enabled, maintenance_starts_at, maintenance_ends_at, min_build_generation",
         )
         .eq("id", "default")
         .maybeSingle();
-      if (cancelled || !data) return;
+      let row: {
+        maintenance_enabled?: boolean | null;
+        maintenance_starts_at?: string | null;
+        maintenance_ends_at?: string | null;
+        min_build_generation?: number | null;
+      } | null = data;
+      if (cancelled) return;
+      if (error || !row) {
+        // eslint-disable-next-line no-console
+        console.error(
+          "メンテナンス確認の問い合わせに失敗しました" +
+            "(min_build_generation列が未反映の可能性があります)。" +
+            "メンテナンス項目のみで再試行します。",
+          error,
+        );
+        const fallback = await supabase
+          .from("app_settings")
+          .select(
+            "maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+          )
+          .eq("id", "default")
+          .maybeSingle();
+        if (cancelled) return;
+        if (!fallback.data) {
+          // eslint-disable-next-line no-console
+          console.error(
+            "メンテナンス確認のフォールバック問い合わせにも失敗しました",
+            fallback.error,
+          );
+          return;
+        }
+        row = fallback.data;
+      }
       const next: MaintenanceSettings = {
-        enabled: data.maintenance_enabled ?? false,
-        startsAt: data.maintenance_starts_at ?? null,
-        endsAt: data.maintenance_ends_at ?? null,
+        enabled: row.maintenance_enabled ?? false,
+        startsAt: row.maintenance_starts_at ?? null,
+        endsAt: row.maintenance_ends_at ?? null,
       };
       setMaintenance(next);
       if (!isMaster && isMaintenanceActive(next)) {
         setForceLeaveMessage(t("room.maintenanceForceLeave"));
         setTimeout(() => window.location.reload(), 1500);
+        return;
+      }
+      // 必須更新の判定(min_build_generation列が取得できた場合のみ)。
+      // メンテナンスとは異なり、is_master(運営者)も対象にする
+      // (段階7のような全チャンネル切替では運営者の画面も対象外にできない。
+      // 設計書6-2節では明記していなかった点のため、実装上の判断として
+      // 報告する)。
+      const minGeneration = row.min_build_generation;
+      if (typeof minGeneration !== "number") return;
+      if (BUILD_GENERATION < minGeneration) {
+        versionForceMessageActiveRef.current = true;
+        if (recordMandatoryReloadAttempt()) {
+          setForceLeaveMessage(t("room.versionForceReload"));
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          setForceLeaveMessage(t("room.versionManualReloadRequired"));
+        }
+      } else if (versionForceMessageActiveRef.current) {
+        // 条件が外れた(DBの値を下げた等)。自分がセットしたバージョン関連の
+        // メッセージだけを消す(メンテナンス等、他の理由のメッセージには
+        // 触れない)。
+        versionForceMessageActiveRef.current = false;
+        setForceLeaveMessage(null);
       }
     };
     checkMaintenance();
@@ -6994,6 +7069,13 @@ export default function AvatarSpace({
       clearInterval(interval);
     };
   }, [joined, isMaster, supabase]);
+
+  // ---- 段階0: 入室中はルートレイアウト側のmin_build_generation確認を
+  // 止める(上の既存ポーリングに相乗りしているため、二重に問い合わせない)。
+  useEffect(() => {
+    setInRoomPollingActive(joined);
+    return () => setInRoomPollingActive(false);
+  }, [joined, setInRoomPollingActive]);
 
   // ---- ブラウザを閉じる/タブを閉じる際、明示的に退室を通知する ----
   // 何もしないと、Supabase側が「切断された」と気づくまで数十秒かかることがあり、

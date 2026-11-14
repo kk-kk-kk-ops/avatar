@@ -59,6 +59,12 @@ export type PlayerState = {
   // ("downloading"/"initializing"は準備中、"ready"は準備完了)。
   // "idle"/"error"/未設定の場合はバッジを出さない。
   transcriptionStatus?: "downloading" | "initializing" | "ready";
+  // 段階0(docs/realtime-authorization-plan.md 6-2節)。古い画面が
+  // どれだけ残っているかを管理画面・マスター画面で把握するための情報。
+  // 段階0導入前から開かれていたタブはこの2つを送らない(「版不明」として
+  // 扱う)。
+  buildGeneration?: number;
+  deploymentId?: string | null;
 };
 
 export const PRESENCE_STATUS_COLORS: Record<PresenceStatus, string> = {

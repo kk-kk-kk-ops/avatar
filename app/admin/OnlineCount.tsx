@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { PRESENCE_STATUS_COLORS, type PlayerState, type Room } from "@/lib/types";
 import { kickParticipant, unbanParticipant } from "./actions";
 import { useLocale } from "@/lib/i18n/LocaleContext";
+import { useCurrentVersionInfo } from "@/lib/useCurrentVersionInfo";
 
 type BannedParticipant = {
   userId: string;
@@ -43,6 +44,13 @@ export default function OnlineCount({
   // 依存させる。
   const roomIds = rooms.map((room) => room.id).join(",");
 
+  // 段階0(docs/realtime-authorization-plan.md 6-2節)。「現在の本番」が
+  // どのデプロイ・世代かを把握するため、version.jsonを定期的に取得する
+  // (閲覧者自身のタブが古い場合に基準がずれないよう、閲覧者自身の値は
+  // 使わない)。タブ表示中のみ、VersionWatcherProviderと同じ間隔で
+  // 取得し直す。
+  const currentVersion = useCurrentVersionInfo();
+
   useEffect(() => {
     if (rooms.length === 0) return;
     const supabase = createClient();
@@ -70,6 +78,34 @@ export default function OnlineCount({
 
   const participants = Object.entries(entriesByRoom).flatMap(
     ([roomId, list]) => list.map((player) => ({ roomId, player })),
+  );
+
+  // 段階0: 版不明(段階0導入前から開かれていたタブ)/世代が古い/
+  // デプロイIDが現在の本番と異なる人数を分けて数える(設計書6-2節)。
+  const versionCounts = participants.reduce(
+    (acc, { player }) => {
+      if (
+        typeof player.buildGeneration !== "number" ||
+        player.deploymentId === undefined
+      ) {
+        acc.versionUnknown += 1;
+        return acc;
+      }
+      if (
+        currentVersion &&
+        player.buildGeneration < currentVersion.buildGeneration
+      ) {
+        acc.oldGeneration += 1;
+      }
+      if (
+        currentVersion?.deploymentId &&
+        player.deploymentId !== currentVersion.deploymentId
+      ) {
+        acc.deployMismatch += 1;
+      }
+      return acc;
+    },
+    { versionUnknown: 0, oldGeneration: 0, deployMismatch: 0 },
   );
 
   const handleKick = async (roomId: string, player: PlayerState) => {
@@ -105,6 +141,13 @@ export default function OnlineCount({
       <p className="text-xs font-semibold text-slate-500">{t("admin.onlineCount")}</p>
       <p className="mt-1 text-3xl font-bold text-slate-800">
         {t("admin.peopleCount", { count: String(participants.length) })}
+      </p>
+      <p className="mt-1 text-[11px] text-slate-500">
+        {t("admin.versionCounts", {
+          deployMismatch: String(versionCounts.deployMismatch),
+          oldGeneration: String(versionCounts.oldGeneration),
+          versionUnknown: String(versionCounts.versionUnknown),
+        })}
       </p>
       {kickError && (
         <p className="mt-2 text-xs text-red-600">{kickError}</p>
