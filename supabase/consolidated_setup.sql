@@ -108,10 +108,25 @@ begin
       if new.role is not null or new.is_master is true then
         raise exception 'role/is_masterはこの経路からは設定できません';
       end if;
+      -- account_idも本人による自己書き換えを禁止する(2026-11-15追加)。
+      -- 利用者のログインセッションクライアントから他アカウントのIDに
+      -- 書き換えられると、rooms/accounts等のRLSやlivekit-token・
+      -- indigo-tokenの認可判定を正規に通過してしまい、他アカウントの
+      -- ルーム・チャット・LiveKit通話・位置同期への侵入や、他アカウントの
+      -- accounts行(招待トークン・Stripe顧客情報等)の閲覧が可能になる
+      -- 欠陥が見つかったため。正規の書き込み経路(lib/accountProvisioning.ts・
+      -- lib/joinAccountViaInvite.ts)はいずれもservice_role経由のため、
+      -- この保護による機能への影響はない。
+      if new.account_id is not null then
+        raise exception 'account_idはこの経路からは設定できません';
+      end if;
     elsif tg_op = 'UPDATE' then
       if new.role is distinct from old.role
          or new.is_master is distinct from old.is_master then
         raise exception 'role/is_masterはこの経路からは変更できません';
+      end if;
+      if new.account_id is distinct from old.account_id then
+        raise exception 'account_idはこの経路からは変更できません';
       end if;
     end if;
   elsif tg_table_name = 'accounts' then
