@@ -142,6 +142,13 @@ begin
       if new.trial_ends_at is not null or new.trial_used is true then
         raise exception 'trial_ends_at/trial_usedはこの経路からは設定できません';
       end if;
+      -- stripe_customer_id/stripe_subscription_idも同じ理由でINSERT時の
+      -- 設定を禁止する(2026-11-15追加、段階2)。正規のINSERT(新規アカウント
+      -- 作成)はこの2列を設定しない。
+      if new.stripe_customer_id is not null
+         or new.stripe_subscription_id is not null then
+        raise exception 'stripe_customer_id/stripe_subscription_idはこの経路からは設定できません';
+      end if;
     elsif tg_op = 'UPDATE' then
       if new.plan is distinct from old.plan then
         raise exception 'planはこの経路からは変更できません';
@@ -149,6 +156,19 @@ begin
       if new.trial_ends_at is distinct from old.trial_ends_at
          or new.trial_used is distinct from old.trial_used then
         raise exception 'trial_ends_at/trial_usedはこの経路からは変更できません';
+      end if;
+      -- stripe_customer_id/stripe_subscription_idのUPDATE時の変更を拒否する
+      -- (2026-11-15追加、段階2)。正規の書き込み(app/billing/checkout/
+      -- actions.ts)は段階1でservice_role化済み。
+      if new.stripe_customer_id is distinct from old.stripe_customer_id
+         or new.stripe_subscription_id is distinct from old.stripe_subscription_id then
+        raise exception 'stripe_customer_id/stripe_subscription_idはこの経路からは変更できません';
+      end if;
+      -- livekit_server_idのUPDATE時の変更を拒否する(2026-11-15追加、段階2)。
+      -- INSERT時は新規アカウント作成のラウンドロビン割り当て
+      -- (lib/accountProvisioning.ts)が利用者のクライアントで行うため制限しない。
+      if new.livekit_server_id is distinct from old.livekit_server_id then
+        raise exception 'livekit_server_idはこの経路からは変更できません';
       end if;
     end if;
   end if;
