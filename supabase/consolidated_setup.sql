@@ -736,6 +736,30 @@ $$;
 revoke all on function public.is_banned_for_room(uuid) from public;
 grant execute on function public.is_banned_for_room(uuid) to anon, authenticated;
 
+-- 8d. 自分の所属アカウントの、ロビー画面表示に必要な最小限の情報
+--     (plan, invite_token)だけを返す関数(2026-11-15追加、段階4)。
+--     BAN中(is_banned_for_accountがtrue)の場合は何も返さない(0行)。
+create or replace function public.get_own_account_guest_info()
+returns table (
+  plan text,
+  invite_token text
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select a.plan, a.invite_token
+  from public.accounts a
+  join public.profiles p on p.account_id = a.id
+  where p.user_id = auth.uid()
+    and not public.is_banned_for_account(a.id);
+$$;
+
+revoke all on function public.get_own_account_guest_info() from public;
+revoke all on function public.get_own_account_guest_info() from anon;
+grant execute on function public.get_own_account_guest_info() to authenticated;
+
 
 -- ------------------------------------------------------------
 -- 9. 招待トークンからアカウントを検索する関数(最終形: id/name/plan/

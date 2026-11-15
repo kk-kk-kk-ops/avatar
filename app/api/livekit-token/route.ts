@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { resolveLivekitServerCredentials } from "@/lib/livekitServers";
 
 // components/AvatarSpace.tsxから本番導線として呼ばれている。
@@ -87,8 +88,13 @@ export async function POST(request: Request) {
   // このルームが属するアカウントに固定で割り当てられたLiveKitサーバーを使う
   // (単一送信元からの同時接続50人規模でWebARENA Indigo側の遮断が発生する
   // ことが判明したため、契約時点でサーバーを固定する方式にした。
-  // lib/livekitServers.ts参照)。
-  const { data: account } = await supabase
+  // lib/livekitServers.ts参照)。accountIdは上の通常ルート/viewOnlyルートの
+  // いずれでも、既にサーバー側で検証済みの値(本人のルームの所有アカウント、
+  // またはinviteTokenの一致が確認できたアカウント)のため、ここはRLSクライアント
+  // ではなくservice_roleで読む(2026-11-15、段階4。accounts: select ownを
+  // 将来owner_user_idのみに絞った場合でも、ゲスト/viewOnlyの利用者が
+  // ここで0行になって通話できなくなることを避けるため)。
+  const { data: account } = await createServiceRoleClient()
     .from("accounts")
     .select("livekit_server_id")
     .eq("id", accountId)

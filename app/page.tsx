@@ -84,7 +84,7 @@ async function renderRoomJoin(
 ) {
   const [
     { data: profile },
-    { data: account },
+    { data: guestInfoRows },
     { data: roomRows },
     { data: appSettings },
   ] = await Promise.all([
@@ -93,11 +93,14 @@ async function renderRoomJoin(
       .select("display_name, locale, avatar_mode, avatar_icon_url")
       .eq("user_id", user.id)
       .maybeSingle(),
-    supabase
-      .from("accounts")
-      .select("plan, invite_token")
-      .eq("id", state.accountId)
-      .single(),
+    // accountsの直接SELECTではなく、自分のprofiles.account_idが指すアカウント
+    // のplan/invite_tokenだけを返すSECURITY DEFINER関数を使う(2026-11-15、
+    // 段階4)。owner_user_idに関わらず持ち主・ゲストどちらでも同じ関数で
+    // 取得できる(state.accountIdもprofiles.account_idから導出されるため、
+    // 結果は常に一致する)。BAN中のゲストの場合は0行になる(下のBAN確認
+    // ブロックで別途BannedNoticeを返すため、この時点ではplan等が未解決でも
+    // 問題ない。詳細はこの関数の直後のコメント参照)。
+    supabase.rpc("get_own_account_guest_info"),
     supabase
       .from("rooms")
       .select("id, account_id, template_id, name, preview_image")
@@ -127,6 +130,7 @@ async function renderRoomJoin(
     })),
   );
 
+  const account = guestInfoRows?.[0] ?? null;
   const plan = (account?.plan as PlanId) ?? "free";
 
   // このルームの中では、今いるアカウントの管理者(admin)である場合だけ
