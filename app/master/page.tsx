@@ -49,12 +49,18 @@ export default async function MasterPage() {
   // ことを利用している)。
   let ownInviteToken: string | null = null;
   if (state.type !== "no-account") {
-    const { data: ownAccount } = await supabase
-      .from("accounts")
-      .select("invite_token")
-      .eq("id", state.accountId)
-      .maybeSingle();
-    ownInviteToken = ownAccount?.invite_token ?? null;
+    // accountsの直接SELECTではなく、自分のprofiles.account_idが指すアカウント
+    // の情報だけを返すSECURITY DEFINER関数を使う(2026-11-15、段階5)。
+    // isMasterはtype(admin/guest)と独立した軸のため、マスターが他人の
+    // アカウントの恒久的なゲストである場合もここを通るが、その場合でも
+    // 「自分が今いるアカウント」の招待トークンを返すという目的に変わりは
+    // ない。service_role直読みにしないのは、この関数がBAN中は何も返さない
+    // (is_banned_for_account)仕様のため、BANされたゲストであるマスターに
+    // 招待トークンを渡してしまうことを避けられるから。
+    const { data: ownAccountRows } = await supabase.rpc(
+      "get_own_account_guest_info",
+    );
+    ownInviteToken = ownAccountRows?.[0]?.invite_token ?? null;
   }
 
   // マスター権限を持つユーザーが所有するアカウントは、集計上は課金対象の

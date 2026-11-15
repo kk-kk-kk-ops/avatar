@@ -336,13 +336,14 @@ create policy "profiles: select master"
 -- 4. accounts: SELECTポリシー(profiles.account_idを参照するため
 --    profiles作成後にここで定義する)
 -- ------------------------------------------------------------
+-- 2026-11-15追加・段階5: profiles.account_id経由の閲覧(ゲスト・viewOnlyが
+-- 自分の所属先アカウントの行を直接読める経路)を廃止し、owner_user_idが
+-- 自分である行のみに限定する。ゲストに必要な最小限の情報(plan,
+-- invite_token)はget_own_account_guest_info()経由で別途提供する(節8d)。
 drop policy if exists "accounts: select own" on public.accounts;
 create policy "accounts: select own"
   on public.accounts for select
-  using (
-    auth.uid() = owner_user_id
-    or id in (select account_id from public.profiles where user_id = auth.uid())
-  );
+  using (auth.uid() = owner_user_id);
 
 drop policy if exists "accounts: select master" on public.accounts;
 create policy "accounts: select master"
