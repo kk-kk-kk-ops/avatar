@@ -221,7 +221,13 @@ alter table public.accounts
 drop policy if exists "accounts: insert own" on public.accounts;
 create policy "accounts: insert own"
   on public.accounts for insert
-  with check (auth.uid() = owner_user_id);
+  with check (
+    auth.uid() = owner_user_id
+    and not exists (
+      select 1 from public.profiles
+      where user_id = auth.uid() and account_id is not null
+    )
+  );
 
 drop policy if exists "accounts: update own" on public.accounts;
 create policy "accounts: update own"
