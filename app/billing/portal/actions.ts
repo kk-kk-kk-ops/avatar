@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type Stripe from "stripe";
 import { createClient } from "@/lib/supabase/server";
+import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
 import { getStripe, priceIdForPlan, isPaidPlanId } from "@/lib/stripe";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
@@ -41,12 +42,13 @@ export async function createPortalSession(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "ログインが必要です" };
 
-  const { data: account } = await supabase
-    .from("accounts")
-    .select("id, stripe_customer_id, stripe_subscription_id")
-    .eq("owner_user_id", user.id)
-    .maybeSingle();
-  if (!account) return { ok: false, error: "アカウントが見つかりません" };
+  // 2026-11-15追加: 「ログイン中の人が、自分自身の正当なアカウントの
+  // ownerであること」をprofiles.role==="admin"・accounts.owner_user_id・
+  // profiles.account_idの3条件で再確認する(accountsが複数行一致した
+  // 場合も拒否)。詳細はlib/billingAccountGuard.ts参照。
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) return verified;
+  const account = verified.account;
   if (!account.stripe_customer_id) {
     return { ok: false, error: "お支払い情報がまだ登録されていません" };
   }

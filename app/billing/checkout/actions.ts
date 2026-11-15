@@ -3,7 +3,9 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { provisionAccountForUser } from "@/lib/accountProvisioning";
+import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
 import { getStripe, priceIdForPlan, isPaidPlanId, taxRateId } from "@/lib/stripe";
 import { PLANS } from "@/lib/types";
 
@@ -34,12 +36,14 @@ export async function createCheckoutSession(planId: string): Promise<ActionResul
   if (!provision.ok) return provision;
   const accountId = provision.accountId;
 
-  const { data: account } = await supabase
-    .from("accounts")
-    .select("id, stripe_customer_id, stripe_subscription_id")
-    .eq("id", accountId)
-    .single();
-  if (!account) return { ok: false, error: "アカウントが見つかりません" };
+  // 2026-11-15追加: provisionAccountForUserが返したaccountIdが、本当に
+  // 本人が所有する正当なアカウントかを再確認する(profiles.role==="admin"・
+  // accounts.owner_user_id===本人・profiles.account_idとaccounts.idと
+  // accountIdの一致、の3条件)。画面から渡された値ではなくサーバー側で
+  // 都度解決した値のみを使う。詳細はlib/billingAccountGuard.ts参照。
+  const verified = await requireVerifiedBillingAccount(supabase, user.id, accountId);
+  if (!verified.ok) return verified;
+  const account = verified.account;
 
   // 既にStripe上で有効なサブスクリプションがあるアカウントは、この経路
   // (新規Checkout)ではなくCustomer Portal経由でのプラン変更に誘導する
@@ -67,11 +71,16 @@ export async function createCheckoutSession(planId: string): Promise<ActionResul
         metadata: { accountId },
       });
       customerId = customer.id;
-      // stripe_customer_idは権限昇格防止トリガー(consolidated_setup.sql)の
-      // 対象外の列(planのみが対象)のため、通常のRLSスコープのクライアントで
-      // 更新してよい(「accounts: update own」ポリシーがowner_user_id=
-      // auth.uid()を許可する)。
-      const { error } = await supabase
+      // 2026-11-15変更: stripe_customer_idの保存はservice_role経由に変更。
+      // 以前はRLSスコープのクライアントで更新していたが、この値を利用者の
+      // ログインセッションから書き込める状態だと、profiles.account_idの
+      // 書き換えや偽accounts行の作成と組み合わせて他アカウントのStripe
+      // カスタマーを乗っ取る経路になることが判明した(2026-11-15調査)。
+      // ここで保存する値はStripe API自身の応答(customer.id)であり利用者
+      // からの入力ではないため、service_role化しても安全性は変わらない。
+      // 更新対象はaccountId(provisionAccountForUserの戻り値・サーバー側で
+      // 解決した値)に限定する。
+      const { error } = await createServiceRoleClient()
         .from("accounts")
         .update({ stripe_customer_id: customerId })
         .eq("id", accountId);
