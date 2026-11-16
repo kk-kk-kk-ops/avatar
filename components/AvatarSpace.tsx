@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import {
   DisconnectReason,
@@ -100,6 +101,15 @@ import {
 } from "./uploadChatImage";
 import { deleteUserIconClient, uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
+
+// 管理画面モーダル化 M-1(2026-11)。管理者がボタンを押すまでチャンクを
+// 読み込ませないため、next/dynamicでモジュールスコープに定義する
+// (AvatarSpaceLoader.tsxと同じ方式)。showAdminOccupantsModalがtrueに
+// なって初めて下のJSXでレンダリングされ、その時点で初めてfetchされる。
+const AdminOccupantsModal = dynamic(
+  () => import("@/components/AdminOccupantsModal"),
+  { ssr: false },
+);
 
 const COLORS = [
   "#F97316",
@@ -1958,6 +1968,35 @@ export default function AvatarSpace({
   const selfId = useRef<string>(randomId());
   const selfState = useRef<PlayerState | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+
+  // 管理画面モーダル化 M-1(2026-11)。会議室画面の「在室者」モーダル
+  // (閲覧専用、isAccountAdminのみ)。AvatarSpace.tsxが既に保持している
+  // presence(players)をそのまま使い、モーダル専用の新しい購読は作らない
+  // (購読を二重化すると、モーダルを閉じた際の後片付けで会議室側の
+  // 購読まで巻き込んで壊すおそれがあるため)。
+  const [showAdminOccupantsModal, setShowAdminOccupantsModal] =
+    useState(false);
+  // showAdminOccupantsModalがfalseの間はplayersの中身に関わらずmapを
+  // 作らず前回値(空配列)をそのまま返すため、presence更新のたびに
+  // 発生する再描画(players state自体の更新によるAvatarSpace全体の
+  // 再描画は、位置同期のため既存の挙動でありこのモーダルとは無関係)に
+  // このモーダル用の一覧生成コストが上乗せされるのは、モーダルを開いて
+  // いる間だけになる。
+  const adminOccupants = useMemo(() => {
+    if (!showAdminOccupantsModal) return [];
+    return Object.values(players)
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        isSelf: p.id === selfId.current,
+        micOn: !!p.micOn,
+        inCall: !!p.inCall,
+      }))
+      .sort((a, b) => {
+        if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+        return a.name.localeCompare(b.name, "ja");
+      });
+  }, [showAdminOccupantsModal, players]);
 
   // presence(track())送信の一元化(2026-11)。Supabase Realtimeの制限
   // (クライアントあたり30秒間に5回まで、超えるとチャンネルごと強制切断
@@ -13920,6 +13959,15 @@ export default function AvatarSpace({
                         {t("lobby.goToAdmin")}
                       </Link>
                     )}
+                    {isAccountAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminOccupantsModal(true)}
+                        className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
+                      >
+                        {t("room.showOccupants")}
+                      </button>
+                    )}
                     {isMaster && (
                       <Link
                         href="/master"
@@ -14306,6 +14354,19 @@ export default function AvatarSpace({
           reporterUserId={authUserIdRef.current}
           reporterName={settingsNameInput.trim()}
           onClose={() => setShowBugReportModal(false)}
+        />
+      )}
+
+      {/* 管理画面モーダル化 M-1(2026-11)。showAdminOccupantsModalがtrueの
+          間だけマウントされる(= next/dynamicのチャンクもこの時点で初めて
+          fetchされ、閉じればアンマウントされてpresence更新の影響も受け
+          なくなる)。adminOccupantsはshowAdminOccupantsModalがfalseの間は
+          常に空配列を返すuseMemoのため、開いている間だけ一覧生成コストが
+          発生する(components/AvatarSpace.tsx:1972-1999のadminOccupants参照)。 */}
+      {showAdminOccupantsModal && (
+        <AdminOccupantsModal
+          occupants={adminOccupants}
+          onClose={() => setShowAdminOccupantsModal(false)}
         />
       )}
 

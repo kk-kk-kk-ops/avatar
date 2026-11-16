@@ -377,6 +377,13 @@ const ja: Record<string, string> = {
 
   "room.goToMasterPanel": "マスター画面へ",
 
+  "room.showOccupants": "在室者を表示",
+  "room.occupantsModalTitle": "在室者一覧",
+  "room.occupantsModalCount": "{count}人が在室中",
+  "room.occupantsModalSelfTag": "(自分)",
+  "room.occupantsModalEmpty": "在室者がいません",
+  "room.occupantsModalInCallTag": "ビデオ通話中",
+
   "settings.micLabel": "マイク",
   "settings.noiseSuppressionLabel": "ノイズ抑制",
   "settings.speechBubbleLabel": "吹き出し",
@@ -869,6 +876,13 @@ const en: Record<string, string> = {
   "presence.chatOnly": "Chat only",
 
   "room.goToMasterPanel": "Go to master screen",
+
+  "room.showOccupants": "Show occupants",
+  "room.occupantsModalTitle": "Occupants",
+  "room.occupantsModalCount": "{count} people present",
+  "room.occupantsModalSelfTag": "(you)",
+  "room.occupantsModalEmpty": "No one is here",
+  "room.occupantsModalInCallTag": "On video call",
 
   "settings.micLabel": "Mic",
   "settings.noiseSuppressionLabel": "Noise suppression",
