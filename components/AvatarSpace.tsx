@@ -111,6 +111,14 @@ const AdminOccupantsModal = dynamic(
   { ssr: false },
 );
 
+// 管理画面モーダル化 M-3(2026-11)。招待URL・招待者名・ルームデザインの
+// 表示・変更。AdminOccupantsModal(M-1・M-2、在室者・強制退出・BAN解除)
+// とは別のモーダルにして、既存のものには一切触れない。
+const AdminInviteRoomModal = dynamic(
+  () => import("@/components/AdminInviteRoomModal"),
+  { ssr: false },
+);
+
 const COLORS = [
   "#F97316",
   "#3B82F6",
@@ -1975,6 +1983,9 @@ export default function AvatarSpace({
   // (購読を二重化すると、モーダルを閉じた際の後片付けで会議室側の
   // 購読まで巻き込んで壊すおそれがあるため)。
   const [showAdminOccupantsModal, setShowAdminOccupantsModal] =
+    useState(false);
+  // M-3(2026-11)。在室者モーダルとは独立したstate・ボタン(選択肢A)。
+  const [showAdminInviteRoomModal, setShowAdminInviteRoomModal] =
     useState(false);
   // showAdminOccupantsModalがfalseの間はplayersの中身に関わらずmapを
   // 作らず前回値(空配列)をそのまま返すため、presence更新のたびに
@@ -13969,6 +13980,15 @@ export default function AvatarSpace({
                         {t("room.showOccupants")}
                       </button>
                     )}
+                    {isAccountAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminInviteRoomModal(true)}
+                        className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
+                      >
+                        {t("room.inviteRoomModalTitle")}
+                      </button>
+                    )}
                     {isMaster && (
                       <Link
                         href="/master"
@@ -14369,6 +14389,15 @@ export default function AvatarSpace({
           occupants={adminOccupants}
           roomId={roomId}
           onClose={() => setShowAdminOccupantsModal(false)}
+        />
+      )}
+
+      {/* 管理画面モーダル化 M-3(2026-11)。招待URL・招待者名・ルーム
+          デザインの表示・変更。このモーダル自身はRealtimeチャンネルを
+          一切購読しない(読み取り・操作はすべてServer Action経由)。 */}
+      {showAdminInviteRoomModal && (
+        <AdminInviteRoomModal
+          onClose={() => setShowAdminInviteRoomModal(false)}
         />
       )}
 

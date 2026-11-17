@@ -384,6 +384,10 @@ const ja: Record<string, string> = {
   "room.occupantsModalEmpty": "在室者がいません",
   "room.occupantsModalInCallTag": "ビデオ通話中",
 
+  "room.inviteRoomModalTitle": "招待・ルーム",
+  "room.roomDesignChangeConfirm":
+    "あなたを含め、今ルームにいる全員がいったん退出し、画面が再読み込みされます。よろしいですか?",
+
   "settings.micLabel": "マイク",
   "settings.noiseSuppressionLabel": "ノイズ抑制",
   "settings.speechBubbleLabel": "吹き出し",
@@ -465,6 +469,9 @@ const ja: Record<string, string> = {
   "admin.apply": "適用",
   "admin.create": "作成",
   "admin.roomApplyFailed": "ルームデザインの適用に失敗しました",
+  "admin.roomDesignNotFound": "ルームデザインが見つかりません",
+  "admin.roomTemplateUpdateFailed": "ルームデザインの変更に失敗しました",
+  "admin.roomInfoLoadFailed": "ルーム情報の取得に失敗しました",
 
   "admin.inviterNameHint":
     "招待者名(招待URLからのログイン画面に「〇〇〇さんからの招待」と表示されます)",
@@ -478,7 +485,9 @@ const ja: Record<string, string> = {
   "admin.copyFailed": "コピーに失敗しました。手動で選択してコピーしてください。",
   "admin.regenerateConfirm": "招待URLを再発行します。今のURLは無効になりますが、よろしいですか?",
   "admin.regenerateFailed": "再発行に失敗しました",
+  "admin.regenerateTokenFailed": "招待URLの再発行に失敗しました",
   "admin.inviterNameUpdateFailed": "招待者名の更新に失敗しました",
+  "admin.inviteInfoLoadFailed": "招待情報の取得に失敗しました",
   "admin.regenerateUrl": "URLを再発行",
   "admin.regenerateNote": "※古いURLは無効になります",
 
@@ -895,6 +904,10 @@ const en: Record<string, string> = {
   "room.occupantsModalEmpty": "No one is here",
   "room.occupantsModalInCallTag": "On video call",
 
+  "room.inviteRoomModalTitle": "Invite & Room",
+  "room.roomDesignChangeConfirm":
+    "This will disconnect everyone currently in the room, including you, and the page will reload. Are you sure?",
+
   "settings.micLabel": "Mic",
   "settings.noiseSuppressionLabel": "Noise suppression",
   "settings.speechBubbleLabel": "Speech bubble",
@@ -977,6 +990,9 @@ const en: Record<string, string> = {
   "admin.apply": "Apply",
   "admin.create": "Create",
   "admin.roomApplyFailed": "Failed to apply the room design",
+  "admin.roomDesignNotFound": "Room design not found",
+  "admin.roomTemplateUpdateFailed": "Failed to change the room design",
+  "admin.roomInfoLoadFailed": "Failed to load room information",
 
   "admin.inviterNameHint":
     "Inviter name (shown as \"Invited by ___\" on the login screen reached via the invite link)",
@@ -991,7 +1007,9 @@ const en: Record<string, string> = {
   "admin.regenerateConfirm":
     "This will regenerate the invite URL. The current URL will stop working. Are you sure?",
   "admin.regenerateFailed": "Failed to regenerate",
+  "admin.regenerateTokenFailed": "Failed to reissue the invite URL",
   "admin.inviterNameUpdateFailed": "Failed to update the inviter name",
+  "admin.inviteInfoLoadFailed": "Failed to load invite information",
   "admin.regenerateUrl": "Regenerate URL",
   "admin.regenerateNote": "※ The old URL will stop working",
 

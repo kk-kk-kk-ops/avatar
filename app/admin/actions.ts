@@ -73,17 +73,51 @@ export async function addRoom(templateId: string) {
   revalidatePath("/admin");
 }
 
-// 既存のルームに紐づくルームデザイン(テンプレート)を変更する。
-// ルーム名は変更しない(既に名前を変えている場合を尊重するため)。
-export async function updateRoomTemplate(roomId: string, templateId: string) {
-  const { supabase, account } = await requireAdminAccount();
-
+// 既存のルームに紐づくルームデザイン(テンプレート)を変更する実処理
+// (2026-11 M-3で切り出し)。ダッシュボード(RoomManager.tsx、既存の
+// updateRoomTemplate経由)と会議室内モーダル(updateRoomTemplateFromModal
+// 経由)の両方から呼ばれる。ルーム名は変更しない(既に名前を変えている
+// 場合を尊重するため)。
+//
+// roomId: 既存の入口(RoomManager.tsx)はルームのidを指定済みで渡してくる
+// ため、その値をそのまま使う(挙動を変えない)。モーダル用の新しい入口は
+// roomIdを渡さず(null)、その場合はそのアカウントの先頭ルーム(created_at
+// 昇順で1件)を自動で解決する。app/page.tsx:104-112のルーム入室解決と
+// 同じ方法で揃えている(1アカウント1ルームの前提、M-3調査のB-1/B-2・
+// 確認方法Cで確認済み。2026-11時点で本番に2件以上のルームを持つ
+// アカウントは無いことも確認済み)。
+async function performUpdateRoomTemplate(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string,
+  roomId: string | null,
+  templateId: string,
+  locale: Locale,
+): Promise<ActionResult> {
   const { data: template } = await supabase
     .from("templates")
     .select("id, background_image_url, thumbnail_image_url")
     .eq("id", templateId)
     .maybeSingle();
-  if (!template) throw new Error("ルームデザインが見つかりません");
+  if (!template) {
+    return { ok: false, error: translate(locale, "admin.roomDesignNotFound") };
+  }
+
+  let targetRoomId: string;
+  if (roomId) {
+    targetRoomId = roomId;
+  } else {
+    const { data: room } = await supabase
+      .from("rooms")
+      .select("id")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!room) {
+      return { ok: false, error: translate(locale, "admin.roomNotFound") };
+    }
+    targetRoomId = room.id;
+  }
 
   const { error } = await supabase
     .from("rooms")
@@ -91,19 +125,24 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
       template_id: template.id,
       preview_image: template.thumbnail_image_url ?? template.background_image_url,
     })
-    .eq("id", roomId)
-    .eq("account_id", account.id);
-  if (error) throw new Error("ルームデザインの変更に失敗しました");
+    .eq("id", targetRoomId)
+    .eq("account_id", accountId);
+  if (error) {
+    return { ok: false, error: translate(locale, "admin.roomTemplateUpdateFailed") };
+  }
 
   // 変更前のデザインのままそのルームに入っている参加者がいると、背景・
   // 障害物・ミーティングエリアの座標がズレたまま表示され続けてしまう
   // ため、強制退出させて再入室時に新デザインを読み込ませる(2026-09
   // 報告: 以前あったはずのこの通知が無くなっていたのを復活)。通知の
   // 送信に失敗しても、デザイン変更自体は既に成功しているため
-  // アクション全体は失敗扱いにしない。
+  // アクション全体は失敗扱いにしない。targetIdを付けないため、
+  // components/AvatarSpace.tsx:6753-6769のリスナーはルーム内の全員
+  // (操作した管理者自身がそのルームに在室中の場合はその人も含む)に
+  // 対して再読み込みを行う。
   try {
     await supabase
-      .channel(`avatar-room-${roomId}`)
+      .channel(`avatar-room-${targetRoomId}`)
       .httpSend("force-leave", { reason: "room-changed" });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -111,9 +150,24 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
   }
   // position-sync経路(IndigoPro WSサーバー)の接続も合わせて切断する
   // (2026-11追加)。indigoモード未導入時は何もしない。
-  await disconnectIndigoConnections(roomId);
+  await disconnectIndigoConnections(targetRoomId);
 
   revalidatePath("/admin");
+  return { ok: true };
+}
+
+// 既存の入口(入口自体・requireAdminAccountでのredirectする動きは変更
+// しない)。
+export async function updateRoomTemplate(roomId: string, templateId: string) {
+  const { supabase, account } = await requireAdminAccount();
+  const result = await performUpdateRoomTemplate(
+    supabase,
+    account.id,
+    roomId,
+    templateId,
+    "ja",
+  );
+  if (!result.ok) throw new Error(result.error);
 }
 
 export async function deleteRoom(roomId: string) {
@@ -129,18 +183,31 @@ export async function deleteRoom(roomId: string) {
   revalidatePath("/admin");
 }
 
-// 招待URLのトークンを再発行する(古いURLは自動的に無効になる)
-export async function regenerateInviteToken() {
-  const { supabase, account } = await requireAdminAccount();
+// 招待URLのトークンを再発行する実処理(2026-11 M-3で切り出し。古いURLは
+// 自動的に無効になる)。
+async function performRegenerateInviteToken(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string,
+  locale: Locale,
+): Promise<ActionResult> {
   const newToken = crypto.randomUUID().replace(/-/g, "");
 
   const { error } = await supabase
     .from("accounts")
     .update({ invite_token: newToken })
-    .eq("id", account.id);
-  if (error) throw new Error("招待URLの再発行に失敗しました");
+    .eq("id", accountId);
+  if (error) {
+    return { ok: false, error: translate(locale, "admin.regenerateTokenFailed") };
+  }
 
   revalidatePath("/admin");
+  return { ok: true };
+}
+
+export async function regenerateInviteToken() {
+  const { supabase, account } = await requireAdminAccount();
+  const result = await performRegenerateInviteToken(supabase, account.id, "ja");
+  if (!result.ok) throw new Error(result.error);
 }
 
 // 「告知」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
@@ -159,18 +226,193 @@ export async function markAnnouncementRead(announcementId: string) {
 }
 
 // 招待URLからログイン画面に遷移したときに表示する招待者名
-// (「〇〇〇さんからの招待」の〇〇〇部分)を設定する。
-export async function updateInviteInviterName(name: string) {
-  const { supabase, account } = await requireAdminAccount();
+// (「〇〇〇さんからの招待」の〇〇〇部分)を設定する実処理
+// (2026-11 M-3で切り出し)。
+async function performUpdateInviterName(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string,
+  name: string,
+  locale: Locale,
+): Promise<ActionResult> {
   const trimmed = name.trim();
 
   const { error } = await supabase
     .from("accounts")
     .update({ invite_inviter_name: trimmed || null })
-    .eq("id", account.id);
-  if (error) throw new Error("招待者名の更新に失敗しました");
+    .eq("id", accountId);
+  if (error) {
+    return { ok: false, error: translate(locale, "admin.inviterNameUpdateFailed") };
+  }
 
   revalidatePath("/admin");
+  return { ok: true };
+}
+
+export async function updateInviteInviterName(name: string) {
+  const { supabase, account } = await requireAdminAccount();
+  const result = await performUpdateInviterName(supabase, account.id, name, "ja");
+  if (!result.ok) throw new Error(result.error);
+}
+
+// 以下4つは会議室画面の管理者用モーダル(M-3、2026-11)から呼ぶ、
+// redirectしないエントリポイント。M-2のlistBannedParticipants/
+// kickParticipantFromModal等と同じ方針: 認可にはrequireVerifiedBillingAccount
+// (lib/billingAccountGuard.ts、無変更でそのまま呼ぶ)を使い、失敗時は
+// エラーを返すだけで遷移はしない。accountId・roomIdは引数で受け取らない
+// (サーバー側でそのアカウントのものかを解決・確認する)。
+
+// 招待URL・招待者名を取得する。
+export async function getAdminInviteInfo(locale: Locale = "ja"): Promise<
+  | { ok: true; inviteToken: string; inviterName: string }
+  | { ok: false; error: string }
+> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  const { data: accountRow, error } = await supabase
+    .from("accounts")
+    .select("invite_token, invite_inviter_name")
+    .eq("id", verified.account.id)
+    .maybeSingle();
+  if (error || !accountRow) {
+    // eslint-disable-next-line no-console
+    console.error("招待情報の取得に失敗しました", error);
+    return { ok: false, error: translate(locale, "admin.inviteInfoLoadFailed") };
+  }
+
+  return {
+    ok: true,
+    inviteToken: accountRow.invite_token ?? "",
+    inviterName: accountRow.invite_inviter_name ?? "",
+  };
+}
+
+export async function regenerateInviteTokenFromModal(
+  locale: Locale = "ja",
+): Promise<ActionResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  return performRegenerateInviteToken(supabase, verified.account.id, locale);
+}
+
+export async function updateInviteInviterNameFromModal(
+  name: string,
+  locale: Locale = "ja",
+): Promise<ActionResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  return performUpdateInviterName(supabase, verified.account.id, name, locale);
+}
+
+// 現在のルーム(先頭ルーム)のテンプレートIDと、選べるルームデザイン
+// (テンプレート)一覧を取得する。
+export async function getAdminRoomInfo(locale: Locale = "ja"): Promise<
+  | {
+      ok: true;
+      room: { id: string; templateId: string | null } | null;
+      templates: {
+        id: string;
+        name: string;
+        backgroundImageUrl: string;
+        thumbnailImageUrl: string | null;
+      }[];
+    }
+  | { ok: false; error: string }
+> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  const { data: roomRow, error: roomError } = await supabase
+    .from("rooms")
+    .select("id, template_id")
+    .eq("account_id", verified.account.id)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (roomError) {
+    // eslint-disable-next-line no-console
+    console.error("ルーム情報の取得に失敗しました", roomError);
+    return { ok: false, error: translate(locale, "admin.roomInfoLoadFailed") };
+  }
+
+  const { data: templateRows, error: templateError } = await supabase
+    .from("templates")
+    .select("id, name, background_image_url, thumbnail_image_url")
+    .order("created_at", { ascending: true });
+  if (templateError) {
+    // eslint-disable-next-line no-console
+    console.error("ルームデザイン一覧の取得に失敗しました", templateError);
+    return { ok: false, error: translate(locale, "admin.roomInfoLoadFailed") };
+  }
+
+  return {
+    ok: true,
+    room: roomRow ? { id: roomRow.id, templateId: roomRow.template_id } : null,
+    templates: (templateRows ?? []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      backgroundImageUrl: t.background_image_url,
+      thumbnailImageUrl: t.thumbnail_image_url,
+    })),
+  };
+}
+
+export async function updateRoomTemplateFromModal(
+  templateId: string,
+  locale: Locale = "ja",
+): Promise<ActionResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  return performUpdateRoomTemplate(
+    supabase,
+    verified.account.id,
+    null,
+    templateId,
+    locale,
+  );
 }
 
 // 強制退出の実処理(2026-11 M-2で切り出し)。ダッシュボード(OnlineCount.tsx、
