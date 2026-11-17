@@ -90,7 +90,7 @@ const ja: Record<string, string> = {
     "お支払いが完了しました。プランの反映には少し時間がかかることがあります。",
   "lobby.billingPortalReturned":
     "請求の画面から戻りました。変更した内容の反映には少し時間がかかることがあります。",
-  "billing.backToRoom": "会議室に戻る",
+  "billing.backToRoom": "入室画面に戻る",
 
   "plan.createRoomTitle": "ルームを作成",
   "plan.createRoomDescription":
@@ -403,7 +403,7 @@ const ja: Record<string, string> = {
     "あなたを含め、今ルームにいる全員がいったん退出し、画面が再読み込みされます。よろしいですか?",
   "room.billingModalTitle": "お支払い・プラン",
   "room.billingLeaveConfirm":
-    "お支払いの画面に移動すると、会議室から一度退出します。続けますか?",
+    "お支払いの画面に移動すると、ルームから一度退出します(お手続きの後は入室画面に戻ります)。続けますか?",
 
   "settings.micLabel": "マイク",
   "settings.noiseSuppressionLabel": "ノイズ抑制",
@@ -631,7 +631,7 @@ const en: Record<string, string> = {
     "Payment completed. It may take a moment for your plan change to take effect.",
   "lobby.billingPortalReturned":
     "You're back from the billing page. It may take a moment for any changes to take effect.",
-  "billing.backToRoom": "Back to the room",
+  "billing.backToRoom": "Back to the entry screen",
 
   "plan.createRoomTitle": "Create your room",
   "plan.createRoomDescription":
@@ -939,7 +939,7 @@ const en: Record<string, string> = {
     "This will disconnect everyone currently in the room, including you, and the page will reload. Are you sure?",
   "room.billingModalTitle": "Billing & Plan",
   "room.billingLeaveConfirm":
-    "Moving to the payment page will disconnect you from the room. Continue?",
+    "Moving to the payment page will take you out of the room (you'll return to the entry screen afterward). Continue?",
 
   "settings.micLabel": "Mic",
   "settings.noiseSuppressionLabel": "Noise suppression",
