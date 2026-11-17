@@ -4,6 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
 import { PLANS, type PlanId } from "@/lib/types";
 import { BILLING } from "@/lib/site-info";
+import { resolveBillingReturnTarget } from "@/lib/billingReturnTarget";
+import { translate } from "@/lib/i18n/translations";
+import { getServerLocale } from "@/lib/i18n/getServerLocale";
 import CheckoutButton from "./CheckoutButton";
 
 // 選択した有料プランの内容を表示し、ボタン押下でStripe Checkoutへ
@@ -20,7 +23,7 @@ import CheckoutButton from "./CheckoutButton";
 export default async function CheckoutPage({
   searchParams,
 }: {
-  searchParams: { plan?: string; checkout?: string };
+  searchParams: { plan?: string; checkout?: string; from?: string };
 }) {
   const supabase = createClient();
   const {
@@ -54,6 +57,13 @@ export default async function CheckoutPage({
     month: "long",
     day: "numeric",
   });
+
+  // 管理画面モーダル化 M-4(2026-11)。会議室内の請求モーダルから来た
+  // 場合("room")だけ、決済へ進まずに会議室へ戻れるリンクを表示する
+  // (lib/billingReturnTarget.ts参照。"room"以外は全て"admin"扱いのため
+  // ここでは表示しない=今の画面のまま)。
+  const isFromRoom = resolveBillingReturnTarget(searchParams.from) === "room";
+  const locale = getServerLocale();
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4 py-10">
@@ -119,7 +129,16 @@ export default async function CheckoutPage({
           法人・個人事業主のお客様は、次の画面で「商号」に会社名・屋号をご入力ください。請求書(適格請求書)の宛名として記載されます。
         </p>
 
-        <CheckoutButton planId={planId} />
+        <CheckoutButton planId={planId} from={isFromRoom ? "room" : undefined} />
+
+        {isFromRoom && (
+          <Link
+            href="/billing/return?from=room"
+            className="mt-3 block text-xs font-semibold text-slate-500 underline hover:text-slate-700"
+          >
+            {translate(locale, "billing.backToRoom")}
+          </Link>
+        )}
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import type Stripe from "stripe";
 import { createClient } from "@/lib/supabase/server";
 import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
 import { getStripe, priceIdForPlan, isPaidPlanId } from "@/lib/stripe";
+import { resolveBillingReturnTarget } from "@/lib/billingReturnTarget";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -33,9 +34,17 @@ function getBaseUrl(): string {
 // ボタン専用の特殊値で、支払い方法の入力画面へ直接遷移させる
 // (プランIDではないためisPaidPlanIdには一致しない)。省略時(請求履歴の
 // 確認等)は従来通りポータルのトップページへ遷移する。
+// 管理画面モーダル化 M-4(2026-11)。fromは会議室内の請求モーダルから
+// 呼ばれた場合だけ"room"を渡す("room"以外は全て"admin"として扱う、
+// lib/billingReturnTarget.ts参照)。/adminのBillingPanel.tsxの既存の
+// 呼び出し(fromを渡さない)は、既定値"admin"のままreturn_urlが変更前と
+// 同じ値になる。
 export async function createPortalSession(
   targetPlanId?: string,
+  from?: string,
 ): Promise<ActionResult> {
+  const target = resolveBillingReturnTarget(from);
+
   const supabase = createClient();
   const {
     data: { user },
@@ -88,9 +97,13 @@ export async function createPortalSession(
       }
     }
 
+    const returnUrl =
+      target === "room"
+        ? `${getBaseUrl()}/billing/return?from=room&status=portal_returned`
+        : `${getBaseUrl()}/admin`;
     const session = await stripe.billingPortal.sessions.create({
       customer: account.stripe_customer_id,
-      return_url: `${getBaseUrl()}/admin`,
+      return_url: returnUrl,
       ...(flowData ? { flow_data: flowData } : {}),
     });
     sessionUrl = session.url;

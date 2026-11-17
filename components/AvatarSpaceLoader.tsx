@@ -32,6 +32,9 @@ type Props = {
   // 無効化された招待URLを踏んだ後、ログイン済みの人が自分のロビーに
   // 合流した場合に表示する初期エラー文言(2026-11追加)。
   initialRoomJoinError?: string;
+  // 管理画面モーダル化 M-4(2026-11)。app/billing/return経由で戻った
+  // 直後に表示する結果通知。
+  initialBillingNotice?: "checkout_success" | "portal_returned";
 };
 
 export default function AvatarSpaceLoader({
@@ -55,6 +58,7 @@ export default function AvatarSpaceLoader({
   initialAvatarMode,
   initialAvatarIconUrl,
   initialRoomJoinError,
+  initialBillingNotice,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -86,6 +90,7 @@ export default function AvatarSpaceLoader({
         initialAvatarMode={initialAvatarMode}
         initialAvatarIconUrl={initialAvatarIconUrl}
         initialRoomJoinError={initialRoomJoinError}
+        initialBillingNotice={initialBillingNotice}
       />
     </div>
   );

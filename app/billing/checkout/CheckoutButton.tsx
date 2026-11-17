@@ -3,7 +3,15 @@
 import { useState, useTransition } from "react";
 import { createCheckoutSession } from "./actions";
 
-export default function CheckoutButton({ planId }: { planId: string }) {
+export default function CheckoutButton({
+  planId,
+  from,
+}: {
+  planId: string;
+  // 管理画面モーダル化 M-4(2026-11)。会議室内の請求モーダルから来た
+  // 場合だけ"room"が渡される(app/billing/checkout/page.tsx参照)。
+  from?: string;
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -14,7 +22,7 @@ export default function CheckoutButton({ planId }: { planId: string }) {
       // よって画面遷移させるため、ここは失敗時(ok:falseの戻り値)のみ
       // 到達する。redirect()由来の例外を誤って握りつぶさないよう、
       // ここではtry/catchしない。
-      const result = await createCheckoutSession(planId);
+      const result = await createCheckoutSession(planId, from);
       if (result && !result.ok) setError(result.error);
     });
   };

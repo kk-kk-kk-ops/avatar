@@ -120,6 +120,13 @@ const AdminInviteRoomModal = dynamic(
   { ssr: false },
 );
 
+// 管理画面モーダル化 M-4(2026-11)。契約プラン・支払い方法・請求履歴。
+// M-1・M-3と同じ方針で、管理者がボタンを押すまでチャンクを読み込ませない。
+const AdminBillingModal = dynamic(
+  () => import("@/components/AdminBillingModal"),
+  { ssr: false },
+);
+
 const COLORS = [
   "#F97316",
   "#3B82F6",
@@ -777,6 +784,12 @@ type Props = {
   // した時に表示する初期エラー文言(2026-11追加)。roomJoinErrorの
   // 初期値として使う。
   initialRoomJoinError?: string;
+  // 管理画面モーダル化 M-4(2026-11)。会議室内の請求モーダルから決済・
+  // 請求ポータルへ移り、app/billing/return経由で戻ってきた直後に表示
+  // する結果通知("checkout_success"=決済完了、"portal_returned"=
+  // 請求ポータルから戻った)。initialRoomJoinErrorとは別の状態として
+  // 扱う(エラー表示のスタイルを流用しないため)。
+  initialBillingNotice?: "checkout_success" | "portal_returned";
 };
 
 export default function AvatarSpace({
@@ -800,6 +813,7 @@ export default function AvatarSpace({
   initialAvatarMode,
   initialAvatarIconUrl,
   initialRoomJoinError,
+  initialBillingNotice,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -891,6 +905,25 @@ export default function AvatarSpace({
     const url = new URL(window.location.href);
     if (!url.searchParams.has("error")) return;
     url.searchParams.delete("error");
+    window.history.replaceState(null, "", url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 管理画面モーダル化 M-4(2026-11)。app/billing/return経由で戻った
+  // 直後の結果通知。initialRoomJoinErrorと同じ考え方で、表示後にアドレス
+  // の"billing"パラメータだけを消す。
+  const [billingNotice, setBillingNotice] = useState<string | null>(
+    initialBillingNotice
+      ? initialBillingNotice === "checkout_success"
+        ? t("lobby.billingCheckoutSuccess")
+        : t("lobby.billingPortalReturned")
+      : null,
+  );
+  useEffect(() => {
+    if (!initialBillingNotice) return;
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("billing")) return;
+    url.searchParams.delete("billing");
     window.history.replaceState(null, "", url);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2013,6 +2046,8 @@ export default function AvatarSpace({
   // M-3(2026-11)。在室者モーダルとは独立したstate・ボタン(選択肢A)。
   const [showAdminInviteRoomModal, setShowAdminInviteRoomModal] =
     useState(false);
+  // M-4(2026-11)。請求モーダル用、他のモーダルとは独立したstate。
+  const [showAdminBillingModal, setShowAdminBillingModal] = useState(false);
   // showAdminOccupantsModalがfalseの間はplayersの中身に関わらずmapを
   // 作らず前回値(空配列)をそのまま返すため、presence更新のたびに
   // 発生する再描画(players state自体の更新によるAvatarSpace全体の
@@ -11076,6 +11111,12 @@ export default function AvatarSpace({
             </p>
           )}
 
+          {billingNotice && (
+            <p className="mb-4 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              {billingNotice}
+            </p>
+          )}
+
           <div className="mb-4">
             <div className="mb-3 flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
               <button
@@ -14037,6 +14078,15 @@ export default function AvatarSpace({
                         {t("room.inviteRoomModalTitle")}
                       </button>
                     )}
+                    {isAccountAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminBillingModal(true)}
+                        className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
+                      >
+                        {t("room.billingModalTitle")}
+                      </button>
+                    )}
                     {isMaster && (
                       <Link
                         href="/master"
@@ -14447,6 +14497,16 @@ export default function AvatarSpace({
         <AdminInviteRoomModal
           onClose={() => setShowAdminInviteRoomModal(false)}
         />
+      )}
+
+      {/* 管理画面モーダル化 M-4(2026-11)。契約プラン・支払い方法・請求
+          履歴。このモーダル自身はRealtimeチャンネルを一切購読しない
+          (読み取り・操作はすべてServer Action経由)。決済・請求ポータル
+          への遷移は同じタブで行うため、開いている間だけマウントする
+          (閉じれば次に開くまで再度チャンクが必要になるが、会議室の
+          接続とは無関係)。 */}
+      {showAdminBillingModal && (
+        <AdminBillingModal onClose={() => setShowAdminBillingModal(false)} />
       )}
 
       {showRecordConfirm && (

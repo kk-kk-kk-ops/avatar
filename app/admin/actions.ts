@@ -303,6 +303,52 @@ export async function getAdminInviteInfo(locale: Locale = "ja"): Promise<
   };
 }
 
+// 管理画面モーダル化 M-4(2026-11)。会議室内の請求モーダル用の読み取り
+// 専用Action。Stripeの実ID(stripe_customer_id/stripe_subscription_id)は
+// booleanへ変換してのみ返す(app/admin/page.tsx:184-185と同じ方針)。
+// 読み取りのみのため、他の読み取り用Action(getAdminInviteInfo・
+// getAdminRoomInfo)と同様にrevalidatePathは呼ばない。
+export async function getAdminBillingInfo(locale: Locale = "ja"): Promise<
+  | {
+      ok: true;
+      plan: PlanId;
+      trialEndsAt: string | null;
+      hasStripeCustomer: boolean;
+      hasActiveSubscription: boolean;
+    }
+  | { ok: false; error: string }
+> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  const { data: accountRow, error } = await supabase
+    .from("accounts")
+    .select("plan, trial_ends_at")
+    .eq("id", verified.account.id)
+    .maybeSingle();
+  if (error || !accountRow) {
+    // eslint-disable-next-line no-console
+    console.error("請求情報の取得に失敗しました", error);
+    return { ok: false, error: translate(locale, "admin.billingInfoLoadFailed") };
+  }
+
+  return {
+    ok: true,
+    plan: accountRow.plan as PlanId,
+    trialEndsAt: accountRow.trial_ends_at,
+    hasStripeCustomer: !!verified.account.stripe_customer_id,
+    hasActiveSubscription: !!verified.account.stripe_subscription_id,
+  };
+}
+
 export async function regenerateInviteTokenFromModal(
   locale: Locale = "ja",
 ): Promise<ActionResult> {

@@ -81,6 +81,7 @@ async function renderRoomJoin(
   user: User,
   state: UserRouteState & { type: "admin" | "guest" },
   initialRoomJoinError?: string | null,
+  initialBillingNotice?: "checkout_success" | "portal_returned" | null,
 ) {
   const [
     { data: profile },
@@ -186,6 +187,7 @@ async function renderRoomJoin(
       initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
       initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
       initialRoomJoinError={initialRoomJoinError ?? undefined}
+      initialBillingNotice={initialBillingNotice ?? undefined}
     />
   );
 }
@@ -345,7 +347,7 @@ export async function generateMetadata({
 export default async function Home({
   searchParams,
 }: {
-  searchParams: { error?: string; invite?: string };
+  searchParams: { error?: string; invite?: string; billing?: string };
 }) {
   const supabase = createClient();
   const {
@@ -353,6 +355,15 @@ export default async function Home({
   } = await supabase.auth.getUser();
 
   const inviteToken = searchParams.invite;
+
+  // 管理画面モーダル化 M-4(2026-11)。app/billing/return経由で戻った
+  // 直後に表示する結果通知。想定外の値(無し・不正な文字列)は表示しない
+  // (app/billing/return/page.tsxと同じ判定)。
+  const initialBillingNotice =
+    searchParams.billing === "checkout_success" ||
+    searchParams.billing === "portal_returned"
+      ? searchParams.billing
+      : null;
 
   if (user) {
     // 招待URL(?invite=トークン)を開いた場合、それが自分自身の招待URLで
@@ -385,7 +396,13 @@ export default async function Home({
       } else {
         const state = await resolveUserRouteState(supabase, user.id);
         if (state.type === "admin" || state.type === "guest") {
-          return renderRoomJoin(supabase, user, state);
+          return renderRoomJoin(
+            supabase,
+            user,
+            state,
+            null,
+            initialBillingNotice,
+          );
         }
         // no-account(通常起こらないはずの防御的フォールバック)は
         // 下の通常ルーティングに任せる。
@@ -427,7 +444,13 @@ export default async function Home({
       searchParams.error === "invalid_invite"
         ? translate(getServerLocale(), "lobby.invalidInviteRejoined")
         : null;
-    return renderRoomJoin(supabase, user, state, initialRoomJoinError);
+    return renderRoomJoin(
+      supabase,
+      user,
+      state,
+      initialRoomJoinError,
+      initialBillingNotice,
+    );
   }
 
   // 未ログインかつ招待URLでもない、素のトップページへのアクセスは
