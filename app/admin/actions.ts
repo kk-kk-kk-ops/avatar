@@ -300,12 +300,28 @@ async function performKick(
   // サーバー側から強制退去させる(2026-11追加。既存のforce-leave
   // ブロードキャストは改造クライアントに無視され得るため)。livekit_server_id
   // の取得自体に失敗した場合は上で既にログを残してスキップ済み。
-  if (!livekitAccountError) {
-    await disconnectLivekitParticipant(
+  //
+  // 失敗(設定不足・タイムアウト・その他のエラー)は警告として管理画面に
+  // 表示する(2026-11、「LiveKit強制退去の失敗が管理画面に出ない」課題への
+  // 対応)。対象者が既に退出済みだった場合(disconnectLivekitParticipant
+  // がServerError code:"not_found"を検知したケース)は失敗ではないため
+  // 警告を出さない。タイムアウトのみ「失敗した」ではなく「退出を確認
+  // できなかった」という趣旨の文言にする。
+  let livekitWarningKey: string | null = null;
+  if (livekitAccountError) {
+    livekitWarningKey = "admin.livekitDisconnectFailedWarning";
+  } else {
+    const result = await disconnectLivekitParticipant(
       livekitAccount?.livekit_server_id ?? null,
       roomId,
       participantId,
     );
+    if (!result.ok) {
+      livekitWarningKey =
+        result.reason === "timeout"
+          ? "admin.livekitDisconnectTimeoutWarning"
+          : "admin.livekitDisconnectFailedWarning";
+    }
   }
 
   // position-sync経路(IndigoPro WSサーバー)の接続も合わせて切断する
@@ -324,17 +340,17 @@ async function performKick(
   }
 
   revalidatePath("/admin");
-  if (banFailed) {
-    return {
-      ok: true,
-      warning: translate(locale, "admin.banFailedWarning"),
-    };
-  }
+  // 複数の警告が同時に成立する場合(例: 本人確認はできなかったが、
+  // LiveKit退去にも失敗した)があるため、ActionResult.warningの型
+  // (string、単数)は変えずに1つの文字列へつなげる(2026-11)。
+  const warnings: string[] = [];
+  if (banFailed) warnings.push(translate(locale, "admin.banFailedWarning"));
   if (banSkippedUnverified) {
-    return {
-      ok: true,
-      warning: translate(locale, "admin.identityUnverifiedWarning"),
-    };
+    warnings.push(translate(locale, "admin.identityUnverifiedWarning"));
+  }
+  if (livekitWarningKey) warnings.push(translate(locale, livekitWarningKey));
+  if (warnings.length > 0) {
+    return { ok: true, warning: warnings.join(" ") };
   }
   return { ok: true };
 }
