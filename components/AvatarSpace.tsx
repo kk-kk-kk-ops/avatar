@@ -101,6 +101,7 @@ import {
 } from "./uploadChatImage";
 import { deleteUserIconClient, uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
+import { checkViewOnlyInviteAccess } from "@/lib/checkViewOnlyInviteAccess";
 
 // 管理画面モーダル化 M-1(2026-11)。管理者がボタンを押すまでチャンクを
 // 読み込ませないため、next/dynamicでモジュールスコープに定義する
@@ -771,6 +772,11 @@ type Props = {
   // ここでは"icon"選択時の情報のみ引き継ぐ)。
   initialAvatarMode?: AvatarMode;
   initialAvatarIconUrl?: string | null;
+  // 無効化された招待URL(他人の招待URLが再発行等で無効になった後に
+  // 踏んだ場合)を踏んだ後、ログイン済みの人が自分自身のロビーに合流
+  // した時に表示する初期エラー文言(2026-11追加)。roomJoinErrorの
+  // 初期値として使う。
+  initialRoomJoinError?: string;
 };
 
 export default function AvatarSpace({
@@ -793,6 +799,7 @@ export default function AvatarSpace({
   initialProfileLocale,
   initialAvatarMode,
   initialAvatarIconUrl,
+  initialRoomJoinError,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -867,7 +874,26 @@ export default function AvatarSpace({
   // 前提のため、rooms[0]をそのまま「確定した」ルームとして扱う) ----
   // Realtimeチャンネル名・map_layoutの検索キーに使う。
   const [roomId] = useState(rooms[0]?.id ?? "");
-  const [roomJoinError, setRoomJoinError] = useState<string | null>(null);
+  const [roomJoinError, setRoomJoinError] = useState<string | null>(
+    initialRoomJoinError ?? null,
+  );
+  // initialRoomJoinErrorを表示した後、アドレスのerrorパラメータだけを
+  // 消しておく(2026-11追加)。消さないまま手動で再読み込みすると、
+  // 同じ無効な招待の表示が繰り返し出てしまうため。パス・他のパラメータ・
+  // #以降は変えない。ページの作り直しを起こさないよう、router.replace
+  // ではなくwindow.history.replaceStateを直接呼ぶ(components/
+  // AdminInviteRoomModal.tsxの招待URL再発行時の書き換えと同じ方法。
+  // Next.js側でpush/replaceStateが上書きされ、ルーターの内部状態だけが
+  // 追従する作りであることをnode_modules/next側のコードで確認済み)。
+  useEffect(() => {
+    if (!initialRoomJoinError) return;
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("error")) return;
+    url.searchParams.delete("error");
+    window.history.replaceState(null, "", url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 入室ボタン押下時のログインセッション確認中フラグ(二重クリック防止)。
   const [isJoining, setIsJoining] = useState(false);
   // 入室前のプレビューに表示するオンライン人数の集計。
@@ -5363,6 +5389,27 @@ export default function AvatarSpace({
       window.location.href = `${base}${separator}error=session_expired`;
       return;
     }
+
+    // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
+    // 場合、入室の直前にもう一度サーバー側で招待トークンの有効性・BAN
+    // 状態を確かめる(2026-11追加)。handleLeaveRoom/handleJoinはページを
+    // 再読み込みしないため、入室中に管理者が招待URLを再発行しても
+    // viewOnlyInviteToken(入室時のpropsのまま)は古い値が残り続け、
+    // 確認しないまま会議室の画面まで進めてしまっていた(灰色の画面・
+    // 音声サーバー接続失敗の原因)。確認中はisJoiningをtrueのままにし、
+    // 既存の「入室処理中」の表示を続ける。
+    if (viewOnlyInviteToken) {
+      const allowed = await checkViewOnlyInviteAccess(
+        roomId,
+        viewOnlyInviteToken,
+      );
+      if (!allowed) {
+        setIsJoining(false);
+        window.location.href = `/?invite=${encodeURIComponent(viewOnlyInviteToken)}`;
+        return;
+      }
+    }
+
     setIsJoining(false);
     const name =
       nameInput.trim() ||
@@ -5414,6 +5461,7 @@ export default function AvatarSpace({
     supabase,
     guestInviteToken,
     viewOnlyInviteToken,
+    roomId,
   ]);
 
   // ---- 入室直後:自分のアバターの向き別スプライトをプリロードし、完了する

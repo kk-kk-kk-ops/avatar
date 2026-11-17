@@ -29,6 +29,9 @@ type Props = {
   initialProfileLocale?: Locale;
   initialAvatarMode?: AvatarMode;
   initialAvatarIconUrl?: string | null;
+  // 無効化された招待URLを踏んだ後、ログイン済みの人が自分のロビーに
+  // 合流した場合に表示する初期エラー文言(2026-11追加)。
+  initialRoomJoinError?: string;
 };
 
 export default function AvatarSpaceLoader({
@@ -51,6 +54,7 @@ export default function AvatarSpaceLoader({
   initialProfileLocale,
   initialAvatarMode,
   initialAvatarIconUrl,
+  initialRoomJoinError,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -81,6 +85,7 @@ export default function AvatarSpaceLoader({
         initialProfileLocale={initialProfileLocale}
         initialAvatarMode={initialAvatarMode}
         initialAvatarIconUrl={initialAvatarIconUrl}
+        initialRoomJoinError={initialRoomJoinError}
       />
     </div>
   );

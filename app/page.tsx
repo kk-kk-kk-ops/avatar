@@ -81,6 +81,7 @@ async function renderRoomJoin(
   supabase: SupabaseClient,
   user: User,
   state: UserRouteState & { type: "admin" | "guest" },
+  initialRoomJoinError?: string | null,
 ) {
   const [
     { data: profile },
@@ -185,6 +186,7 @@ async function renderRoomJoin(
       initialProfileLocale={(profile?.locale as Locale) ?? undefined}
       initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
       initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
+      initialRoomJoinError={initialRoomJoinError ?? undefined}
     />
   );
 }
@@ -410,7 +412,21 @@ export default async function Home({
     // 自動転送していたが、招待URL経由(自分自身の招待URL)の場合と
     // 同じロビー画面(renderRoomJoin)に合流させる。管理画面への導線は
     // ロビー画面上の「管理者としてログイン」リンクに委ねる。
-    return renderRoomJoin(supabase, user, state);
+    //
+    // 無効化された招待URL(他人の招待URLが再発行等で無効になった後に
+    // 踏んだ場合)の通知(2026-11追加)。ログイン済みの人がinvalid_invite
+    // で/?error=invalid_inviteへ戻された場合、これまでは何も表示せず
+    // 黙って自分自身のロビーに合流していた(無効な招待だったことが
+    // 分からない不具合)。このブロック(inviteToken無し)に到達した
+    // 場合のみ、既存のauthError.invalid_inviteの文言をロビー画面の
+    // 初期エラーとして渡す。isMaster・no-accountの分岐自体は変えない
+    // (no-accountの場合は下のstartFreeTrial経由のrenderRoomJoinを通る
+    // ため、ここでは表示されない。許容する)。
+    const initialRoomJoinError =
+      searchParams.error === "invalid_invite"
+        ? translateAuthError(getServerLocale(), "invalid_invite")
+        : null;
+    return renderRoomJoin(supabase, user, state, initialRoomJoinError);
   }
 
   // 未ログインかつ招待URLでもない、素のトップページへのアクセスは
