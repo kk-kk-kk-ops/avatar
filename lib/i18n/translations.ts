@@ -438,6 +438,13 @@ const ja: Record<string, string> = {
     "退出させましたが、再入室防止(BAN)の登録に失敗しました。データベースの設定を確認してください。",
   "admin.forceLeaveFailed": "退出処理に失敗しました",
   "admin.unbanFailed": "解除に失敗しました",
+  "admin.cannotKickSelf": "自分自身を強制退出させることはできません",
+  "admin.identityMismatch":
+    "対象者の識別情報が一致しないため、操作を中止しました(なりすましの可能性があります)",
+  "admin.identityUnverifiedWarning":
+    "退出させましたが、本人確認ができなかったためBANしていません",
+  "admin.accountVerificationFailed": "アカウント情報の確認に失敗しました",
+  "admin.banListFailed": "BAN一覧の取得に失敗しました",
   "admin.loginRequired": "ログインが必要です",
   "admin.permissionDenied": "この機能を利用する権限がありません",
   "admin.invalidPlan": "不正なプランです",
@@ -939,6 +946,13 @@ const en: Record<string, string> = {
     "The participant was removed, but blocking them from rejoining failed. Please check the database configuration.",
   "admin.forceLeaveFailed": "Failed to remove the participant",
   "admin.unbanFailed": "Failed to allow rejoining",
+  "admin.cannotKickSelf": "You can't remove yourself",
+  "admin.identityMismatch":
+    "The target's identity could not be confirmed, so no action was taken (possible impersonation)",
+  "admin.identityUnverifiedWarning":
+    "The participant was removed, but they weren't banned because their identity couldn't be verified",
+  "admin.accountVerificationFailed": "Failed to verify your account",
+  "admin.banListFailed": "Failed to load the ban list",
   "admin.loginRequired": "You need to be logged in",
   "admin.permissionDenied": "You don't have permission to use this feature",
   "admin.invalidPlan": "Invalid plan",

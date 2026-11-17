@@ -1988,6 +1988,7 @@ export default function AvatarSpace({
       .map((p) => ({
         id: p.id,
         name: p.name,
+        userId: p.userId ?? null,
         isSelf: p.id === selfId.current,
         micOn: !!p.micOn,
         inCall: !!p.inCall,
@@ -14366,6 +14367,7 @@ export default function AvatarSpace({
       {showAdminOccupantsModal && (
         <AdminOccupantsModal
           occupants={adminOccupants}
+          roomId={roomId}
           onClose={() => setShowAdminOccupantsModal(false)}
         />
       )}
