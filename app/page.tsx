@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
-import { translateAuthError, type Locale } from "@/lib/i18n/translations";
+import { translate, translateAuthError, type Locale } from "@/lib/i18n/translations";
 import { getServerLocale } from "@/lib/i18n/getServerLocale";
 import { PLANS, type AvatarMode, type PlanId, type Room } from "@/lib/types";
 import LoginCard from "@/components/auth/LoginCard";
@@ -415,13 +415,17 @@ export default async function Home({
     // で/?error=invalid_inviteへ戻された場合、これまでは何も表示せず
     // 黙って自分自身のロビーに合流していた(無効な招待だったことが
     // 分からない不具合)。このブロック(inviteToken無し)に到達した
-    // 場合のみ、既存のauthError.invalid_inviteの文言をロビー画面の
-    // 初期エラーとして渡す。isMaster・no-accountの分岐自体は変えない
+    // 場合のみ、lobby.invalidInviteRejoinedの文言をロビー画面の初期
+    // エラーとして渡す。authError.invalid_invite(未ログイン時のログイン
+    // 画面用)とは文言を分ける(2026-11変更: この直後に入室ボタン付きの
+    // ルームが表示されるため、「無効と言いながら入れる」ように見えて
+    // しまう問題を解消するため、既に参加しているルームが下に表示される
+    // ことを明示する文言にした)。isMaster・no-accountの分岐自体は変えない
     // (no-accountの場合は上の分岐で/planへredirectされるため、ここでは
     // 表示されない。許容する)。
     const initialRoomJoinError =
       searchParams.error === "invalid_invite"
-        ? translateAuthError(getServerLocale(), "invalid_invite")
+        ? translate(getServerLocale(), "lobby.invalidInviteRejoined")
         : null;
     return renderRoomJoin(supabase, user, state, initialRoomJoinError);
   }

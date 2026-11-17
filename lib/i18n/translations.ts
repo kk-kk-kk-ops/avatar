@@ -84,6 +84,8 @@ const ja: Record<string, string> = {
     "招待リンクが無効です。招待した管理者に再発行を依頼してください。",
   "authError.session_superseded":
     "別の場所でログインされたため、このセッションは終了しました。",
+  "lobby.invalidInviteRejoined":
+    "この招待リンクは無効です(再発行された可能性があります)。下に表示しているのは、あなたが既に参加しているルームです。新しい招待リンクが必要な場合は、招待した管理者にお問い合わせください。",
 
   "plan.createRoomTitle": "ルームを作成",
   "plan.createRoomDescription":
@@ -615,6 +617,8 @@ const en: Record<string, string> = {
     "This invite link is invalid. Please ask the admin who invited you to send a new one.",
   "authError.session_superseded":
     "This session has ended because you logged in elsewhere.",
+  "lobby.invalidInviteRejoined":
+    "This invite link is no longer valid (it may have been reissued). The room shown below is one you've already joined. If you need a new invite link, please contact the admin who invited you.",
 
   "plan.createRoomTitle": "Create your room",
   "plan.createRoomDescription":
