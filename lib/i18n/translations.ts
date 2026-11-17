@@ -356,10 +356,10 @@ const ja: Record<string, string> = {
   "room.planChangedByAdmin": "管理者がプランを変更したため、まもなく退出します...",
   "room.roomFull": "このルームは満員です(最大{max}人)。しばらくしてから再度お試しください。",
   "room.maintenanceForceLeave": "メンテナンスのため、まもなく退出します...",
-  "room.versionForceReload": "新しい版に更新するため、まもなく再読み込みします...",
+  "room.versionForceReload": "新バージョンに更新するため、まもなく再読み込みします...",
   "room.versionManualReloadRequired": "更新が必要です。他のタブを閉じて再読み込みしてください。",
 
-  "versionWatcher.updateAvailable": "新しい版があります。",
+  "versionWatcher.updateAvailable": "新バージョンがあります。",
   "versionWatcher.updateButton": "更新",
   "versionWatcher.laterButton": "後で",
   "versionWatcher.manualReloadRequired": "更新が必要です。他のタブを閉じて再読み込みしてください。",
