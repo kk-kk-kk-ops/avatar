@@ -121,6 +121,9 @@ export default function AdminInviteRoomModal({
 
   const handleRegenerate = async () => {
     if (!window.confirm(t("admin.regenerateConfirm"))) return;
+    // 書き換え判定用に、再発行前のトークンをボタンを押した時点の値で
+    // 覚えておく(この後setInviteTokenで上書きされる前のもの)。
+    const previousToken = inviteToken;
     setRegenerateError(null);
     setRegenerating(true);
     const result = await regenerateInviteTokenFromModal(locale);
@@ -134,6 +137,37 @@ export default function AdminInviteRoomModal({
     if (refreshed.ok) {
       setInviteToken(refreshed.inviteToken);
       setInviteLoadError(null);
+
+      // 運営者は/?invite=<自分のトークン>というアドレスで会議室にいる
+      // (app/master/MasterDashboard.tsxの「ルームへ」リンク。通常の"/"は
+      // ログイン済みの運営者を/masterへ戻してしまうため、自分自身の
+      // 招待URL経由でルーム入室画面へ進む作りになっている)。再発行後も
+      // このアドレスの古いトークンがそのまま残ると、次に何らかの理由で
+      // このタブが再読み込みされた(手動のリロード、ルームデザイン変更の
+      // force-leaveによるreload等)時に、古いトークンがもう有効でない
+      // ことでinvalid_inviteとなり、最終的に/masterへ誤って遷移してしまう
+      // (2026-11確認)。これを防ぐため、今のアドレスに古いトークンが
+      // 残っている場合だけ、ページの作り直しを起こさずにアドレスの値だけ
+      // 新しいトークンへ書き換える。
+      //
+      // router.replace等(next/navigation)は使わない。ソフトナビゲーション
+      // としてサーバーへの再フェッチを起こしてしまうため、ここで避けたい
+      // 「ページの作り直し」そのものになってしまう。window.history.
+      // replaceStateはNext.js側でpush/replaceStateが上書きされており、
+      // ルーターの内部状態(canonicalUrl等)だけを追従させ、サーバーへの
+      // 再フェッチは発生しない(node_modules/next/dist/client/components/
+      // app-router.tsxで確認済み)。
+      if (
+        typeof window !== "undefined" &&
+        previousToken &&
+        refreshed.inviteToken
+      ) {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("invite") === previousToken) {
+          url.searchParams.set("invite", refreshed.inviteToken);
+          window.history.replaceState(null, "", url);
+        }
+      }
     } else {
       setInviteLoadError(refreshed.error);
     }

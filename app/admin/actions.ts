@@ -152,12 +152,15 @@ async function performUpdateRoomTemplate(
   // (2026-11追加)。indigoモード未導入時は何もしない。
   await disconnectIndigoConnections(targetRoomId);
 
-  revalidatePath("/admin");
   return { ok: true };
 }
 
 // 既存の入口(入口自体・requireAdminAccountでのredirectする動きは変更
-// しない)。
+// しない)。revalidatePath("/admin")は、Server Actionを呼んだ今のページ
+// (会議室の「/」)も暗黙的に再生成させてしまうため(2026-11、/master誤
+// 遷移の調査で確認)、共通関数(performUpdateRoomTemplate)からは外し、
+// ここ(/adminからの呼び出し時のみ)で呼ぶ。切り出し前と同じく、成功時
+// (throwしない場合)だけ呼ぶ。
 export async function updateRoomTemplate(roomId: string, templateId: string) {
   const { supabase, account } = await requireAdminAccount();
   const result = await performUpdateRoomTemplate(
@@ -168,6 +171,7 @@ export async function updateRoomTemplate(roomId: string, templateId: string) {
     "ja",
   );
   if (!result.ok) throw new Error(result.error);
+  revalidatePath("/admin");
 }
 
 export async function deleteRoom(roomId: string) {
@@ -200,14 +204,16 @@ async function performRegenerateInviteToken(
     return { ok: false, error: translate(locale, "admin.regenerateTokenFailed") };
   }
 
-  revalidatePath("/admin");
   return { ok: true };
 }
 
+// revalidatePath("/admin")は共通関数から外し、/adminからの呼び出し時の
+// みここで呼ぶ(updateRoomTemplateと同じ理由、2026-11)。
 export async function regenerateInviteToken() {
   const { supabase, account } = await requireAdminAccount();
   const result = await performRegenerateInviteToken(supabase, account.id, "ja");
   if (!result.ok) throw new Error(result.error);
+  revalidatePath("/admin");
 }
 
 // 「告知」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
@@ -244,14 +250,16 @@ async function performUpdateInviterName(
     return { ok: false, error: translate(locale, "admin.inviterNameUpdateFailed") };
   }
 
-  revalidatePath("/admin");
   return { ok: true };
 }
 
+// revalidatePath("/admin")は共通関数から外し、/adminからの呼び出し時の
+// みここで呼ぶ(updateRoomTemplateと同じ理由、2026-11)。
 export async function updateInviteInviterName(name: string) {
   const { supabase, account } = await requireAdminAccount();
   const result = await performUpdateInviterName(supabase, account.id, name, "ja");
   if (!result.ok) throw new Error(result.error);
+  revalidatePath("/admin");
 }
 
 // 以下4つは会議室画面の管理者用モーダル(M-3、2026-11)から呼ぶ、
@@ -581,7 +589,6 @@ async function performKick(
     return { ok: false, error: translate(locale, "admin.forceLeaveFailed") };
   }
 
-  revalidatePath("/admin");
   // 複数の警告が同時に成立する場合(例: 本人確認はできなかったが、
   // LiveKit退去にも失敗した)があるため、ActionResult.warningの型
   // (string、単数)は変えずに1つの文字列へつなげる(2026-11)。
@@ -612,13 +619,16 @@ async function performUnban(
     .eq("user_id", userId);
   if (error) return { ok: false, error: translate(locale, "admin.unbanFailed") };
 
-  revalidatePath("/admin");
   return { ok: true };
 }
 
 // ダッシュボードの入室者一覧から、特定の参加者を強制退出させる(入口は
 // 変更しない。requireAdminAccountでログイン切れならredirectする既存の
-// 動きのまま)。
+// 動きのまま)。revalidatePath("/admin")は共通関数(performKick)から外し、
+// ここ(/adminからの呼び出し時のみ)で、成功時(ok: trueの時。警告付きの
+// 成功を含む)だけ呼ぶ(2026-11、/master誤遷移の調査で確認した理由に
+// よる。切り出し前の元のコードで、force-leave送信が失敗して早期returnした
+// 場合はrevalidatePathが呼ばれていなかったのと同じ条件になる)。
 export async function kickParticipant(
   roomId: string,
   participantId: string,
@@ -626,7 +636,7 @@ export async function kickParticipant(
   locale: Locale = "ja",
 ): Promise<ActionResult> {
   const { supabase, account, user } = await requireAdminAccount();
-  return performKick(
+  const result = await performKick(
     supabase,
     account.id,
     user.id,
@@ -635,15 +645,21 @@ export async function kickParticipant(
     participantUserId,
     locale,
   );
+  if (result.ok) revalidatePath("/admin");
+  return result;
 }
 
 // BANリストから外し、再入室できるようにする(入口は変更しない)。
+// revalidatePath("/admin")は共通関数(performUnban)から外し、ここでのみ
+// 成功時に呼ぶ(kickParticipantと同じ理由)。
 export async function unbanParticipant(
   userId: string,
   locale: Locale = "ja",
 ): Promise<ActionResult> {
   const { supabase, account } = await requireAdminAccount();
-  return performUnban(supabase, account.id, userId, locale);
+  const result = await performUnban(supabase, account.id, userId, locale);
+  if (result.ok) revalidatePath("/admin");
+  return result;
 }
 
 // 以下3つは会議室画面の管理者用モーダル(M-2、2026-11)から呼ぶ、
