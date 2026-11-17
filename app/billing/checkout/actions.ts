@@ -4,7 +4,6 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
-import { provisionAccountForUser } from "@/lib/accountProvisioning";
 import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
 import { getStripe, priceIdForPlan, isPaidPlanId, taxRateId } from "@/lib/stripe";
 import { PLANS } from "@/lib/types";
@@ -19,10 +18,19 @@ function getBaseUrl(): string {
 }
 
 // 有料プランのStripe Checkout Sessionを作成し、Stripeの決済画面へ
-// リダイレクトする。アカウントがまだ無ければ無料お試しと同じ手順で
-// ここで作る(plan/PlanSelector.tsxは有料プラン選択時にアカウントを
-// 作らずこのページへ来るため)。accounts.planは常に'free'のまま作成され、
-// 実際の反映はapp/api/stripe/webhook/route.tsがservice_role経由で行う。
+// リダイレクトする。accounts.planは常に'free'のまま作成され、実際の
+// 反映はapp/api/stripe/webhook/route.tsがservice_role経由で行う。
+//
+// 2026-11変更: 新規アカウントは無料トライアルの開始(app/plan/actions.ts
+// のstartFreeTrial、「ルームを作成」ボタン経由)からしか作らない方針に
+// したため、ここではprovisionAccountForUserを呼ばない。
+// requireVerifiedBillingAccountはuserIdだけから本人のアカウントを
+// 自己解決・確認する(profiles.role==="admin"・accounts.owner_user_id===
+// 本人・profiles.account_idとaccounts.idの一致、の3条件。詳細は
+// lib/billingAccountGuard.ts参照)。アカウントの無い人・ゲスト
+// (他人のアカウントのprofiles.account_id)はこの条件を満たせず安全に
+// 拒否される(何も作成しない)。既存のアカウントを持つ管理者の確認内容・
+// 動きはこれまでと同じ。
 export async function createCheckoutSession(planId: string): Promise<ActionResult> {
   if (!isPaidPlanId(planId)) return { ok: false, error: "不正なプランです" };
 
@@ -32,18 +40,10 @@ export async function createCheckoutSession(planId: string): Promise<ActionResul
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "ログインが必要です" };
 
-  const provision = await provisionAccountForUser(supabase, user);
-  if (!provision.ok) return provision;
-  const accountId = provision.accountId;
-
-  // 2026-11-15追加: provisionAccountForUserが返したaccountIdが、本当に
-  // 本人が所有する正当なアカウントかを再確認する(profiles.role==="admin"・
-  // accounts.owner_user_id===本人・profiles.account_idとaccounts.idと
-  // accountIdの一致、の3条件)。画面から渡された値ではなくサーバー側で
-  // 都度解決した値のみを使う。詳細はlib/billingAccountGuard.ts参照。
-  const verified = await requireVerifiedBillingAccount(supabase, user.id, accountId);
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
   if (!verified.ok) return verified;
   const account = verified.account;
+  const accountId = account.id;
 
   // 既にStripe上で有効なサブスクリプションがあるアカウントは、この経路
   // (新規Checkout)ではなくCustomer Portal経由でのプラン変更に誘導する

@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
-import { startFreeTrial } from "@/app/plan/actions";
 import { translateAuthError, type Locale } from "@/lib/i18n/translations";
 import { getServerLocale } from "@/lib/i18n/getServerLocale";
 import { PLANS, type AvatarMode, type PlanId, type Room } from "@/lib/types";
@@ -396,17 +395,15 @@ export default async function Home({
     const state = await resolveUserRouteState(supabase, user.id);
     if (state.isMaster) redirect("/master");
     if (state.type === "no-account") {
-      // 直接ログイン(招待URLなし)導線統一(2026-08-29): 以前はここで
-      // プラン選択画面(/plan)へ誘導していたが、有料プランは決済未実装で
-      // 実質「無料プランで始める」の一択だったため、選択画面を挟まず
-      // startFreeTrial()をその場で実行し、そのままロビーへ直行させる。
-      // 招待URL経由の場合はこの分岐に到達しない(上のinviteToken処理で
-      // 既にaccount_idが設定されているため)。
-      const result = await startFreeTrial();
-      if (!result.ok) redirect("/plan");
-      const newState = await resolveUserRouteState(supabase, user.id);
-      if (newState.type === "no-account") redirect("/plan");
-      return renderRoomJoin(supabase, user, newState);
+      // 2026-11変更: 以前はここでstartFreeTrial()をその場で自動実行し、
+      // ボタン操作無しにトライアルを開始していた(招待リンクから来た人・
+      // 見に来ただけの人にはこの分岐自体が到達しないため影響は無いが、
+      // 直接ログインした人は「/」を開いた時点で意図せずトライアルの
+      // 消費が始まってしまっていた)。今後は/plan(「ルームを作成」画面、
+      // app/plan/CreateRoomStart.tsx)に案内し、利用者がボタンを押した
+      // 時だけトライアルを開始する。招待URL経由の場合はこの分岐に到達
+      // しない(上のinviteToken処理で既にaccount_idが設定されているため)。
+      redirect("/plan");
     }
     // ログインフロー統一(2026-08-24): 以前はここで管理者を/adminへ
     // 自動転送していたが、招待URL経由(自分自身の招待URL)の場合と
@@ -420,8 +417,8 @@ export default async function Home({
     // 分からない不具合)。このブロック(inviteToken無し)に到達した
     // 場合のみ、既存のauthError.invalid_inviteの文言をロビー画面の
     // 初期エラーとして渡す。isMaster・no-accountの分岐自体は変えない
-    // (no-accountの場合は下のstartFreeTrial経由のrenderRoomJoinを通る
-    // ため、ここでは表示されない。許容する)。
+    // (no-accountの場合は上の分岐で/planへredirectされるため、ここでは
+    // 表示されない。許容する)。
     const initialRoomJoinError =
       searchParams.error === "invalid_invite"
         ? translateAuthError(getServerLocale(), "invalid_invite")

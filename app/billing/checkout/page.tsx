@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { resolveUserRouteState } from "@/lib/authRouting";
 import { PLANS, type PlanId } from "@/lib/types";
 import { BILLING } from "@/lib/site-info";
 import CheckoutButton from "./CheckoutButton";
@@ -32,9 +33,12 @@ export default async function CheckoutPage({
     planId && planId in PLANS && planId !== "free" ? PLANS[planId] : null;
   if (!plan || !planId) redirect("/plan");
 
-  // この時点でアカウントがまだ無い(/planから有料プランを直接選んだ新規
-  // ユーザー)場合もあるため、無ければ単にトライアル情報なしとして扱う
-  // (実際のアカウント作成はCheckoutButton押下後のServer Actionで行われる)。
+  // 2026-11追加: アカウントの無い人がこのアドレスへ直接アクセスした場合、
+  // アカウントを作らずに/plan(「ルームを作成」画面)へ戻す。新規アカウントは
+  // 無料トライアルの開始からしか作らない方針にしたため。
+  const state = await resolveUserRouteState(supabase, user.id);
+  if (state.type === "no-account") redirect("/plan");
+
   const { data: account } = await supabase
     .from("accounts")
     .select("trial_ends_at")

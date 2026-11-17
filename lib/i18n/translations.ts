@@ -85,6 +85,13 @@ const ja: Record<string, string> = {
   "authError.session_superseded":
     "別の場所でログインされたため、このセッションは終了しました。",
 
+  "plan.createRoomTitle": "ルームを作成",
+  "plan.createRoomDescription":
+    "30日間、Standardプラン相当の機能を無料でお試しいただけます(クレジットカードの登録は不要です)。31日目以降は無料プランに自動的に切り替わります。有料プランへのお申し込みは、ルームの作成後にいつでもできます。",
+  "plan.createRoomButton": "ルームを作成して無料トライアルを始める",
+  "plan.createRoomGenericError":
+    "開始に失敗しました。時間をおいて再度お試しください。",
+
   "lang.buttonLabel": "言語/Language",
   "lang.japanese": "Japanese",
   "lang.english": "English",
@@ -608,6 +615,12 @@ const en: Record<string, string> = {
     "This invite link is invalid. Please ask the admin who invited you to send a new one.",
   "authError.session_superseded":
     "This session has ended because you logged in elsewhere.",
+
+  "plan.createRoomTitle": "Create your room",
+  "plan.createRoomDescription":
+    "You can try Standard-plan features free for 30 days (no credit card required). From day 31 onward, you'll automatically switch to the Free plan. You can sign up for a paid plan anytime after creating your room.",
+  "plan.createRoomButton": "Create a room and start your free trial",
+  "plan.createRoomGenericError": "Failed to start. Please try again later.",
 
   "lang.buttonLabel": "言語/Language",
   "lang.japanese": "Japanese",

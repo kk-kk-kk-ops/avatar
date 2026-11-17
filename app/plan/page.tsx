@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
-import PlanSelector from "./PlanSelector";
+import CreateRoomStart from "./CreateRoomStart";
 
-// プラン選択画面。まだどのアカウントにも属していない新規ユーザーだけが来る
-// (既にアカウントがあれば/admin・/(ルーム入室画面)へ振り分け、
-// 未ログインなら/へ)。
+// 「ルームを作成」画面(2026-11変更。以前は4プランから選ぶ画面だった)。
+// まだどのアカウントにも属していない新規ユーザーだけが来る(既にアカウント
+// があれば/admin・/(ルーム入室画面)へ振り分け、未ログインなら/login へ)。
+// この振り分け自体は変更していない。
 export default async function PlanPage() {
   const supabase = createClient();
   const {
@@ -20,7 +21,7 @@ export default async function PlanPage() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4 py-10">
-      <div className="w-full max-w-3xl rounded-2xl bg-white p-8 shadow-xl">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-xl">
         <div className="mb-4 flex items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Globy" className="h-6 w-6 object-contain" />
@@ -28,10 +29,7 @@ export default async function PlanPage() {
             Globy
           </span>
         </div>
-        <h1 className="mb-6 text-lg font-bold text-slate-800">
-          プランを選択
-        </h1>
-        <PlanSelector />
+        <CreateRoomStart />
       </div>
     </div>
   );
