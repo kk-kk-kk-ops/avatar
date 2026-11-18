@@ -114,6 +114,7 @@ const ja: Record<string, string> = {
   "lobby.checking": "確認中...",
   "lobby.enterRoom": "入室",
   "lobby.goToAdmin": "管理画面へ",
+  "lobby.backToOwnRoom": "自分のルームへ",
 
   "room.disabledInWorkArea": "作業エリア内では利用できません",
   "room.mic.onTitle": "マイク: ON(クリックでミュート)",
@@ -654,6 +655,7 @@ const en: Record<string, string> = {
   "lobby.checking": "Checking...",
   "lobby.enterRoom": "Enter",
   "lobby.goToAdmin": "Go to admin screen",
+  "lobby.backToOwnRoom": "Back to my room",
 
   "room.disabledInWorkArea": "Not available inside a work area",
   "room.mic.onTitle": "Mic: ON (click to mute)",

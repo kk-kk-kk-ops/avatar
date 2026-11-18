@@ -762,6 +762,10 @@ type Props = {
   // だけ渡される招待トークン。LiveKitのToken発行APIへ、通常のRLSでは
   // 証明できないルームアクセス権を伝えるために使う。
   viewOnlyInviteToken?: string;
+  // 「自分のルームへ」ボタンの行き先(2026-11-18追加)。viewOnlyInviteToken
+  // と組で渡され、nullの場合はボタン自体を表示しない(運営者で自分の
+  // 招待トークンが取得できなかった場合のみnullになる)。
+  ownRoomHref?: string | null;
   // メンテナンス予告・強制退出機能(2026-09追加)。app_settingsの
   // maintenance_*列をページ表示時点のスナップショットとして渡す
   // (入室後は別途ポーリングで最新値を取り直す。詳細は下の
@@ -806,6 +810,7 @@ export default function AvatarSpace({
   guestInviteToken,
   avatarSizePx,
   viewOnlyInviteToken,
+  ownRoomHref,
   maintenanceEnabled: initialMaintenanceEnabled,
   maintenanceStartsAt: initialMaintenanceStartsAt,
   maintenanceEndsAt: initialMaintenanceEndsAt,
@@ -9802,6 +9807,22 @@ export default function AvatarSpace({
     }
     handleLeaveRoom();
   }, [handleLeaveRoom]);
+  // 「自分のルームへ」ボタン押下時の処理(2026-11-18追加)。録画の開始者が
+  // 会議室の中から押した場合は、既存の「退出」ボタンと全く同じ処理
+  // (handleLeaveRoomButtonClick)を呼ぶだけにする。録画中の確認ダイアログ
+  // (showLeaveRoomWhileRecordingConfirm)・確認後の保存処理(stopRecording)は
+  // 既存の退出フローのまま一切変更しない。確認後に入室前の画面へ戻る
+  // ところまでは既存の退出ボタンと同じで、自分のルームへ実際に移るには、
+  // 入室画面側のこのボタンをもう一度押す必要がある。ページ全体の読み込み
+  // 直し(window.location.assign)は録画開始者でない場合のみ行う。
+  const handleBackToOwnRoomButtonClick = useCallback(() => {
+    if (!ownRoomHref) return;
+    if (recordingOwnerIdRef.current === selfId.current) {
+      handleLeaveRoomButtonClick();
+      return;
+    }
+    window.location.assign(ownRoomHref);
+  }, [ownRoomHref, handleLeaveRoomButtonClick]);
   const confirmLeaveRoomWhileRecording = useCallback(() => {
     setShowLeaveRoomWhileRecordingConfirm(false);
     handleLeaveRoom();
@@ -11236,6 +11257,16 @@ export default function AvatarSpace({
             >
               {t("lobby.goToAdmin")}
             </Link>
+          )}
+          {viewOnlyInviteToken && ownRoomHref && (
+            <button
+              type="button"
+              onClick={handleBackToOwnRoomButtonClick}
+              disabled={isStoppingRecording}
+              className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {t("lobby.backToOwnRoom")}
+            </button>
           )}
         </div>
 
@@ -14095,6 +14126,18 @@ export default function AvatarSpace({
                         {t("room.goToMasterPanel")}
                       </Link>
                     )}
+                  </div>
+                )}
+                {viewOnlyInviteToken && ownRoomHref && (
+                  <div className="space-y-2 border-t border-slate-700 pt-4">
+                    <button
+                      type="button"
+                      onClick={handleBackToOwnRoomButtonClick}
+                      disabled={isStoppingRecording}
+                      className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {t("lobby.backToOwnRoom")}
+                    </button>
                   </div>
                 )}
               </div>

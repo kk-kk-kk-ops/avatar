@@ -23,6 +23,7 @@ type Props = {
   guestInviteToken?: string | null;
   avatarSizePx?: number;
   viewOnlyInviteToken?: string;
+  ownRoomHref?: string | null;
   maintenanceEnabled?: boolean;
   maintenanceStartsAt?: string | null;
   maintenanceEndsAt?: string | null;
@@ -51,6 +52,7 @@ export default function AvatarSpaceLoader({
   guestInviteToken,
   avatarSizePx,
   viewOnlyInviteToken,
+  ownRoomHref,
   maintenanceEnabled,
   maintenanceStartsAt,
   maintenanceEndsAt,
@@ -83,6 +85,7 @@ export default function AvatarSpaceLoader({
         guestInviteToken={guestInviteToken}
         avatarSizePx={avatarSizePx}
         viewOnlyInviteToken={viewOnlyInviteToken}
+        ownRoomHref={ownRoomHref}
         maintenanceEnabled={maintenanceEnabled}
         maintenanceStartsAt={maintenanceStartsAt}
         maintenanceEndsAt={maintenanceEndsAt}
