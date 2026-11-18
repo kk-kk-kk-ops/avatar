@@ -403,6 +403,7 @@ const ja: Record<string, string> = {
   "room.roomDesignChangeConfirm":
     "あなたを含め、今ルームにいる全員がいったん退出し、画面が再読み込みされます。よろしいですか?",
   "room.billingModalTitle": "お支払い・プラン",
+  "room.announcementsModalTitle": "お知らせ",
   "room.billingLeaveConfirm":
     "お支払いの画面に移動すると、ルームから一度退出します(お手続きの後は入室画面に戻ります)。続けますか?",
 
@@ -940,6 +941,7 @@ const en: Record<string, string> = {
   "room.roomDesignChangeConfirm":
     "This will disconnect everyone currently in the room, including you, and the page will reload. Are you sure?",
   "room.billingModalTitle": "Billing & Plan",
+  "room.announcementsModalTitle": "Announcements",
   "room.billingLeaveConfirm":
     "Moving to the payment page will take you out of the room (you'll return to the entry screen afterward). Continue?",
 

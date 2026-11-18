@@ -102,6 +102,7 @@ import {
 import { deleteUserIconClient, uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
 import { checkViewOnlyInviteAccess } from "@/lib/checkViewOnlyInviteAccess";
+import { getHasUnreadAnnouncements } from "@/app/admin/actions";
 
 // 管理画面モーダル化 M-1(2026-11)。管理者がボタンを押すまでチャンクを
 // 読み込ませないため、next/dynamicでモジュールスコープに定義する
@@ -124,6 +125,14 @@ const AdminInviteRoomModal = dynamic(
 // M-1・M-3と同じ方針で、管理者がボタンを押すまでチャンクを読み込ませない。
 const AdminBillingModal = dynamic(
   () => import("@/components/AdminBillingModal"),
+  { ssr: false },
+);
+
+// 管理画面モーダル化 M-5(2026-11)。お知らせの一覧・既読操作。
+// M-1・M-3・M-4と同じ方針で、管理者がボタンを押すまでチャンクを
+// 読み込ませない。
+const AdminAnnouncementsModal = dynamic(
+  () => import("@/components/AdminAnnouncementsModal"),
   { ssr: false },
 );
 
@@ -2053,6 +2062,24 @@ export default function AvatarSpace({
     useState(false);
   // M-4(2026-11)。請求モーダル用、他のモーダルとは独立したstate。
   const [showAdminBillingModal, setShowAdminBillingModal] = useState(false);
+  // M-5(2026-11)。お知らせモーダル用、他のモーダルとは独立したstate。
+  const [showAdminAnnouncementsModal, setShowAdminAnnouncementsModal] =
+    useState(false);
+  // 別掲の案(2026-11、採用)。設定パネルのボタン・左上タブの未読印用。
+  const [hasUnreadAnnouncements, setHasUnreadAnnouncements] = useState(false);
+  // 入室した時に1回だけ未読の有無を取得する(isAccountAdminの場合のみ。
+  // お知らせ機能自体がアカウント単位のため、ルームのjoined/leave以外の
+  // 依存は不要)。
+  useEffect(() => {
+    if (!joined || !isAccountAdmin) return;
+    let cancelled = false;
+    getHasUnreadAnnouncements(locale).then((result) => {
+      if (!cancelled && result.ok) setHasUnreadAnnouncements(result.hasUnread);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [joined, isAccountAdmin, locale]);
   // showAdminOccupantsModalがfalseの間はplayersの中身に関わらずmapを
   // 作らず前回値(空配列)をそのまま返すため、presence更新のたびに
   // 発生する再描画(players state自体の更新によるAvatarSpace全体の
@@ -12624,7 +12651,11 @@ export default function AvatarSpace({
                     key: "settings" as const,
                     label: t("tabs.settings"),
                     Icon: TabIconGear,
-                    unread: 0,
+                    // 別掲の案(2026-11、採用)。お知らせの未読を、チャット・
+                    // 通知タブと同じ仕組み(下のtab.unread > 0の分岐)で
+                    // 表示する。件数ではなく有無(boolean)しか分からない
+                    // ため、未読があれば1を入れて同じ赤い丸を出す。
+                    unread: isAccountAdmin && hasUnreadAnnouncements ? 1 : 0,
                   },
                 ]
               ).map((tab) => (
@@ -14118,6 +14149,21 @@ export default function AvatarSpace({
                         {t("room.billingModalTitle")}
                       </button>
                     )}
+                    {isAccountAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAdminAnnouncementsModal(true)}
+                        className="relative block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
+                      >
+                        {t("room.announcementsModalTitle")}
+                        {hasUnreadAnnouncements && (
+                          <span
+                            aria-label={t("admin.unreadAnnouncementsAria")}
+                            className="absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-red-500"
+                          />
+                        )}
+                      </button>
+                    )}
                     {isMaster && (
                       <Link
                         href="/master"
@@ -14550,6 +14596,21 @@ export default function AvatarSpace({
           接続とは無関係)。 */}
       {showAdminBillingModal && (
         <AdminBillingModal onClose={() => setShowAdminBillingModal(false)} />
+      )}
+
+      {/* 管理画面モーダル化 M-5(2026-11)。お知らせの一覧・既読操作。
+          このモーダル自身もRealtimeチャンネルを一切購読しない
+          (読み取り・操作はすべてServer Action経由)。閉じた時に未読の
+          有無を再取得し、設定パネル・左上タブの印を最新化する。 */}
+      {showAdminAnnouncementsModal && (
+        <AdminAnnouncementsModal
+          onClose={() => {
+            setShowAdminAnnouncementsModal(false);
+            getHasUnreadAnnouncements(locale).then((result) => {
+              if (result.ok) setHasUnreadAnnouncements(result.hasUnread);
+            });
+          }}
+        />
       )}
 
       {showRecordConfirm && (

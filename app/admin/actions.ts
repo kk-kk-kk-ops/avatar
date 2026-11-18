@@ -9,7 +9,7 @@ import { disconnectIndigoConnections } from "@/lib/broadcastIndigoDisconnect";
 import { disconnectLivekitParticipant } from "@/lib/disconnectLivekitParticipant";
 import { resolveLivekitParticipantUserId } from "@/lib/resolveLivekitParticipantUserId";
 import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
-import { PLANS, type PlanId } from "@/lib/types";
+import { PLANS, type PlanId, type Announcement } from "@/lib/types";
 import { translate, type Locale } from "@/lib/i18n/translations";
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
@@ -216,19 +216,139 @@ export async function regenerateInviteToken() {
   revalidatePath("/admin");
 }
 
-// 「告知」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
-export async function markAnnouncementRead(announcementId: string) {
-  const { supabase, account } = await requireAdminAccount();
-
+// 既存のmarkAnnouncementRead(/admin用、redirect方式)から実処理を切り出す。
+// revalidatePathは呼ばない(会議室のモーダル(M-5)からも使うため、
+// performRegenerateInviteToken等と同じ方針で、呼び出し元それぞれが
+// 必要な時だけ呼ぶ)。
+async function performMarkAnnouncementRead(
+  supabase: ReturnType<typeof createClient>,
+  accountId: string,
+  announcementId: string,
+): Promise<ActionResult> {
   const { error } = await supabase
     .from("announcement_reads")
     .upsert(
-      { account_id: account.id, announcement_id: announcementId },
+      { account_id: accountId, announcement_id: announcementId },
       { onConflict: "account_id,announcement_id" },
     );
-  if (error) throw new Error("既読状態の更新に失敗しました");
+  if (error) return { ok: false, error: "既読状態の更新に失敗しました" };
+  return { ok: true };
+}
 
+// 「告知」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
+export async function markAnnouncementRead(announcementId: string) {
+  const { supabase, account } = await requireAdminAccount();
+  const result = await performMarkAnnouncementRead(
+    supabase,
+    account.id,
+    announcementId,
+  );
+  if (!result.ok) throw new Error(result.error);
   revalidatePath("/admin");
+}
+
+// 管理画面モーダル化 M-5(2026-11)。会議室画面から開く、お知らせの
+// 一覧・既読状態の取得。表示内容・並び順・未読の判定はapp/admin/page.tsx
+// (125-154行目)と同じにする(予約投稿の扱い等、挙動を変えない)。
+// M-1・M-3・M-4と同じく、認可にはrequireVerifiedBillingAccountを使い、
+// 失敗時はエラーを返すだけで遷移はしない。accountIdは引数で受け取らない。
+export async function getAdminAnnouncements(locale: Locale = "ja"): Promise<
+  | { ok: true; announcements: (Announcement & { unread: boolean })[] }
+  | { ok: false; error: string }
+> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  const { data: announcementRows } = await supabase
+    .from("announcements")
+    .select("id, title, body, title_en, body_en, published_at, created_at")
+    .order("published_at", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  const { data: announcementReadRows } = await supabase
+    .from("announcement_reads")
+    .select("announcement_id")
+    .eq("account_id", verified.account.id);
+  const readAnnouncementIds = new Set(
+    (announcementReadRows ?? []).map((r) => r.announcement_id),
+  );
+
+  const announcements: (Announcement & { unread: boolean })[] = (
+    announcementRows ?? []
+  ).map((a) => ({
+    id: a.id,
+    title: a.title,
+    body: a.body,
+    titleEn: a.title_en,
+    bodyEn: a.body_en,
+    publishedAt: a.published_at,
+    unread: !readAnnouncementIds.has(a.id),
+  }));
+
+  return { ok: true, announcements };
+}
+
+export async function markAnnouncementReadFromModal(
+  announcementId: string,
+  locale: Locale = "ja",
+): Promise<ActionResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  return performMarkAnnouncementRead(
+    supabase,
+    verified.account.id,
+    announcementId,
+  );
+}
+
+// 別掲の案(2026-11、採用)。設定パネルのボタン・左上タブに未読の印を
+// 出すための軽量版。本文は返さず、未読があるかどうかのbooleanのみ返す。
+export async function getHasUnreadAnnouncements(locale: Locale = "ja"): Promise<
+  { ok: true; hasUnread: boolean } | { ok: false; error: string }
+> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
+
+  const verified = await requireVerifiedBillingAccount(supabase, user.id);
+  if (!verified.ok) {
+    return { ok: false, error: translate(locale, "admin.accountVerificationFailed") };
+  }
+
+  const { data: announcementRows } = await supabase
+    .from("announcements")
+    .select("id");
+  const { data: announcementReadRows } = await supabase
+    .from("announcement_reads")
+    .select("announcement_id")
+    .eq("account_id", verified.account.id);
+  const readAnnouncementIds = new Set(
+    (announcementReadRows ?? []).map((r) => r.announcement_id),
+  );
+  const hasUnread = (announcementRows ?? []).some(
+    (a) => !readAnnouncementIds.has(a.id),
+  );
+
+  return { ok: true, hasUnread };
 }
 
 // 招待URLからログイン画面に遷移したときに表示する招待者名
