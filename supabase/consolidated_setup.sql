@@ -199,6 +199,20 @@ alter table public.accounts drop constraint if exists accounts_plan_check;
 alter table public.accounts add constraint accounts_plan_check
   check (plan in ('free', 'light', 'standard', 'pro'));
 
+-- 1人の利用者が持ち主のアカウントは1件まで(2026-11-18追加)。
+-- 同時に2回処理が走った場合の二重作成を防ぐ。
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.accounts'::regclass
+      and conname = 'accounts_owner_user_id_key'
+  ) then
+    alter table public.accounts
+      add constraint accounts_owner_user_id_key unique (owner_user_id);
+  end if;
+end $$;
+
 alter table public.accounts
   add column if not exists invite_inviter_name text;
 
