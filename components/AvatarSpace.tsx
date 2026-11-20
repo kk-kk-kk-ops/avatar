@@ -11270,21 +11270,6 @@ export default function AvatarSpace({
                 : t("lobby.enterRoom")}
           </button>
 
-          {/* ログインフロー統一(2026-08-24): 管理者は/adminへ自動転送
-              されなくなったため、ロビー画面からも管理画面へ行けるように
-              する(入室後の設定タブ内の同種リンクは既存のまま維持)。
-              isAccountAdminがtrueになるのは常に「自分自身のアカウントの
-              ルームを見ている」場合のみ(他人の招待URLを閲覧中の画面では
-              isAccountAdminは常にfalseで、このボタン自体が表示されない)
-              ため、退室処理は不要で単純なリンクでよい(2026-08-29確認)。 */}
-          {isAccountAdmin && (
-            <Link
-              href="/admin"
-              className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200"
-            >
-              {t("lobby.goToAdmin")}
-            </Link>
-          )}
           {viewOnlyInviteToken && ownRoomHref && (
             <button
               type="button"
@@ -14114,14 +14099,6 @@ export default function AvatarSpace({
 
                 {(isAccountAdmin || isMaster) && (
                   <div className="space-y-2 border-t border-slate-700 pt-4">
-                    {isAccountAdmin && (
-                      <Link
-                        href="/admin"
-                        className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700"
-                      >
-                        {t("lobby.goToAdmin")}
-                      </Link>
-                    )}
                     {isAccountAdmin && (
                       <button
                         type="button"

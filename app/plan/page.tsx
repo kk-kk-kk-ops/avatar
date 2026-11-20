@@ -16,7 +16,7 @@ export default async function PlanPage() {
 
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.isMaster) redirect("/master");
-  if (state.type === "admin") redirect("/admin");
+  if (state.type === "admin") redirect("/");
   if (state.type === "guest") redirect("/");
 
   return (
