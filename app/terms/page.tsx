@@ -81,12 +81,11 @@ export default function TermsPage() {
         </p>
       </Article>
 
-      <Article title="第8条(解約・退会)">
+      <Article title="第8条(解約)">
         <Items>
           <li>{BILLING.cancelHow}</li>
           <li>{BILLING.cancelRule}</li>
           <li>{BILLING.refundRule}</li>
-          <li>退会(アカウントの削除)を行うと、ユーザーコンテンツを含むアカウントのデータは削除され、復元できなくなります。必要なデータは、退会前にユーザーご自身で保存してください。</li>
         </Items>
       </Article>
 
