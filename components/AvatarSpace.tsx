@@ -103,6 +103,7 @@ import { deleteUserIconClient, uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
 import { checkViewOnlyInviteAccess } from "@/lib/checkViewOnlyInviteAccess";
 import { getHasUnreadAnnouncements } from "@/app/admin/actions";
+import { performLogout } from "@/components/auth/LogoutButton";
 
 // 管理画面モーダル化 M-1(2026-11)。管理者がボタンを押すまでチャンクを
 // 読み込ませないため、next/dynamicでモジュールスコープに定義する
@@ -1162,6 +1163,7 @@ export default function AvatarSpace({
   // 「停止処理中」としてdisabledにし、二重に停止操作できないようにする
   // (詳細はstopRecording参照)。
   const [isStoppingRecording, setIsStoppingRecording] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const isStoppingRecordingRef = useRef(false);
   // 録画開始ボタンを押してから、文字起こしパイプラインの準備(マイクの
   // タップ等)が完了するまでtrueにする(2026-10追加、録画開始者のみ)。
@@ -9850,6 +9852,19 @@ export default function AvatarSpace({
     }
     window.location.assign(ownRoomHref);
   }, [ownRoomHref, handleLeaveRoomButtonClick]);
+  // ログアウトボタン押下時の処理(2026-11-21追加)。録画の開始者が会議室の
+  // 中から押した場合は、「自分のルームへ」ボタンと同じくhandleLeaveRoomButtonClick
+  // を呼ぶだけにする(既存の録画中確認ダイアログ・保存処理は一切変更しない)。
+  // 行き先は常に"/login"(共用パソコンのログアウト画面に招待URLが残ると、
+  // 次に使った別の人がその招待URLから入れてしまうため、招待URLには戻さない)。
+  const handleLogoutButtonClick = useCallback(() => {
+    if (recordingOwnerIdRef.current === selfId.current) {
+      handleLeaveRoomButtonClick();
+      return;
+    }
+    setIsLoggingOut(true);
+    performLogout().catch(() => setIsLoggingOut(false));
+  }, [handleLeaveRoomButtonClick]);
   const confirmLeaveRoomWhileRecording = useCallback(() => {
     setShowLeaveRoomWhileRecordingConfirm(false);
     handleLeaveRoom();
@@ -11280,6 +11295,14 @@ export default function AvatarSpace({
               {t("lobby.backToOwnRoom")}
             </button>
           )}
+          <button
+            type="button"
+            onClick={handleLogoutButtonClick}
+            disabled={isStoppingRecording || isLoggingOut}
+            className="mt-2 block w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoggingOut ? t("admin.loggingOut") : t("admin.logout")}
+          </button>
         </div>
 
         {/* アイコン削除の確認モーダル。入室後の画面とは別のreturn文の
@@ -14163,6 +14186,16 @@ export default function AvatarSpace({
                     </button>
                   </div>
                 )}
+                <div className="space-y-2 border-t border-slate-700 pt-4">
+                  <button
+                    type="button"
+                    onClick={handleLogoutButtonClick}
+                    disabled={isStoppingRecording || isLoggingOut}
+                    className="block w-full rounded-lg border border-slate-700 py-2 text-center text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isLoggingOut ? t("admin.loggingOut") : t("admin.logout")}
+                  </button>
+                </div>
               </div>
             )}
           </div>

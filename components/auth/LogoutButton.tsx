@@ -51,6 +51,28 @@ async function notifyOtherTabs(
   supabase.removeChannel(channel);
 }
 
+// 会議室(components/AvatarSpace.tsx)のログアウトボタンからも、この
+// コンポーネントと全く同じ処理(他タブへの通知→signOut→移動)を使うために
+// 切り出す(2026-11-21追加)。既存のLogoutButtonコンポーネント自体の動き
+// (移動先の既定値"/login"、signOutの範囲、他タブへの通知)は変えない。
+export async function performLogout(redirectTo?: string) {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user) {
+    try {
+      await notifyOtherTabs(supabase, user.id);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("他タブへのログアウト通知に失敗しました", err);
+    }
+  }
+  await supabase.auth.signOut();
+  // ページ全体を再読み込みしてCookie・middlewareの状態を確実にリセットする
+  window.location.href = redirectTo ?? "/login";
+}
+
 export default function LogoutButton({
   className,
   redirectTo,
@@ -61,21 +83,7 @@ export default function LogoutButton({
 
   const handleLogout = async () => {
     setLoading(true);
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      try {
-        await notifyOtherTabs(supabase, user.id);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("他タブへのログアウト通知に失敗しました", err);
-      }
-    }
-    await supabase.auth.signOut();
-    // ページ全体を再読み込みしてCookie・middlewareの状態を確実にリセットする
-    window.location.href = redirectTo ?? "/login";
+    await performLogout(redirectTo);
   };
 
   return (
