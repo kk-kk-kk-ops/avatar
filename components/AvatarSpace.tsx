@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import {
@@ -9865,6 +9864,17 @@ export default function AvatarSpace({
     setIsLoggingOut(true);
     performLogout().catch(() => setIsLoggingOut(false));
   }, [handleLeaveRoomButtonClick]);
+  // 「マスター画面へ」押下時の処理(2026-11-22追加)。録画の開始者が会議室の
+  // 中から押した場合は、「自分のルームへ」「ログアウト」と同じく
+  // handleLeaveRoomButtonClickを呼ぶだけにする(既存の録画中確認ダイアログ・
+  // 保存処理は一切変更しない)。
+  const handleGoToMasterButtonClick = useCallback(() => {
+    if (recordingOwnerIdRef.current === selfId.current) {
+      handleLeaveRoomButtonClick();
+      return;
+    }
+    window.location.assign("/master");
+  }, [handleLeaveRoomButtonClick]);
   const confirmLeaveRoomWhileRecording = useCallback(() => {
     setShowLeaveRoomWhileRecordingConfirm(false);
     handleLeaveRoom();
@@ -11293,6 +11303,16 @@ export default function AvatarSpace({
               className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {t("lobby.backToOwnRoom")}
+            </button>
+          )}
+          {isMaster && (
+            <button
+              type="button"
+              onClick={handleGoToMasterButtonClick}
+              disabled={isStoppingRecording}
+              className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {t("room.goToMasterPanel")}
             </button>
           )}
           <button
@@ -14165,12 +14185,14 @@ export default function AvatarSpace({
                       </button>
                     )}
                     {isMaster && (
-                      <Link
-                        href="/master"
-                        className="block w-full rounded-lg bg-emerald-900/40 py-2 text-center text-sm font-semibold text-emerald-300 hover:bg-emerald-900/60"
+                      <button
+                        type="button"
+                        onClick={handleGoToMasterButtonClick}
+                        disabled={isStoppingRecording}
+                        className="block w-full rounded-lg bg-emerald-900/40 py-2 text-center text-sm font-semibold text-emerald-300 hover:bg-emerald-900/60 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {t("room.goToMasterPanel")}
-                      </Link>
+                      </button>
                     )}
                   </div>
                 )}
@@ -14605,7 +14627,11 @@ export default function AvatarSpace({
           (閉じれば次に開くまで再度チャンクが必要になるが、会議室の
           接続とは無関係)。 */}
       {showAdminBillingModal && (
-        <AdminBillingModal onClose={() => setShowAdminBillingModal(false)} />
+        <AdminBillingModal
+          onClose={() => setShowAdminBillingModal(false)}
+          isRecordingOwnerRecording={recordingOwnerId === selfId.current}
+          isStoppingRecording={isStoppingRecording}
+        />
       )}
 
       {/* 管理画面モーダル化 M-5(2026-11)。お知らせの一覧・既読操作。

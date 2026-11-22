@@ -22,8 +22,12 @@ const PLAN_DISPLAY_ORDER: PlanId[] = ["free", "light", "standard", "pro"];
 
 export default function AdminBillingModal({
   onClose,
+  isRecordingOwnerRecording,
+  isStoppingRecording,
 }: {
   onClose: () => void;
+  isRecordingOwnerRecording: boolean;
+  isStoppingRecording: boolean;
 }) {
   const { t, locale } = useLocale();
   const router = useRouter();
@@ -65,6 +69,9 @@ export default function AdminBillingModal({
   const [billingPending, setBillingPending] = useState<string | null>(null);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [, startBillingTransition] = useTransition();
+  // 録画中・録画の保存中は、会議室の外(決済・請求ポータル)へ移るボタンを
+  // 押せなくする(2026-11-22追加。保存されない不具合の対策)。
+  const billingLeaveBlocked = isRecordingOwnerRecording || isStoppingRecording;
 
   const handlePlanCardClick = (targetPlan: PlanId) => {
     if (targetPlan === plan) return;
@@ -130,6 +137,11 @@ export default function AdminBillingModal({
         </div>
 
         {loadError && <p className="mb-2 text-xs text-red-600">{loadError}</p>}
+        {billingLeaveBlocked && (
+          <p className="mb-2 text-xs text-amber-600">
+            {t("room.billingBlockedWhileRecording")}
+          </p>
+        )}
 
         <div>
           <p className="mb-1 text-xs font-semibold text-slate-500">{t("admin.contractPlan")}</p>
@@ -182,7 +194,8 @@ export default function AdminBillingModal({
                     disabled={
                       isCurrent ||
                       billingPending !== null ||
-                      (id === "free" && !hasActiveSubscription)
+                      (id === "free" && !hasActiveSubscription) ||
+                      billingLeaveBlocked
                     }
                     className={
                       isCurrent
@@ -214,7 +227,7 @@ export default function AdminBillingModal({
         <div className="mt-4 border-t border-slate-100 pt-3">
           <button
             onClick={handlePaymentMethodClick}
-            disabled={billingPending !== null}
+            disabled={billingPending !== null || billingLeaveBlocked}
             className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
           >
             {billingPending === "payment_method" ? t("common.processing") : t("admin.paymentMethodChange")}
@@ -226,7 +239,7 @@ export default function AdminBillingModal({
           {hasStripeCustomer ? (
             <button
               onClick={handlePortalClick}
-              disabled={billingPending !== null}
+              disabled={billingPending !== null || billingLeaveBlocked}
               className="text-xs font-semibold text-slate-700 underline hover:text-slate-900 disabled:opacity-50"
             >
               {t("admin.billingHistoryLink")}

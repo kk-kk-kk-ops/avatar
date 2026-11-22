@@ -406,6 +406,8 @@ const ja: Record<string, string> = {
   "room.announcementsModalTitle": "お知らせ",
   "room.billingLeaveConfirm":
     "お支払いの画面に移動すると、ルームから一度退出します(お手続きの後は入室画面に戻ります)。続けますか?",
+  "room.billingBlockedWhileRecording":
+    "録画中はお支払いの画面に移動できません。録画を停止してからお試しください。",
 
   "settings.micLabel": "マイク",
   "settings.noiseSuppressionLabel": "ノイズ抑制",
@@ -944,6 +946,8 @@ const en: Record<string, string> = {
   "room.announcementsModalTitle": "Announcements",
   "room.billingLeaveConfirm":
     "Moving to the payment page will take you out of the room (you'll return to the entry screen afterward). Continue?",
+  "room.billingBlockedWhileRecording":
+    "You can't go to the payment page while recording. Please stop the recording first.",
 
   "settings.micLabel": "Mic",
   "settings.noiseSuppressionLabel": "Noise suppression",
