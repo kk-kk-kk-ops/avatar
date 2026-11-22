@@ -3679,6 +3679,232 @@ create policy "bug_reports: update master"
   with check (public.is_master(auth.uid()));
 
 
+-- ------------------------------------------------------------
+-- 22. Realtime Authorization(docs/realtime-authorization-plan.md)
+--     の項目6 段階2・段階3。realtime_view_grants(viewOnly許可証)
+--     テーブル・grant_realtime_view_access関数、can_access_avatar_room_topic・
+--     can_message_user_channel関数、realtime.messagesへの8つのポリシーを
+--     追加する。is_banned_for_account(節8b)・profiles・accounts・rooms
+--     (節1・2・6)より後に存在すればよいため、このファイルの末尾に置く。
+--     段階1〜3はいずれもDBの追加のみで、ポリシーはprivate指定のチャンネル
+--     にだけ効くため、段階7(全チャンネルのprivate:true化)までは
+--     既存の動作に影響しない想定(設計書6節参照)。
+-- ------------------------------------------------------------
+create table if not exists public.realtime_view_grants (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  account_id uuid not null references public.accounts(id) on delete cascade,
+  expires_at timestamptz not null,
+  primary key (user_id, account_id)
+);
+alter table public.realtime_view_grants enable row level security;
+drop policy if exists "realtime_view_grants: select own" on public.realtime_view_grants;
+create policy "realtime_view_grants: select own"
+  on public.realtime_view_grants for select
+  using (user_id = auth.uid());
+
+create or replace function public.grant_realtime_view_access(token text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_account_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'ログインが必要です';
+  end if;
+  select a.id into v_account_id
+  from public.accounts a
+  where a.invite_token = token;
+  if v_account_id is null then
+    raise exception '無効な招待リンクです';
+  end if;
+
+  -- BANされている場合は許可証を発行しない。
+  if public.is_banned_for_account(v_account_id) then
+    raise exception 'このルームへのアクセスが制限されています';
+  end if;
+
+  insert into public.realtime_view_grants (user_id, account_id, expires_at)
+  values (auth.uid(), v_account_id, now() + interval '30 minutes')
+  on conflict (user_id, account_id) do update set expires_at = excluded.expires_at;
+end;
+$$;
+
+revoke all on function public.grant_realtime_view_access(text) from public;
+revoke all on function public.grant_realtime_view_access(text) from anon;
+grant execute on function public.grant_realtime_view_access(text) to authenticated;
+
+-- アカウントメンバー(通常)またはviewOnly許可証を持つかを判定し、かつ
+-- BANされていないかを合わせて判定する(presence/broadcast共通の入口)。
+-- トピックからUUID部分を切り出し、主キー検索(r.id = <uuid>)で判定する。
+-- 切り出しはCASE式で「トピックが本当にavatar-room-{UUID}の形の時だけ」
+-- 行う(regexpチェックとキャストをandで繋ぐと評価順序が未規定のため、
+-- avatar-room-以外のトピックでキャストエラーになり得る。CASEはマッチ
+-- した分岐しか評価しないため安全)。'avatar-room-'は12文字のため、
+-- UUID部分はsubstring(... from 13)で取り出す。
+create or replace function public.can_access_avatar_room_topic()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select case
+    when realtime.topic() ~ '^avatar-room-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    then exists (
+      select 1
+      from public.rooms r
+      where r.id = substring(realtime.topic() from 13)::uuid
+        and (
+          exists (
+            select 1 from public.profiles p
+            where p.user_id = auth.uid() and p.account_id = r.account_id
+          )
+          or exists (
+            select 1 from public.realtime_view_grants g
+            where g.user_id = auth.uid()
+              and g.account_id = r.account_id
+              and g.expires_at > now()
+          )
+        )
+        and not public.is_banned_for_account(r.account_id)
+    )
+    else false
+  end;
+$$;
+
+revoke all on function public.can_access_avatar_room_topic() from public;
+revoke all on function public.can_access_avatar_room_topic() from anon;
+grant execute on function public.can_access_avatar_room_topic() to authenticated;
+
+-- is_masterは意図的にここに含めない(含めるとbroadcast送信ポリシー経由で
+-- 運営者も送信できてしまう。presence SELECTのみ別途ORで追加する)。
+
+-- user-channel(方式C)の送信可否判定。指定したuser_idが、送信者
+-- (auth.uid())と「同じアカウントに正当に関わっているか」
+-- (通常メンバーまたは有効なviewOnly許可証、いずれかの組み合わせ)を判定し、
+-- BANされていないことも確認する。
+create or replace function public.can_message_user_channel(p_recipient_user_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from (
+      select account_id from public.profiles where user_id = auth.uid()
+      union
+      select account_id from public.realtime_view_grants
+      where user_id = auth.uid() and expires_at > now()
+    ) as mine(account_id)
+    where mine.account_id in (
+      select account_id from public.profiles where user_id = p_recipient_user_id
+      union
+      select account_id from public.realtime_view_grants
+      where user_id = p_recipient_user_id and expires_at > now()
+    )
+    and not public.is_banned_for_account(mine.account_id)
+  );
+$$;
+
+revoke all on function public.can_message_user_channel(uuid) from public;
+revoke all on function public.can_message_user_channel(uuid) from anon;
+grant execute on function public.can_message_user_channel(uuid) to authenticated;
+
+-- presence SELECT: メンバー/viewOnly または 運営者(is_master、avatar-roomトピックに限定)
+drop policy if exists "avatar-room: presence access" on realtime.messages;
+create policy "avatar-room: presence access"
+  on realtime.messages for select
+  to authenticated
+  using (
+    realtime.messages.extension = 'presence'
+    and (
+      public.can_access_avatar_room_topic()
+      or (
+        realtime.topic() ~ '^avatar-room-'
+        and exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.is_master)
+      )
+    )
+  );
+
+-- presence INSERT: メンバー/viewOnlyのみ(運営者は含まない。track()しないため不要)
+drop policy if exists "avatar-room: presence send" on realtime.messages;
+create policy "avatar-room: presence send"
+  on realtime.messages for insert
+  to authenticated
+  with check (
+    realtime.messages.extension = 'presence'
+    and public.can_access_avatar_room_topic()
+  );
+
+-- broadcast SELECT: メンバー/viewOnlyのみ(is_masterは含めない=運営者は閲覧も不可)
+drop policy if exists "avatar-room: broadcast access" on realtime.messages;
+create policy "avatar-room: broadcast access"
+  on realtime.messages for select
+  to authenticated
+  using (
+    realtime.messages.extension = 'broadcast'
+    and public.can_access_avatar_room_topic()
+  );
+
+-- broadcast INSERT: メンバー/viewOnlyのみ
+drop policy if exists "avatar-room: broadcast send" on realtime.messages;
+create policy "avatar-room: broadcast send"
+  on realtime.messages for insert
+  to authenticated
+  with check (
+    realtime.messages.extension = 'broadcast'
+    and public.can_access_avatar_room_topic()
+  );
+
+drop policy if exists "user-session: select own" on realtime.messages;
+create policy "user-session: select own"
+  on realtime.messages for select
+  to authenticated
+  using (
+    realtime.messages.extension = 'broadcast'
+    and realtime.topic() = 'user-session-' || auth.uid()::text
+  );
+
+drop policy if exists "user-session: insert own" on realtime.messages;
+create policy "user-session: insert own"
+  on realtime.messages for insert
+  to authenticated
+  with check (
+    realtime.messages.extension = 'broadcast'
+    and realtime.topic() = 'user-session-' || auth.uid()::text
+  );
+
+drop policy if exists "user-channel: select own" on realtime.messages;
+create policy "user-channel: select own"
+  on realtime.messages for select
+  to authenticated
+  using (
+    realtime.messages.extension = 'broadcast'
+    and realtime.topic() = 'user-' || auth.uid()::text
+  );
+
+-- トピックが本当にuser-{UUID}の形の時だけキャスト・判定する(CASE式。
+-- regexpチェックとキャストをandで繋ぐと評価順序が未規定のため、
+-- "user-"で始まらないトピックへの送信時にキャストエラーになり得る)。
+drop policy if exists "user-channel: insert same account" on realtime.messages;
+create policy "user-channel: insert same account"
+  on realtime.messages for insert
+  to authenticated
+  with check (
+    realtime.messages.extension = 'broadcast'
+    and case
+      when realtime.topic() ~ '^user-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        then public.can_message_user_channel(substring(realtime.topic() from 6)::uuid)
+      else false
+    end
+  );
+
+
 -- ============================================================
 -- 完了。もう一度実行しても壊れないので、迷ったらこのファイルだけ
 -- 実行し直せば現在の機能に必要な状態に揃います。
