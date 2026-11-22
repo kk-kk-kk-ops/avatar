@@ -69,6 +69,27 @@ export async function GET(request: NextRequest) {
       | null;
     imagePath = row?.image_path ?? null;
     thumbnailPath = row?.thumbnail_path ?? null;
+
+    // 入室の仕組みの作り替え 段階C。メンバーの一覧表で通す経路。
+    // 段階Gで招待トークンの経路を削除予定。
+    if (!imagePath && !thumbnailPath && roomId && peerUserId) {
+      const { data: memberData, error: memberError } = await supabase.rpc(
+        "list_chat_messages_as_member",
+        { target_room_id: roomId, peer_user_id: peerUserId },
+      );
+      if (memberError) {
+        // eslint-disable-next-line no-console
+        console.error("メンバーの一覧表による画像パスの取得に失敗しました", memberError);
+      } else {
+        const memberRow = (
+          memberData as
+            | Array<{ id: string; image_path: string | null; thumbnail_path: string | null }>
+            | null
+        )?.find((m) => m.id === messageId);
+        imagePath = memberRow?.image_path ?? null;
+        thumbnailPath = memberRow?.thumbnail_path ?? null;
+      }
+    }
   }
 
   const targetPath = variant === "thumbnail" ? (thumbnailPath ?? imagePath) : imagePath;

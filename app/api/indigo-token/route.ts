@@ -61,6 +61,27 @@ export async function POST(request: Request) {
   let accountId: string | undefined = ownRoom?.account_id;
   let templateId: string | null | undefined = ownRoom?.template_id;
 
+  // 入室の仕組みの作り替え 段階C。メンバーの一覧表で通す経路。
+  // 段階Gで招待トークンの経路を削除予定。
+  if (!accountId) {
+    const { data: memberRoom, error: memberRoomError } = await supabase.rpc(
+      "get_own_or_member_room",
+      { p_room_id: roomId },
+    );
+    if (memberRoomError) {
+      // eslint-disable-next-line no-console
+      console.error("メンバーの一覧表によるアクセス確認に失敗しました", memberRoomError);
+    } else {
+      const matchedMember = (
+        memberRoom as
+          | Array<{ account_id: string; template_id: string | null }>
+          | null
+      )?.[0];
+      accountId = matchedMember?.account_id;
+      templateId = matchedMember?.template_id;
+    }
+  }
+
   // viewOnlyルート: app/api/livekit-token/route.tsと同じ考え方(招待URLの
   // 一時閲覧者はprofiles.account_idが書き換わっていないためRLS経由の
   // SELECTでは見えない。招待トークンの一致をSECURITY DEFINER関数で検証する)。

@@ -36,6 +36,26 @@ export async function POST(request: Request) {
 
   let accountId: string | undefined = ownRoom?.account_id;
 
+  // 入室の仕組みの作り替え 段階C。メンバーの一覧表で通す経路。
+  // 段階Gで招待トークンの経路を削除予定。
+  if (!accountId) {
+    const { data: memberRoom, error: memberRoomError } = await supabase.rpc(
+      "get_own_or_member_room",
+      { p_room_id: roomId },
+    );
+    if (memberRoomError) {
+      // eslint-disable-next-line no-console
+      console.error("メンバーの一覧表によるアクセス確認に失敗しました", memberRoomError);
+    } else {
+      const matchedMember = (
+        memberRoom as
+          | Array<{ account_id: string; template_id: string | null }>
+          | null
+      )?.[0];
+      accountId = matchedMember?.account_id;
+    }
+  }
+
   // viewOnlyルート: 既に自分のアカウントを持つ人が他人の招待URLを一時閲覧している
   // 場合、profiles.account_idは書き換えていないためRLS経由のSELECTでは見えない。
   // 招待トークンの一致をSECURITY DEFINER関数で検証する(/?invite=のviewOnly
