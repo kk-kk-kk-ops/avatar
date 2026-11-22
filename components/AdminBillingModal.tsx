@@ -11,10 +11,6 @@ import { createPortalSession } from "@/app/billing/portal/actions";
 // 支払い方法・請求履歴の表示・変更。AdminInviteRoomModal.tsx(M-3)と
 // 同様、このコンポーネント自身はRealtimeチャンネルを一切購読しない
 // (読み取り・操作はすべてServer Action経由)。
-// デバッグ用プラン切り替え(app/admin/BillingPanel.tsxのdebugSetPlan)は
-// ここには載せない(開発者専用のデバッグ機能であり、公開経路を増やす
-// 必要が無いため。課題リストにある本番ガード不足の指摘とも独立に、
-// このモーダルには元から含めない方針)。
 //
 // 決済・請求ポータルへの遷移は同じタブで行う(案α)。その直前に、
 // 会議室の接続が切断されることを案内する確認ダイアログを挟む。

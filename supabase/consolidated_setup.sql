@@ -186,9 +186,8 @@ create trigger accounts_prevent_privileged_self_write
 -- plan列のCHECK制約。マスタープランは廃止したため、既存にplan='master'の
 -- 行が残っていれば先に'free'へ移行してから(そうしないと制約違反になる)、
 -- 'master'を含まない制約を作り直す。マスター権限アカウントは今後、
--- 通常の4プランのいずれかを持ち、DEBUG_PLAN_SWITCH_EMAILの仕組みで
--- 自由に切り替える(マスター画面へのアクセス権はis_masterフラグで別途
--- 管理しており、これとは無関係)。
+-- 通常の4プランのいずれかを持つ(マスター画面へのアクセス権はis_masterフラグ
+-- で別途管理しており、これとは無関係)。
 update public.accounts set plan = 'free' where plan = 'master';
 
 -- ビジネスプラン(50人上限)は、単一送信元からの同時接続50人規模で
@@ -3323,8 +3322,7 @@ grant execute on function public.count_accounts_by_livekit_server() to authentic
 --     'master'へ揃えていたが、マスタープランは廃止した。既存行の移行と
 --     CHECK制約からの'master'除外は、上の「1. accounts」内で一度きり
 --     実施済み。マスター権限アカウントも今後は通常の4プランのいずれかを
---     持ち、DEBUG_PLAN_SWITCH_EMAILの仕組みで自由に切り替える
---     (マスター画面へのアクセス権はis_masterフラグで別途管理しており、
+--     持つ(マスター画面へのアクセス権はis_masterフラグで別途管理しており、
 --     プランとは無関係のため、この節の削除による影響はない)。
 -- ------------------------------------------------------------
 

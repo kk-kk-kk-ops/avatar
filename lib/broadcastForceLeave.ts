@@ -6,8 +6,8 @@ import { disconnectIndigoConnections } from "@/lib/broadcastIndigoDisconnect";
 // broadcastするだけで、AvatarSpace.tsx側の対応するリスナーが反応する
 // (Node.jsスクリプトでの実機検証により、サーバー側からsubscribe()せず
 // channel.httpSend()するだけで購読中の全クライアントに届くことを確認済み)。
-// app/admin/actions.tsのdebugSetPlanと、Stripe Webhook
-// (app/api/stripe/webhook/route.ts)の両方から呼ばれる共通処理。
+// Stripe Webhook(app/api/stripe/webhook/route.ts)と、トライアル期限切れの
+// cronジョブ(app/api/cron/expire-trials/route.ts)から呼ばれる共通処理。
 export async function broadcastForceLeaveForAccount(
   supabase: SupabaseClient,
   accountId: string,

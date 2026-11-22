@@ -9,8 +9,9 @@ import GoogleLoginButton from "@/components/auth/GoogleLoginButton";
 // 「ログイン済みなら行き先へ進むハブ」として設計されているため)。
 // このページはセッションの有無を一切見ず、常にログインカードだけを
 // 表示することで、管理者を勧誘するための安定した配布用URLとして使う。
-// ログイン後の行き先(管理者なら/admin、未登録ならプラン選択の/plan等)
-// は従来通り/auth/callback経由でTOPページの振り分けに委ねる。
+// ログイン後の行き先(管理者なら会議室入室画面の"/"、マスターなら
+// そこから/masterへ、未登録ならプラン選択の/plan等)は従来通り
+// /auth/callback経由でTOPページの振り分けに委ねる。
 export default function AdminLoginPage({
   searchParams,
 }: {

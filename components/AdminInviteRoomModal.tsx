@@ -88,8 +88,8 @@ export default function AdminInviteRoomModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // URLの形はapp/admin/InvitePanel.tsx:22-25と同じ。モーダルはトークンを
-  // 開いた後に読み込むため、トークンが無い間は空にする。
+  // URLの形は "/?invite=トークン"。モーダルはトークンを開いた後に読み込む
+  // ため、トークンが無い間は空にする。
   const inviteUrl =
     typeof window !== "undefined" && inviteToken
       ? `${window.location.origin}/?invite=${inviteToken}`

@@ -13,9 +13,8 @@ import {
 // 行っているものを使い、このコンポーネント自身はSupabaseチャンネルを
 // 一切購読しない(購読の二重化で会議室側のpresenceが壊れるのを避けるため)。
 //
-// M-2(2026-11)で強制退出・BAN解除を追加。ダッシュボード(/admin、
-// app/admin/OnlineCount.tsx)と同じ処理(app/admin/actions.tsの
-// performKick/performUnban)を、redirectしない別のエントリポイント
+// M-2(2026-11)で強制退出・BAN解除を追加。app/admin/actions.tsの
+// performKick/performUnbanを、redirectしない別のエントリポイント
 // (kickParticipantFromModal/unbanParticipantFromModal)経由で呼ぶ。
 
 export type AdminOccupant = {

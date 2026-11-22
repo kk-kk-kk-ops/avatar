@@ -5,7 +5,7 @@ import CreateRoomStart from "./CreateRoomStart";
 
 // 「ルームを作成」画面(2026-11変更。以前は4プランから選ぶ画面だった)。
 // まだどのアカウントにも属していない新規ユーザーだけが来る(既にアカウント
-// があれば/admin・/(ルーム入室画面)へ振り分け、未ログインなら/login へ)。
+// があれば/(ルーム入室画面)へ振り分け、未ログインなら/login へ)。
 // この振り分け自体は変更していない。
 export default async function PlanPage() {
   const supabase = createClient();

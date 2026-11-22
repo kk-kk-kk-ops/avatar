@@ -12,8 +12,7 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
   // presenceの生エントリだけをstateに持ち、人数の集計(stats)は下で
   // レンダー時に算出する。段階0(docs/realtime-authorization-plan.md
   // 6-2節)でversion.jsonを取得し直した際にも、チャンネルを再購読せずに
-  // 集計だけ再計算されるようにするため(app/admin/OnlineCount.tsxと同じ
-  // 考え方に揃えた)。
+  // 集計だけ再計算されるようにするため。
   const [entriesByRoom, setEntriesByRoom] = useState<
     Record<string, PlayerState[]>
   >({});
@@ -28,8 +27,8 @@ export default function MasterOnlineStats({ rooms }: { rooms: Room[] }) {
   // 変わっていなくても)参照が変わる。依存配列にrooms自体を使うとその都度
   // 全チャンネルを張り直してしまい、再購読の間だけオンライン人数が0に
   // リセットされて見える(点滅する)不具合の原因になっていた
-  // (2026-09 QA指摘。app/admin/OnlineCount.tsxで先に対策済みの同じ不具合
-  // パターン)。ルームID列という「内容が変わった時だけ変化する値」に
+  // (2026-09 QA指摘で判明した不具合パターン)。ルームID列という「内容が
+  // 変わった時だけ変化する値」に
   // 依存させる。
   const roomIds = rooms.map((room) => room.id).join(",");
 

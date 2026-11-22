@@ -98,8 +98,9 @@ export async function provisionAccountForUser(
   }
 
   // 初期ルームのデザインを固定のデフォルトテンプレートに紐付ける
-  // (app/admin/actions.tsのaddRoom/updateRoomTemplateと同じくtemplate_id・
-  // preview_imageをテンプレート側の値で揃える)。テンプレートが見つからない
+  // (template_id・preview_imageをテンプレート側の値で揃える、
+  // app/admin/actions.tsのperformUpdateRoomTemplateと同じ考え方)。
+  // テンプレートが見つからない
   // 場合(削除された等)でもルーム作成自体は失敗させたくないため、
   // その場合はtemplate_idを付けずに従来通り作成する。
   const { data: defaultTemplate } = await supabase

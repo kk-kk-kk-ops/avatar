@@ -10,26 +10,19 @@ import { type PlanId, type Announcement } from "@/lib/types";
 import { translate, type Locale } from "@/lib/i18n/translations";
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
-// 差し替えられてしまう(Next.jsの仕様)ため、debugSetPlanだけは
-// throwではなく戻り値で成否とエラーメッセージを伝える
-// (app/master/actions.tsと同じ方針。他の関数は既存のまま据え置く)。
+// 差し替えられてしまう(Next.jsの仕様)ため、throwではなく戻り値で
+// 成否とエラーメッセージを伝える(app/master/actions.tsと同じ方針)。
 type ActionResult =
   | { ok: true; warning?: string }
   | { ok: false; error: string };
 
-// 既存のルームに紐づくルームデザイン(テンプレート)を変更する実処理
-// (2026-11 M-3で切り出し)。ダッシュボード(RoomManager.tsx、既存の
-// updateRoomTemplate経由)と会議室内モーダル(updateRoomTemplateFromModal
-// 経由)の両方から呼ばれる。ルーム名は変更しない(既に名前を変えている
-// 場合を尊重するため)。
+// 既存のルームに紐づくルームデザイン(テンプレート)を変更する実処理。
+// 会議室内モーダル(updateRoomTemplateFromModal)から呼ばれる。ルーム名は
+// 変更しない(既に名前を変えている場合を尊重するため)。
 //
-// roomId: 既存の入口(RoomManager.tsx)はルームのidを指定済みで渡してくる
-// ため、その値をそのまま使う(挙動を変えない)。モーダル用の新しい入口は
-// roomIdを渡さず(null)、その場合はそのアカウントの先頭ルーム(created_at
-// 昇順で1件)を自動で解決する。app/page.tsx:104-112のルーム入室解決と
-// 同じ方法で揃えている(1アカウント1ルームの前提、M-3調査のB-1/B-2・
-// 確認方法Cで確認済み。2026-11時点で本番に2件以上のルームを持つ
-// アカウントは無いことも確認済み)。
+// roomId: モーダルからは常にnullで渡され、その場合はそのアカウントの
+// 先頭ルーム(created_at昇順で1件)を自動で解決する(1アカウント1ルーム
+// の前提)。
 async function performUpdateRoomTemplate(
   supabase: ReturnType<typeof createClient>,
   accountId: string,
@@ -119,10 +112,9 @@ async function performRegenerateInviteToken(
   return { ok: true };
 }
 
-// 既存のmarkAnnouncementRead(/admin用、redirect方式)から実処理を切り出す。
-// revalidatePathは呼ばない(会議室のモーダル(M-5)からも使うため、
-// performRegenerateInviteToken等と同じ方針で、呼び出し元それぞれが
-// 必要な時だけ呼ぶ)。
+// お知らせの既読状態を更新する実処理。会議室内モーダル
+// (markAnnouncementReadFromModal)から呼ばれる。revalidatePathは呼ばない
+// (呼び出し元が必要な時だけ呼ぶ、performRegenerateInviteToken等と同じ方針)。
 async function performMarkAnnouncementRead(
   supabase: ReturnType<typeof createClient>,
   accountId: string,
@@ -139,8 +131,8 @@ async function performMarkAnnouncementRead(
 }
 
 // 管理画面モーダル化 M-5(2026-11)。会議室画面から開く、お知らせの
-// 一覧・既読状態の取得。表示内容・並び順・未読の判定はapp/admin/page.tsx
-// (125-154行目)と同じにする(予約投稿の扱い等、挙動を変えない)。
+// 一覧・既読状態を取得する。published_atの降順で並べ、未来日付の予約投稿も
+// 絞り込まずそのまま含める。
 // M-1・M-3・M-4と同じく、認可にはrequireVerifiedBillingAccountを使い、
 // 失敗時はエラーを返すだけで遷移はしない。accountIdは引数で受け取らない。
 export async function getAdminAnnouncements(locale: Locale = "ja"): Promise<
@@ -307,8 +299,8 @@ export async function getAdminInviteInfo(locale: Locale = "ja"): Promise<
 
 // 管理画面モーダル化 M-4(2026-11)。会議室内の請求モーダル用の読み取り
 // 専用Action。Stripeの実ID(stripe_customer_id/stripe_subscription_id)は
-// booleanへ変換してのみ返す(app/admin/page.tsx:184-185と同じ方針)。
-// 読み取りのみのため、他の読み取り用Action(getAdminInviteInfo・
+// booleanへ変換してのみ返す。読み取りのみのため、他の読み取り用Action
+// (getAdminInviteInfo・
 // getAdminRoomInfo)と同様にrevalidatePathは呼ばない。
 export async function getAdminBillingInfo(locale: Locale = "ja"): Promise<
   | {
@@ -471,11 +463,10 @@ export async function updateRoomTemplateFromModal(
   );
 }
 
-// 強制退出の実処理(2026-11 M-2で切り出し)。ダッシュボード(OnlineCount.tsx、
-// 既存のkickParticipant経由)と会議室内モーダル(kickParticipantFromModal
-// 経由)の両方から呼ばれる共通処理。処理順(ルーム所有確認→照合→
-// 食い違い・自分自身の確認→BAN登録→LiveKit退去→位置同期切断→
-// force-leave送信)は、切り出し前のkickParticipantと同じ順序を維持して
+// 強制退出の実処理(2026-11 M-2で切り出し)。会議室内モーダル
+// (kickParticipantFromModal経由)から呼ばれる共通処理。処理順(ルーム所有
+// 確認→照合→食い違い・自分自身の確認→BAN登録→LiveKit退去→位置同期切断
+// →force-leave送信)は、切り出し前のkickParticipantと同じ順序を維持して
 // いる(先頭に照合・確認の段を追加しただけ)。
 //
 // 単にforce-leaveでタブを閉じさせるだけだと、本人のアカウントアクセス
@@ -671,8 +662,8 @@ async function performUnban(
 }
 
 // 以下3つは会議室画面の管理者用モーダル(M-2、2026-11)から呼ぶ、
-// redirectしないエントリポイント。会議室の画面を開いたままrequireAdminAccount
-// のredirectを踏むとLiveKit/Realtimeの接続が切れてしまうため、認可には
+// redirectしないエントリポイント。会議室の画面を開いたままredirectを
+// 踏むとLiveKit/Realtimeの接続が切れてしまうため、認可には
 // requireVerifiedBillingAccount(lib/billingAccountGuard.ts、無変更で
 // そのまま呼ぶ)を使い、失敗時はエラーを返すだけで遷移はしない。
 

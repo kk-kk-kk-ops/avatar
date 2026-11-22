@@ -26,7 +26,7 @@ export async function startFreeTrial(): Promise<ActionResult> {
 
   // 新規作成された場合のみ30日間のトライアルを付与する(既存アカウント
   // なら何もしない=初回のみの保証)。/plan(このServer Actionを呼べる
-  // 唯一の画面)は既にアカウントを持つユーザーを/adminへリダイレクトする
+  // 唯一の画面)は既にアカウントを持つユーザーを/へリダイレクトする
   // ため(app/plan/page.tsx)、実質「新規登録時は必ず1回だけ」トライアル
   // が始まる。
   if (provision.created) {

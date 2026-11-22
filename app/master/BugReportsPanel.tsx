@@ -5,8 +5,8 @@ import { BUG_REPORT_STATUSES, type BugReport, type BugReportStatus } from "@/lib
 
 // マスター画面「不具合報告」タブ。設定(歯車)メニューからユーザーが
 // 送信した不具合報告を一覧(左、カテゴリをタイトルとして新しい順)+
-// 詳細(右)で表示する。app/admin/AnnouncementsView.tsxと同じ
-// メールクライアント的レイアウト。既読管理は項目を開いた時点で行う
+// 詳細(右)で表示する、メールクライアント的レイアウト。既読管理は
+// 項目を開いた時点で行う
 // (announcement_readsと違い、マスターは1系統しかいない想定のため
 // bug_reports.is_readの単純なフラグで十分)。
 

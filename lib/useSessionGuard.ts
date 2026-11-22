@@ -26,8 +26,7 @@ function getOrCreateSessionToken(): string {
 // 同一アカウント(user_id)での多重ログイン(複数タブ・複数デバイス)を
 // 検知し、後からログインした方を優先して既存セッションを強制ログアウト
 // させるための共通フック(2026-09追加。手順9)。バーチャル空間
-// (AvatarSpace)・管理画面(AdminDashboard)・マスター画面
-// (MasterDashboard)のいずれからも呼び出す。
+// (AvatarSpace)・マスター画面(MasterDashboard)から呼び出す。
 //
 // LiveKitのidentity(selfId)には一切手を入れない(近接判定による
 // 音声・映像の購読切り替えがparticipant.identity === presenceのidという

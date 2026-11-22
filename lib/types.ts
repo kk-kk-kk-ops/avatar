@@ -83,8 +83,8 @@ export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
 
 // メンテナンス予告・強制退出機能(2026-09追加)。app_settings
 // (id='default')の maintenance_* 列に対応する。マスター画面「お知らせ」
-// タブ内「メンテナンス」タブで設定し、ロビー画面(入室ボタン)・管理画面
-// (/admin)・バーチャル空間で共通して使う判定ロジックをここにまとめる。
+// タブ内「メンテナンス」タブで設定し、ロビー画面(入室ボタン)・
+// バーチャル空間で共通して使う判定ロジックをここにまとめる。
 export type MaintenanceSettings = {
   enabled: boolean;
   startsAt: string | null; // ISO文字列
@@ -273,8 +273,9 @@ export type Announcement = {
   id: string;
   title: string;
   body: string;
-  // 管理画面(/admin)を英語表示中のときだけ使う任意の英語版(2026-10追加)。
-  // マスターが入力した場合のみ入っており、無ければtitle/bodyにフォールバックする。
+  // 会議室のお知らせモーダル(管理者ロール)を英語表示中だけ使う任意の
+  // 英語版(2026-10追加)。マスターが入力した場合のみ入っており、
+  // 無ければtitle/bodyにフォールバックする。
   titleEn?: string | null;
   bodyEn?: string | null;
   publishedAt: string;

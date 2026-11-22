@@ -34,10 +34,7 @@ function getBaseUrl(): string {
 // (プランIDではないためisPaidPlanIdには一致しない)。省略時(請求履歴の
 // 確認等)は従来通りポータルのトップページへ遷移する。
 // /admin 廃止の段階2(2026-11-22)。戻り先は常に会議室内の請求モーダルと
-// 同じ扱いにする(fromの値は見ない)。/adminのBillingPanel.tsxからの
-// 呼び出し(app/admin/page.tsxがもはやAdminDashboardを表示しないため
-// 実際には到達しない想定だが、念のため動きは変えていない)も同じ
-// return_urlになる。
+// 同じ扱いにする(fromの値は見ない)。
 export async function createPortalSession(
   targetPlanId?: string,
   from?: string,

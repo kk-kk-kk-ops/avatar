@@ -11,17 +11,14 @@ import {
 // 管理画面モーダル化 M-5(2026-11)。会議室画面から開く、お知らせ
 // (announcements。マスター画面「お知らせ」タブで入力したもの)の一覧・
 // 本文の表示・既読操作のみを載せる(作成・編集・削除はマスター画面の
-// ままで、このモーダルには載せない)。app/admin/以下のファイル
-// (AnnouncementsView.tsx等)は一切importせず、表示に必要な分はこの
-// ファイル内で完結させる(/adminは将来削除するため)。
+// ままで、このモーダルには載せない)。並び順・未読の判定は
+// getAdminAnnouncements(app/admin/actions.ts)側で行い、このファイルは
+// 取得結果をそのまま表示する。
 // 会議室内の音声ブロードキャスト機能「全体アナウンス」
 // (components/AnnouncementButton.tsx・announcement.*の文言キー)とは
 // 別物のため、名前・文言キーを混ぜない。
 // このコンポーネント自身はSupabaseのRealtimeチャンネルを一切購読しない
 // (読み取り・既読操作はすべてapp/admin/actions.tsのServer Action経由)。
-// 表示内容・並び順・未読の判定は、app/admin/page.tsx・
-// app/admin/AnnouncementsView.tsxと同じにする(予約投稿の扱いを含め、
-// 今までと違う動きにしない)。
 
 type Entry = {
   id: string;
@@ -62,8 +59,8 @@ export default function AdminAnnouncementsModal({
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // 表示直後、先頭(最新)の項目を開いた状態にし既読化する
-  // (app/admin/AnnouncementsView.tsxと同じ「メールクライアント的」な
-  // 考え方)。データ取得が非同期のため、fetch完了後のthen内で行う。
+  // (メールクライアント的な考え方)。データ取得が非同期のため、
+  // fetch完了後のthen内で行う。
   useEffect(() => {
     let cancelled = false;
     getAdminAnnouncements(locale).then((result) => {

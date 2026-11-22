@@ -33,10 +33,7 @@ function getBaseUrl(): string {
 // 動きはこれまでと同じ。
 //
 // /admin 廃止の段階2(2026-11-22)。success_url・cancel_urlは常に会議室内
-// の請求モーダルと同じ扱いにする(fromの値は見ない)。/adminのBillingPanel.tsx
-// からの呼び出し(app/admin/page.tsxがもはやAdminDashboardを表示しない
-// ため実際には到達しない想定だが、念のため動きは変えていない)も同じ
-// success_url・cancel_urlになる。
+// の請求モーダルと同じ扱いにする(fromの値は見ない)。
 export async function createCheckoutSession(
   planId: string,
   from?: string,

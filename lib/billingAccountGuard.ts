@@ -22,9 +22,8 @@ export type VerifiedBillingAccount =
 // 作成を組み合わせることで、他アカウントのStripeカスタマーポータル・
 // Checkoutを乗っ取れる)への、Server Action側の多層防御。DB側の対策
 // (prevent_privileged_column_self_writeのaccounts分岐拡張、段階2)とは
-// 別に、ここでも確認する。既存のrequireAdminAccount()(app/admin/actions.ts)
-// は変更しない(判定基準が異なるため、今回はこの billing 用の関数を
-// 新設する。詳細は呼び出し元の変更に添えたコメント参照)。
+// 別に、ここでも確認する(判定基準が異なるため、billing用にこの関数を
+// 新設した。詳細は呼び出し元の変更に添えたコメント参照)。
 export async function requireVerifiedBillingAccount(
   supabase: SupabaseClient,
   userId: string,

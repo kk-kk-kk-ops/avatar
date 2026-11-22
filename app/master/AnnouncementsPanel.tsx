@@ -15,8 +15,7 @@ type ActionResult = { ok: true } | { ok: false; error: string };
 // 日付」の3項目を持つCRUDリストという同じ構造のため、フィールドラベルと
 // Server Actionを差し替えるだけの共通コンポーネント(EntryListSection)を
 // 1つ用意し、下のAnnouncementsPanelで2回使い回す。
-// レイアウトは管理画面の閲覧専用ビュー(app/admin/AnnouncementsView.tsx)に
-// 合わせたタブ+左一覧/右詳細の2ペイン構成(2026-09)。マスターはここから
+// レイアウトはタブ+左一覧/右詳細の2ペイン構成(2026-09)。マスターはここから
 // 新規追加・編集・削除もできるため、右側は「選択中の項目の詳細(+編集・
 // 削除ボタン)」または「新規追加・編集フォーム」のどちらかを表示する。
 type Entry = {
@@ -24,7 +23,8 @@ type Entry = {
   primary: string; // お知らせ: title / アップデート情報: version
   body: string;
   date: string; // ISO文字列
-  // 管理画面(/admin)を英語表示中のときだけ使う任意の英語版(2026-10追加)。
+  // 会議室のお知らせモーダル(管理者ロール)を英語表示中だけ使う
+  // 任意の英語版(2026-10追加)。
   primaryEn: string;
   bodyEn: string;
 };
@@ -256,9 +256,10 @@ function EntryListSection({
                   className="w-full flex-1 resize-none rounded border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-slate-500"
                 />
               </div>
-              {/* 英語版(任意、2026-10追加)。管理画面(/admin)を英語表示中の
-                  メンバーにはこちらを優先表示する。未入力の場合は上の日本語
-                  版がそのまま表示される(マスター画面自体は英語対応しない)。 */}
+              {/* 英語版(任意、2026-10追加)。会議室のお知らせモーダルを
+                  英語表示中のメンバーにはこちらを優先表示する。未入力の場合は
+                  上の日本語版がそのまま表示される(マスター画面自体は英語
+                  対応しない)。 */}
               <div className="shrink-0">
                 <label className="mb-1 block text-[11px] font-semibold text-slate-500">
                   {primaryLabel}(英語版・任意)

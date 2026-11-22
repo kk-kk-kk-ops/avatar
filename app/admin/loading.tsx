@@ -1,6 +1,7 @@
-// /adminへの遷移中(Server Componentのデータ取得待ち)に表示される。
-// 「管理画面へ」を押してから画面が切り替わるまで数秒かかり、何も表示
-// されないと固まったように見えていたため追加した。
+// /adminと/admin/loginへの遷移中(Server Componentのデータ取得待ち)に
+// 表示される(/admin/login配下に専用のloading.tsxが無いため、Next.jsの
+// ファイル規約でこのファイルが両方に効く)。画面が切り替わるまで数秒
+// かかり、何も表示されないと固まったように見えていたため追加した。
 export default function AdminLoading() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50">
