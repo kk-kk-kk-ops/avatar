@@ -32,7 +32,6 @@ export async function updateMaintenanceWindow(
   if (error) return { ok: false, error: "保存に失敗しました" };
 
   revalidatePath("/master");
-  revalidatePath("/admin");
   revalidatePath("/");
   return { ok: true };
 }
@@ -64,7 +63,6 @@ export async function setMaintenanceEnabled(
   if (error) return { ok: false, error: "保存に失敗しました" };
 
   revalidatePath("/master");
-  revalidatePath("/admin");
   revalidatePath("/");
   return { ok: true };
 }

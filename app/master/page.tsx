@@ -328,7 +328,6 @@ export default async function MasterPage() {
         startsAt: appSettings?.maintenance_starts_at ?? null,
         endsAt: appSettings?.maintenance_ends_at ?? null,
       }}
-      showAdminLink={state.type === "admin"}
       showRoomsLink={state.type !== "no-account"}
       ownInviteToken={ownInviteToken}
       userEmail={user.email ?? ""}

@@ -1,15 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
-import { broadcastForceLeaveForAccount } from "@/lib/broadcastForceLeave";
 import { disconnectIndigoConnections } from "@/lib/broadcastIndigoDisconnect";
 import { disconnectLivekitParticipant } from "@/lib/disconnectLivekitParticipant";
 import { resolveLivekitParticipantUserId } from "@/lib/resolveLivekitParticipantUserId";
 import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
-import { PLANS, type PlanId, type Announcement } from "@/lib/types";
+import { type PlanId, type Announcement } from "@/lib/types";
 import { translate, type Locale } from "@/lib/i18n/translations";
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
@@ -19,59 +16,6 @@ import { translate, type Locale } from "@/lib/i18n/translations";
 type ActionResult =
   | { ok: true; warning?: string }
   | { ok: false; error: string };
-
-// デバッグ用プラン切り替えで選べる4プラン(masterは対象外)。
-const DEBUG_SWITCHABLE_PLANS: PlanId[] = ["free", "light", "standard", "pro"];
-
-async function requireAdminAccount() {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: account } = await supabase
-    .from("accounts")
-    .select("id, plan")
-    .eq("owner_user_id", user.id)
-    .maybeSingle();
-  if (!account) redirect("/plan");
-
-  return { supabase, account, user };
-}
-
-export async function addRoom(templateId: string) {
-  const { supabase, account } = await requireAdminAccount();
-
-  const { data: template } = await supabase
-    .from("templates")
-    .select("id, name, background_image_url, thumbnail_image_url")
-    .eq("id", templateId)
-    .maybeSingle();
-  if (!template) throw new Error("テンプレートが見つかりません");
-
-  const { count } = await supabase
-    .from("rooms")
-    .select("id", { count: "exact", head: true })
-    .eq("account_id", account.id);
-
-  const maxRooms = PLANS[account.plan as keyof typeof PLANS].maxRooms;
-  if ((count ?? 0) >= maxRooms) {
-    throw new Error(
-      `現在のプランではルームを${maxRooms}個までしか作成できません。プランを変更してください。`,
-    );
-  }
-
-  const { error } = await supabase.from("rooms").insert({
-    account_id: account.id,
-    template_id: template.id,
-    name: template.name,
-    preview_image: template.thumbnail_image_url ?? template.background_image_url,
-  });
-  if (error) throw new Error("ルームの作成に失敗しました");
-
-  revalidatePath("/admin");
-}
 
 // 既存のルームに紐づくルームデザイン(テンプレート)を変更する実処理
 // (2026-11 M-3で切り出し)。ダッシュボード(RoomManager.tsx、既存の
@@ -155,38 +99,6 @@ async function performUpdateRoomTemplate(
   return { ok: true };
 }
 
-// 既存の入口(入口自体・requireAdminAccountでのredirectする動きは変更
-// しない)。revalidatePath("/admin")は、Server Actionを呼んだ今のページ
-// (会議室の「/」)も暗黙的に再生成させてしまうため(2026-11、/master誤
-// 遷移の調査で確認)、共通関数(performUpdateRoomTemplate)からは外し、
-// ここ(/adminからの呼び出し時のみ)で呼ぶ。切り出し前と同じく、成功時
-// (throwしない場合)だけ呼ぶ。
-export async function updateRoomTemplate(roomId: string, templateId: string) {
-  const { supabase, account } = await requireAdminAccount();
-  const result = await performUpdateRoomTemplate(
-    supabase,
-    account.id,
-    roomId,
-    templateId,
-    "ja",
-  );
-  if (!result.ok) throw new Error(result.error);
-  revalidatePath("/admin");
-}
-
-export async function deleteRoom(roomId: string) {
-  const { supabase, account } = await requireAdminAccount();
-
-  const { error } = await supabase
-    .from("rooms")
-    .delete()
-    .eq("id", roomId)
-    .eq("account_id", account.id);
-  if (error) throw new Error("ルームの削除に失敗しました");
-
-  revalidatePath("/admin");
-}
-
 // 招待URLのトークンを再発行する実処理(2026-11 M-3で切り出し。古いURLは
 // 自動的に無効になる)。
 async function performRegenerateInviteToken(
@@ -207,15 +119,6 @@ async function performRegenerateInviteToken(
   return { ok: true };
 }
 
-// revalidatePath("/admin")は共通関数から外し、/adminからの呼び出し時の
-// みここで呼ぶ(updateRoomTemplateと同じ理由、2026-11)。
-export async function regenerateInviteToken() {
-  const { supabase, account } = await requireAdminAccount();
-  const result = await performRegenerateInviteToken(supabase, account.id, "ja");
-  if (!result.ok) throw new Error(result.error);
-  revalidatePath("/admin");
-}
-
 // 既存のmarkAnnouncementRead(/admin用、redirect方式)から実処理を切り出す。
 // revalidatePathは呼ばない(会議室のモーダル(M-5)からも使うため、
 // performRegenerateInviteToken等と同じ方針で、呼び出し元それぞれが
@@ -233,18 +136,6 @@ async function performMarkAnnouncementRead(
     );
   if (error) return { ok: false, error: "既読状態の更新に失敗しました" };
   return { ok: true };
-}
-
-// 「告知」タブでタイトルを開いた項目を既読にする(項目単位の既読管理)。
-export async function markAnnouncementRead(announcementId: string) {
-  const { supabase, account } = await requireAdminAccount();
-  const result = await performMarkAnnouncementRead(
-    supabase,
-    account.id,
-    announcementId,
-  );
-  if (!result.ok) throw new Error(result.error);
-  revalidatePath("/admin");
 }
 
 // 管理画面モーダル化 M-5(2026-11)。会議室画面から開く、お知らせの
@@ -371,15 +262,6 @@ async function performUpdateInviterName(
   }
 
   return { ok: true };
-}
-
-// revalidatePath("/admin")は共通関数から外し、/adminからの呼び出し時の
-// みここで呼ぶ(updateRoomTemplateと同じ理由、2026-11)。
-export async function updateInviteInviterName(name: string) {
-  const { supabase, account } = await requireAdminAccount();
-  const result = await performUpdateInviterName(supabase, account.id, name, "ja");
-  if (!result.ok) throw new Error(result.error);
-  revalidatePath("/admin");
 }
 
 // 以下4つは会議室画面の管理者用モーダル(M-3、2026-11)から呼ぶ、
@@ -788,46 +670,6 @@ async function performUnban(
   return { ok: true };
 }
 
-// ダッシュボードの入室者一覧から、特定の参加者を強制退出させる(入口は
-// 変更しない。requireAdminAccountでログイン切れならredirectする既存の
-// 動きのまま)。revalidatePath("/admin")は共通関数(performKick)から外し、
-// ここ(/adminからの呼び出し時のみ)で、成功時(ok: trueの時。警告付きの
-// 成功を含む)だけ呼ぶ(2026-11、/master誤遷移の調査で確認した理由に
-// よる。切り出し前の元のコードで、force-leave送信が失敗して早期returnした
-// 場合はrevalidatePathが呼ばれていなかったのと同じ条件になる)。
-export async function kickParticipant(
-  roomId: string,
-  participantId: string,
-  participantUserId: string | null,
-  locale: Locale = "ja",
-): Promise<ActionResult> {
-  const { supabase, account, user } = await requireAdminAccount();
-  const result = await performKick(
-    supabase,
-    account.id,
-    user.id,
-    roomId,
-    participantId,
-    participantUserId,
-    locale,
-  );
-  if (result.ok) revalidatePath("/admin");
-  return result;
-}
-
-// BANリストから外し、再入室できるようにする(入口は変更しない)。
-// revalidatePath("/admin")は共通関数(performUnban)から外し、ここでのみ
-// 成功時に呼ぶ(kickParticipantと同じ理由)。
-export async function unbanParticipant(
-  userId: string,
-  locale: Locale = "ja",
-): Promise<ActionResult> {
-  const { supabase, account } = await requireAdminAccount();
-  const result = await performUnban(supabase, account.id, userId, locale);
-  if (result.ok) revalidatePath("/admin");
-  return result;
-}
-
 // 以下3つは会議室画面の管理者用モーダル(M-2、2026-11)から呼ぶ、
 // redirectしないエントリポイント。会議室の画面を開いたままrequireAdminAccount
 // のredirectを踏むとLiveKit/Realtimeの接続が切れてしまうため、認可には
@@ -922,55 +764,4 @@ export async function unbanParticipantFromModal(
   }
 
   return performUnban(supabase, verified.account.id, userId, locale);
-}
-
-// デバッグ用: 環境変数DEBUG_PLAN_SWITCH_EMAIL(カンマ区切りで複数指定可)に
-// 含まれるアカウントだけが、自分のプランを4プランの中から自由に切り替え
-// られる(動作確認用)。クライアント側の表示制御
-// (app/admin/page.tsxのisDebugPlanSwitcherAllowed)とは別に、ここでも
-// 必ずメールアドレスを再検証する(Server Actionは表示上のUIに関わらず
-// 直接呼び出せるため)。
-export async function debugSetPlan(
-  planId: PlanId,
-  locale: Locale = "ja",
-): Promise<ActionResult> {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: translate(locale, "admin.loginRequired") };
-
-  const allowedEmails = (process.env.DEBUG_PLAN_SWITCH_EMAIL ?? "")
-    .split(",")
-    .map((e) => e.trim())
-    .filter(Boolean);
-  if (!user.email || !allowedEmails.includes(user.email)) {
-    return { ok: false, error: translate(locale, "admin.permissionDenied") };
-  }
-
-  if (!DEBUG_SWITCHABLE_PLANS.includes(planId)) {
-    return { ok: false, error: translate(locale, "admin.invalidPlan") };
-  }
-
-  const { data: account } = await supabase
-    .from("accounts")
-    .select("id")
-    .eq("owner_user_id", user.id)
-    .maybeSingle();
-  if (!account) return { ok: false, error: translate(locale, "admin.accountNotFound") };
-
-  // planは本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
-  // 対象列のため、service_roleクライアントで更新する(直前にDEBUG_PLAN_SWITCH_EMAIL
-  // でのメール照合を済ませているので、この1回の書き込みに限りRLS/トリガーを
-  // バイパスしても安全)。
-  const { error } = await createServiceRoleClient()
-    .from("accounts")
-    .update({ plan: planId })
-    .eq("id", account.id);
-  if (error) return { ok: false, error: translate(locale, "admin.planUpdateFailed") };
-
-  await broadcastForceLeaveForAccount(supabase, account.id);
-
-  revalidatePath("/admin");
-  return { ok: true };
 }

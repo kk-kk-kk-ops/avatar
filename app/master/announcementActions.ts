@@ -43,7 +43,6 @@ export async function createAnnouncement(
   if (error) return { ok: false, error: "お知らせの作成に失敗しました" };
 
   revalidatePath("/master");
-  revalidatePath("/admin");
   return { ok: true };
 }
 
@@ -75,7 +74,6 @@ export async function updateAnnouncement(
   if (error) return { ok: false, error: "お知らせの更新に失敗しました" };
 
   revalidatePath("/master");
-  revalidatePath("/admin");
   return { ok: true };
 }
 

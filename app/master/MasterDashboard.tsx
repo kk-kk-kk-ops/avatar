@@ -50,7 +50,6 @@ export default function MasterDashboard({
   announcements,
   bugReports,
   maintenance,
-  showAdminLink,
   showRoomsLink,
   ownInviteToken,
   userEmail,
@@ -66,7 +65,6 @@ export default function MasterDashboard({
   announcements: Announcement[];
   bugReports: (BugReport & { unread: boolean })[];
   maintenance: MaintenanceSettings;
-  showAdminLink: boolean;
   showRoomsLink: boolean;
   ownInviteToken: string | null;
   userEmail: string;

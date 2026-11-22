@@ -113,7 +113,6 @@ const ja: Record<string, string> = {
   "lobby.maintenanceInProgress": "メンテナンス中",
   "lobby.checking": "確認中...",
   "lobby.enterRoom": "入室",
-  "lobby.goToAdmin": "管理画面へ",
   "lobby.backToOwnRoom": "自分のルームへ",
 
   "room.disabledInWorkArea": "作業エリア内では利用できません",
@@ -433,25 +432,8 @@ const ja: Record<string, string> = {
   "bugReportOption.reproducibility.ときどき": "ときどき",
   "bugReportOption.reproducibility.1回だけ": "1回だけ",
 
-  "admin.maintenanceTitle": "メンテナンス中",
-  "admin.maintenanceBody":
-    "ただいまメンテナンス中のため、管理画面をご利用いただけません。終了までしばらくお待ちください。",
-
-  "admin.tab.dashboard": "ダッシュボード",
-  "admin.tab.rooms": "ルーム",
-  "admin.tab.invite": "招待",
-  "admin.tab.announcements": "お知らせ",
-  "admin.tab.billing": "契約情報",
-  "admin.openMenuAria": "メニューを開く",
-  "admin.closeMenuAria": "メニューを閉じる",
   "admin.unreadAnnouncementsAria": "未読のお知らせがあります",
-  "admin.goToRoom": "ルームへ",
-  "admin.trialBanner":
-    "無料トライアル期間中です({date}まで)。期間終了後は自動的に無料プランに戻ります。",
 
-  "admin.onlineCount": "オンライン人数",
-  "admin.peopleCount": "{count}人",
-  "admin.versionCounts": "デプロイIDが現行と違う: {deployMismatch}人 / 世代が古い: {oldGeneration}人 / 版不明: {versionUnknown}人",
   "admin.forceLeave": "強制退出",
   "admin.forceLeaveConfirm":
     "{name}さんを強制退出させ、管理者が解除するまで再入室できないようにします。よろしいですか?",
@@ -475,21 +457,12 @@ const ja: Record<string, string> = {
   "admin.livekitDisconnectTimeoutWarning":
     "LiveKitからの退出を確認できませんでした(応答タイムアウト)。本人がまだ通話に参加している場合があるため、手動でご確認ください。",
   "admin.loginRequired": "ログインが必要です",
-  "admin.permissionDenied": "この機能を利用する権限がありません",
-  "admin.invalidPlan": "不正なプランです",
-  "admin.accountNotFound": "アカウントが見つかりません",
-  "admin.planUpdateFailed": "プランの更新に失敗しました",
 
-  "admin.currentRoom": "現在適用中ルーム",
   "admin.roomDesign": "ルームデザイン",
   "admin.noRoomDesigns": "利用できるルームデザインがまだありません。マスター画面で作成してください。",
   "admin.applying": "適用中...",
-  "admin.creating": "作成中...",
-  "admin.applied": "適用しました",
   "admin.currentlyApplied": "適用中",
   "admin.apply": "適用",
-  "admin.create": "作成",
-  "admin.roomApplyFailed": "ルームデザインの適用に失敗しました",
   "admin.roomDesignNotFound": "ルームデザインが見つかりません",
   "admin.roomTemplateUpdateFailed": "ルームデザインの変更に失敗しました",
   "admin.roomInfoLoadFailed": "ルーム情報の取得に失敗しました",
@@ -505,7 +478,6 @@ const ja: Record<string, string> = {
   "admin.copy": "コピー",
   "admin.copyFailed": "コピーに失敗しました。手動で選択してコピーしてください。",
   "admin.regenerateConfirm": "招待URLを再発行します。今のURLは無効になりますが、よろしいですか?",
-  "admin.regenerateFailed": "再発行に失敗しました",
   "admin.regenerateTokenFailed": "招待URLの再発行に失敗しました",
   "admin.inviterNameUpdateFailed": "招待者名の更新に失敗しました",
   "admin.inviteInfoLoadFailed": "招待情報の取得に失敗しました",
@@ -533,12 +505,6 @@ const ja: Record<string, string> = {
   "admin.billingHistory": "請求履歴",
   "admin.billingHistoryLink": "お支払い方法・請求履歴の確認はこちらから",
   "admin.billingHistoryNone": "請求履歴はまだありません。",
-  "admin.debugSwitcherTitle": "🛠️ デバッグ用プラン切り替え(このアカウントのみ表示)",
-  "admin.debugSwitcherBody":
-    "ボタンを押すと即座にこのアカウントの契約プランが切り替わります(人数上限・画面共有/ビデオ通話の日次制限に即反映され、このアカウントのルームに入室中の全員が強制的に退出します)。動作確認用の機能です。",
-  "admin.debugSwitching": "切り替え中...",
-  "admin.debugSwitchTo": "このプランに切り替える",
-  "admin.planSwitchedToast": "プランを「{label}」に切り替えました",
   "admin.priceLabel": "{yen}円/月",
   "admin.historyRetention.7日": "7日",
   "admin.historyRetention.1ヶ月": "1ヶ月",
@@ -657,7 +623,6 @@ const en: Record<string, string> = {
   "lobby.maintenanceInProgress": "Under maintenance",
   "lobby.checking": "Checking...",
   "lobby.enterRoom": "Enter",
-  "lobby.goToAdmin": "Go to admin screen",
   "lobby.backToOwnRoom": "Back to my room",
 
   "room.disabledInWorkArea": "Not available inside a work area",
@@ -974,25 +939,8 @@ const en: Record<string, string> = {
   "bugReportOption.reproducibility.ときどき": "Sometimes",
   "bugReportOption.reproducibility.1回だけ": "Just once",
 
-  "admin.maintenanceTitle": "Under maintenance",
-  "admin.maintenanceBody":
-    "The admin screen isn't available during maintenance. Please check back shortly.",
-
-  "admin.tab.dashboard": "Dashboard",
-  "admin.tab.rooms": "Rooms",
-  "admin.tab.invite": "Invite",
-  "admin.tab.announcements": "Announcements",
-  "admin.tab.billing": "Billing",
-  "admin.openMenuAria": "Open menu",
-  "admin.closeMenuAria": "Close menu",
   "admin.unreadAnnouncementsAria": "You have unread announcements",
-  "admin.goToRoom": "Go to room",
-  "admin.trialBanner":
-    "You're on a free trial (until {date}). You'll automatically return to the Free plan afterward.",
 
-  "admin.onlineCount": "Online now",
-  "admin.peopleCount": "{count}",
-  "admin.versionCounts": "Deploy ID differs: {deployMismatch} / Old generation: {oldGeneration} / Unknown version: {versionUnknown}",
   "admin.forceLeave": "Remove",
   "admin.forceLeaveConfirm":
     "This will remove {name} and prevent them from rejoining until an admin allows it. Are you sure?",
@@ -1016,21 +964,12 @@ const en: Record<string, string> = {
   "admin.livekitDisconnectTimeoutWarning":
     "Couldn't confirm the removal from LiveKit (the request timed out). They may still be in the call, so please check manually.",
   "admin.loginRequired": "You need to be logged in",
-  "admin.permissionDenied": "You don't have permission to use this feature",
-  "admin.invalidPlan": "Invalid plan",
-  "admin.accountNotFound": "Account not found",
-  "admin.planUpdateFailed": "Failed to update the plan",
 
-  "admin.currentRoom": "Currently applied room",
   "admin.roomDesign": "Room design",
   "admin.noRoomDesigns": "No room designs are available yet. Please create one in the master screen.",
   "admin.applying": "Applying...",
-  "admin.creating": "Creating...",
-  "admin.applied": "Applied",
   "admin.currentlyApplied": "Currently applied",
   "admin.apply": "Apply",
-  "admin.create": "Create",
-  "admin.roomApplyFailed": "Failed to apply the room design",
   "admin.roomDesignNotFound": "Room design not found",
   "admin.roomTemplateUpdateFailed": "Failed to change the room design",
   "admin.roomInfoLoadFailed": "Failed to load room information",
@@ -1047,7 +986,6 @@ const en: Record<string, string> = {
   "admin.copyFailed": "Failed to copy. Please select and copy it manually.",
   "admin.regenerateConfirm":
     "This will regenerate the invite URL. The current URL will stop working. Are you sure?",
-  "admin.regenerateFailed": "Failed to regenerate",
   "admin.regenerateTokenFailed": "Failed to reissue the invite URL",
   "admin.inviterNameUpdateFailed": "Failed to update the inviter name",
   "admin.inviteInfoLoadFailed": "Failed to load invite information",
@@ -1075,12 +1013,6 @@ const en: Record<string, string> = {
   "admin.billingHistory": "Billing history",
   "admin.billingHistoryLink": "View payment method & billing history",
   "admin.billingHistoryNone": "No billing history yet.",
-  "admin.debugSwitcherTitle": "🛠️ Debug plan switcher (visible only to this account)",
-  "admin.debugSwitcherBody":
-    "Clicking a button instantly switches this account's plan (capacity and the daily screen-share/video-call limits take effect immediately, and everyone currently in this account's room will be disconnected). For testing only.",
-  "admin.debugSwitching": "Switching...",
-  "admin.debugSwitchTo": "Switch to this plan",
-  "admin.planSwitchedToast": "Switched to the \"{label}\" plan",
   "admin.priceLabel": "¥{yen}/month",
   "admin.historyRetention.7日": "7 days",
   "admin.historyRetention.1ヶ月": "1 month",

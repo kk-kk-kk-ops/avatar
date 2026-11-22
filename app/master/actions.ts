@@ -174,7 +174,6 @@ export async function replaceTemplateImage(
     .eq("template_id", templateId);
 
   revalidatePath("/master");
-  revalidatePath("/admin");
   return { ok: true };
 }
 
@@ -208,7 +207,6 @@ export async function replaceTemplateThumbnail(
     .eq("template_id", templateId);
 
   revalidatePath("/master");
-  revalidatePath("/admin");
   return { ok: true };
 }
 
