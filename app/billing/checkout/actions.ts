@@ -7,7 +7,6 @@ import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
 import { getStripe, priceIdForPlan, isPaidPlanId, taxRateId } from "@/lib/stripe";
 import { PLANS } from "@/lib/types";
-import { resolveBillingReturnTarget } from "@/lib/billingReturnTarget";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -33,22 +32,16 @@ function getBaseUrl(): string {
 // 拒否される(何も作成しない)。既存のアカウントを持つ管理者の確認内容・
 // 動きはこれまでと同じ。
 //
-// 管理画面モーダル化 M-4(2026-11)。fromは会議室内の請求モーダルから
-// 呼ばれた場合だけ"room"を渡す("room"以外は全て"admin"として扱う、
-// lib/billingReturnTarget.ts参照)。/adminのBillingPanel.tsx・
-// app/billing/checkout/CheckoutButton.tsxの既存の呼び出し(fromを渡さない)
-// は、既定値"admin"のままsuccess_url・cancel_urlが変更前と同じ値になる。
+// /admin 廃止の段階2(2026-11-22)。success_url・cancel_urlは常に会議室内
+// の請求モーダルと同じ扱いにする(fromの値は見ない)。/adminのBillingPanel.tsx
+// からの呼び出し(app/admin/page.tsxがもはやAdminDashboardを表示しない
+// ため実際には到達しない想定だが、念のため動きは変えていない)も同じ
+// success_url・cancel_urlになる。
 export async function createCheckoutSession(
   planId: string,
   from?: string,
 ): Promise<ActionResult> {
   if (!isPaidPlanId(planId)) return { ok: false, error: "不正なプランです" };
-
-  // 会議室内の請求モーダル("room")から来た場合だけ、success_url・
-  // cancel_urlをapp/billing/returnへ変更する。/adminのBillingPanel.tsxは
-  // fromを渡さないため、既定値の"admin"のまま今と同じ値になる
-  // (lib/billingReturnTarget.ts参照)。
-  const target = resolveBillingReturnTarget(from);
 
   const supabase = createClient();
   const {
@@ -147,14 +140,8 @@ export async function createCheckoutSession(
           message: `月額${priceYen}円(税込)の自動更新です。解約はいつでも可能で、解約後も当月の利用期間末までご利用いただけます。日割りでの返金は行っておりません。`,
         },
       },
-      success_url:
-        target === "room"
-          ? `${baseUrl}/billing/return?from=room&status=checkout_success`
-          : `${baseUrl}/admin?checkout=success`,
-      cancel_url:
-        target === "room"
-          ? `${baseUrl}/billing/checkout?plan=${planId}&checkout=cancelled&from=room`
-          : `${baseUrl}/billing/checkout?plan=${planId}&checkout=cancelled`,
+      success_url: `${baseUrl}/billing/return?from=room&status=checkout_success`,
+      cancel_url: `${baseUrl}/billing/checkout?plan=${planId}&checkout=cancelled&from=room`,
     });
     sessionUrl = session.url;
   } catch (err) {

@@ -1,13 +1,10 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
-import { resolveBillingReturnTarget } from "@/lib/billingReturnTarget";
 
-// 管理画面モーダル化 M-4(2026-11)。会議室内の請求モーダルから決済・
-// 請求ポータルへ移った場合だけ、Stripeの成功/終了後にこのページを経由する
-// (/adminから操作した場合はsuccess_url/cancel_url/return_urlを一切変えて
-// いないため、このページを経由しない。fromが無い・"room"以外の場合は
-// 全て"admin"として扱う、lib/billingReturnTarget.ts参照)。
+// /admin 廃止の段階2(2026-11-22)。決済・請求ポータルはすべて会議室内の
+// 請求モーダルから開く前提になったため、success_url/cancel_url/return_url
+// は常にこのページを経由する(/adminへ戻す分岐は廃止した)。
 //
 // マスター(運営者)は通常の"/"だとapp/page.tsx:396で/masterへ戻されて
 // しまうため、app/master/page.tsx:46-64の「ルームへ」リンクと同じ方法
@@ -22,11 +19,6 @@ export default async function BillingReturnPage({
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
-
-  const target = resolveBillingReturnTarget(searchParams.from);
-  if (target === "admin") {
-    redirect("/admin");
-  }
 
   // "checkout_success"/"portal_returned"以外(無し・想定外の値)は
   // 通知を表示しない(誤った文言を出すより、何も出さない方が安全)。
