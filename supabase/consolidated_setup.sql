@@ -3683,12 +3683,17 @@ create policy "bug_reports: update master"
 -- 22. Realtime Authorization(docs/realtime-authorization-plan.md)
 --     の項目6 段階2・段階3。realtime_view_grants(viewOnly許可証)
 --     テーブル・grant_realtime_view_access関数、can_access_avatar_room_topic・
---     can_message_user_channel関数、realtime.messagesへの8つのポリシーを
---     追加する。is_banned_for_account(節8b)・profiles・accounts・rooms
---     (節1・2・6)より後に存在すればよいため、このファイルの末尾に置く。
---     段階1〜3はいずれもDBの追加のみで、ポリシーはprivate指定のチャンネル
---     にだけ効くため、段階7(全チャンネルのprivate:true化)までは
---     既存の動作に影響しない想定(設計書6節参照)。
+--     can_message_user_channel・can_message_user_channel_topic関数、
+--     realtime.messagesへの8つのポリシーを追加する。is_banned_for_account
+--     (節8b)・profiles・accounts・rooms(節1・2・6)より後に存在すればよい
+--     ため、このファイルの末尾に置く。段階1〜3はいずれもDBの追加のみで、
+--     ポリシーはprivate指定のチャンネルにだけ効くため、段階7(全チャンネル
+--     のprivate:true化)までは既存の動作に影響しない想定(設計書6節参照)。
+--     2026-11-22: can_access_avatar_room_topic()と"user-channel: insert
+--     same account"ポリシーは、段階3適用後の本番テストで判明した不具合
+--     (avatar-room-{UUID}以外のトピックで22P02になる)の修正済みの形に
+--     なっている(language plpgsqlでトピックの形の確認とuuid変換を別の
+--     文に分ける。can_message_user_channel_topic()を新設)。
 -- ------------------------------------------------------------
 create table if not exists public.realtime_view_grants (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -3736,43 +3741,52 @@ revoke all on function public.grant_realtime_view_access(text) from public;
 revoke all on function public.grant_realtime_view_access(text) from anon;
 grant execute on function public.grant_realtime_view_access(text) to authenticated;
 
--- アカウントメンバー(通常)またはviewOnly許可証を持つかを判定し、かつ
--- BANされていないかを合わせて判定する(presence/broadcast共通の入口)。
--- トピックからUUID部分を切り出し、主キー検索(r.id = <uuid>)で判定する。
--- 切り出しはCASE式で「トピックが本当にavatar-room-{UUID}の形の時だけ」
--- 行う(regexpチェックとキャストをandで繋ぐと評価順序が未規定のため、
--- avatar-room-以外のトピックでキャストエラーになり得る。CASEはマッチ
--- した分岐しか評価しないため安全)。'avatar-room-'は12文字のため、
--- UUID部分はsubstring(... from 13)で取り出す。
+-- 段階3適用後の本番テストで判明: language sql の CASE式(トピックの形を
+-- 確認してから別の分岐でuuidへキャストする書き方)では、avatar-room-{UUID}
+-- 以外のトピック(garbage・avatar-room-not-a-uuid・user-session-{UUID}・
+-- user-{UUID})で、falseを返さずに22P02(invalid input syntax for type
+-- uuid)のエラーになることが分かった(原因は推定:CASE式で囲んでも、
+-- 関数内の問い合わせの計画作成時などにuuid変換が実行されることがある)。
+-- トピックの形の確認とuuidへの変換を別々のPL/pgSQL文に分け、形が合った
+-- 時だけ変換するように作り直す(2026-11-22)。判定の中身(誰を通すか)は
+-- 変えていない。
 create or replace function public.can_access_avatar_room_topic()
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = public
 stable
 as $$
-  select case
-    when realtime.topic() ~ '^avatar-room-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    then exists (
-      select 1
-      from public.rooms r
-      where r.id = substring(realtime.topic() from 13)::uuid
-        and (
-          exists (
-            select 1 from public.profiles p
-            where p.user_id = auth.uid() and p.account_id = r.account_id
-          )
-          or exists (
-            select 1 from public.realtime_view_grants g
-            where g.user_id = auth.uid()
-              and g.account_id = r.account_id
-              and g.expires_at > now()
-          )
+declare
+  v_topic text;
+  v_room_id uuid;
+begin
+  v_topic := realtime.topic();
+  if v_topic is null or v_topic !~ '^avatar-room-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return false;
+  end if;
+
+  v_room_id := substring(v_topic from 13)::uuid;
+
+  return exists (
+    select 1
+    from public.rooms r
+    where r.id = v_room_id
+      and (
+        exists (
+          select 1 from public.profiles p
+          where p.user_id = auth.uid() and p.account_id = r.account_id
         )
-        and not public.is_banned_for_account(r.account_id)
-    )
-    else false
-  end;
+        or exists (
+          select 1 from public.realtime_view_grants g
+          where g.user_id = auth.uid()
+            and g.account_id = r.account_id
+            and g.expires_at > now()
+        )
+      )
+      and not public.is_banned_for_account(r.account_id)
+  );
+end;
 $$;
 
 revoke all on function public.can_access_avatar_room_topic() from public;
@@ -3814,6 +3828,35 @@ $$;
 revoke all on function public.can_message_user_channel(uuid) from public;
 revoke all on function public.can_message_user_channel(uuid) from anon;
 grant execute on function public.can_message_user_channel(uuid) to authenticated;
+
+-- user-channel(方式C)の送信可否判定を、トピックから判定する版。
+-- can_access_avatar_room_topic()と同じ理由で、トピックの形の確認と
+-- uuidへの変換を別々のPL/pgSQL文に分ける(2026-11-22)。
+create or replace function public.can_message_user_channel_topic()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_topic text;
+  v_recipient_user_id uuid;
+begin
+  v_topic := realtime.topic();
+  if v_topic is null or v_topic !~ '^user-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return false;
+  end if;
+
+  v_recipient_user_id := substring(v_topic from 6)::uuid;
+
+  return public.can_message_user_channel(v_recipient_user_id);
+end;
+$$;
+
+revoke all on function public.can_message_user_channel_topic() from public;
+revoke all on function public.can_message_user_channel_topic() from anon;
+grant execute on function public.can_message_user_channel_topic() to authenticated;
 
 -- presence SELECT: メンバー/viewOnly または 運営者(is_master、avatar-roomトピックに限定)
 drop policy if exists "avatar-room: presence access" on realtime.messages;
@@ -3888,20 +3931,13 @@ create policy "user-channel: select own"
     and realtime.topic() = 'user-' || auth.uid()::text
   );
 
--- トピックが本当にuser-{UUID}の形の時だけキャスト・判定する(CASE式。
--- regexpチェックとキャストをandで繋ぐと評価順序が未規定のため、
--- "user-"で始まらないトピックへの送信時にキャストエラーになり得る)。
 drop policy if exists "user-channel: insert same account" on realtime.messages;
 create policy "user-channel: insert same account"
   on realtime.messages for insert
   to authenticated
   with check (
     realtime.messages.extension = 'broadcast'
-    and case
-      when realtime.topic() ~ '^user-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        then public.can_message_user_channel(substring(realtime.topic() from 6)::uuid)
-      else false
-    end
+    and public.can_message_user_channel_topic()
   );
 
 

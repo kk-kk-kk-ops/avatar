@@ -151,43 +151,56 @@ grant execute on function public.grant_realtime_view_access(text) to authenticat
 -- 2026-11-11修正: 旧実装は'avatar-room-' || r.id::text = realtime.topic()
 -- という文字列連結比較で、メッセージ1件ごとにroomsテーブルを全件スキャン
 -- していた。トピックからUUID部分を切り出し、主キー検索(r.id = <uuid>)に
--- 変えることで性能を改善する。切り出しはCASE式で「トピックが本当に
--- avatar-room-{UUID}の形の時だけ」行う(4-4節のuser-channelと同じ理由:
--- regexpチェックとキャストをandで繋ぐと評価順序が未規定のため、
--- avatar-room-以外のトピックでキャストエラーになり得る。CASEは
--- マッチした分岐しか評価しないため安全)。'avatar-room-'は
+-- 変えることで性能を改善する。'avatar-room-'は
 -- avatar(6)+'-'(1)+room(4)+'-'(1)=12文字のため、UUID部分は
 -- substring(... from 13)で取り出す(fromは1始まり・inclusiveのため、
 -- 12文字目=2つ目のハイフン自身を含めないよう13から始める)。
+-- 2026-11-22修正: 当初はCASE式(トピックの形を確認してから別の分岐で
+-- uuidへキャストする書き方)で「マッチした分岐しか評価しないため安全」
+-- と考えていたが、段階3適用後の本番テストで、language sql のCASE式では
+-- avatar-room-{UUID}以外のトピックでも22P02(invalid input syntax for
+-- type uuid)のエラーになることが判明した(原因は推定: CASE式で囲んでも、
+-- 関数内の問い合わせの計画作成時などにuuid変換が実行されることがある)。
+-- language plpgsqlにし、トピックの形の確認とuuidへの変換を別々の文に分け、
+-- 形が合った時だけ変換するように修正した。判定の中身(誰を通すか)は
+-- 変えていない。
 create or replace function public.can_access_avatar_room_topic()
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = public
 stable
 as $$
-  select case
-    when realtime.topic() ~ '^avatar-room-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    then exists (
-      select 1
-      from public.rooms r
-      where r.id = substring(realtime.topic() from 13)::uuid
-        and (
-          exists (
-            select 1 from public.profiles p
-            where p.user_id = auth.uid() and p.account_id = r.account_id
-          )
-          or exists (
-            select 1 from public.realtime_view_grants g
-            where g.user_id = auth.uid()
-              and g.account_id = r.account_id
-              and g.expires_at > now()
-          )
+declare
+  v_topic text;
+  v_room_id uuid;
+begin
+  v_topic := realtime.topic();
+  if v_topic is null or v_topic !~ '^avatar-room-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return false;
+  end if;
+
+  v_room_id := substring(v_topic from 13)::uuid;
+
+  return exists (
+    select 1
+    from public.rooms r
+    where r.id = v_room_id
+      and (
+        exists (
+          select 1 from public.profiles p
+          where p.user_id = auth.uid() and p.account_id = r.account_id
         )
-        and not public.is_banned_for_account(r.account_id)
-    )
-    else false
-  end;
+        or exists (
+          select 1 from public.realtime_view_grants g
+          where g.user_id = auth.uid()
+            and g.account_id = r.account_id
+            and g.expires_at > now()
+        )
+      )
+      and not public.is_banned_for_account(r.account_id)
+  );
+end;
 $$;
 
 -- 本番DBに触れずに確認する方法(テーブル参照なしの文字列SELECT、実行は承認後):
@@ -337,19 +350,49 @@ create policy "user-channel: select own"
 -- 2026-11-09修正: 以前は regexp_replace(realtime.topic(), '^user-', '')::uuid
 -- を無条件に評価しており、avatar-room-*/user-session-*等、"user-"で始まら
 -- ないトピックへの送信時にキャストエラーになり得た(複数ポリシーはORで
--- 評価されるが、エラーは短絡評価の機会を奪い文全体を失敗させる)。CASE式で
--- 「トピックが本当にuser-{UUID}の形の時だけ」キャスト・判定するよう修正。
+-- 評価されるが、エラーは短絡評価の機会を奪い文全体を失敗させる)。
+-- 2026-11-22修正: 当初はCASE式(トピックの形を確認してから別の分岐で
+-- uuidへキャストする書き方)にしたが、can_access_avatar_room_topic()と
+-- 同じ22P02の不具合が起きる可能性を否定できなかったため(ポリシーの式の
+-- 中の関数呼び出しの引数として評価される場合と、関数内の問い合わせの中で
+-- 評価される場合とで挙動が違う可能性はあるが未確認・推定)、安全側に倒し、
+-- トピックの形の確認とuuidへの変換を行うPL/pgSQL関数
+-- can_message_user_channel_topic()を新設し、ポリシーからはこの関数を
+-- 呼ぶだけの形にした。判定の中身(誰を通すか)はcan_message_user_channel()
+-- のまま変えていない。
+create or replace function public.can_message_user_channel_topic()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+  v_topic text;
+  v_recipient_user_id uuid;
+begin
+  v_topic := realtime.topic();
+  if v_topic is null or v_topic !~ '^user-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return false;
+  end if;
+
+  v_recipient_user_id := substring(v_topic from 6)::uuid;
+
+  return public.can_message_user_channel(v_recipient_user_id);
+end;
+$$;
+
+revoke all on function public.can_message_user_channel_topic() from public;
+revoke all on function public.can_message_user_channel_topic() from anon;
+grant execute on function public.can_message_user_channel_topic() to authenticated;
+
 drop policy if exists "user-channel: insert same account" on realtime.messages;
 create policy "user-channel: insert same account"
   on realtime.messages for insert
   to authenticated
   with check (
     realtime.messages.extension = 'broadcast'
-    and case
-      when realtime.topic() ~ '^user-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        then public.can_message_user_channel(substring(realtime.topic() from 6)::uuid)
-      else false
-    end
+    and public.can_message_user_channel_topic()
   );
 ```
 
@@ -364,7 +407,7 @@ create policy "user-channel: insert same account"
 | user-session: select own | broadcast | 文字列比較 | 安全 |
 | user-session: insert own | broadcast | 文字列比較 | 安全 |
 | user-channel: select own | broadcast | 文字列比較 | 安全 |
-| user-channel: insert same account | broadcast | CASE式でUUID形式を確認後にキャスト | 修正済み・安全 |
+| user-channel: insert same account | broadcast | ポリシー式自体はcan_message_user_channel_topic()の呼び出しのみ。トピックのUUID形式確認・キャストは関数内のPL/pgSQLで行う(2026-11-22修正) | 安全(can_access_avatar_room_topic()と同じ理由でPL/pgSQL化済み) |
 
 ---
 
@@ -383,8 +426,8 @@ create policy "user-channel: insert same account"
 |---|---|---|---|
 | 0 | 新しい版のデプロイを検知し、古い(未リロードの)タブを自動的に再読み込みさせる仕組みを導入する(概要のみ。実装は別途) | 既存ユーザーの操作を妨げない形で動作すること | 導入したコードを戻す(他段階と独立) |
 | 1 | 項目5のSQL(BANチェック)適用 **(適用済み・2026-11-10本番確認済み。[[project_globy_task_list]]参照)** | BANされた人がチャットに触れなくなること。Realtimeには無関係 | 項目5の戻しSQL |
-| 2 | `realtime_view_grants`テーブル・`grant_realtime_view_access`関数を追加 | 新規追加のみ、既存機能に影響なし | `drop table`/`drop function`(新規追加のみのため安全) |
-| 3 | 4節の全ポリシー・ヘルパー関数をDBへ追加(**user-channel用ポリシーもここに含める**。方式Cのクライアントデプロイ〈段階5〉より前に必要) | まだクライアントは`private:true`を送っておらず、「Allow public access」もONのままなので無影響であること | ポリシー・ヘルパー関数をdrop |
+| 2 | `realtime_view_grants`テーブル・`grant_realtime_view_access`関数を追加 **(2026-11-22 本番適用済み)** | 新規追加のみ、既存機能に影響なし | `drop table`/`drop function`(新規追加のみのため安全) |
+| 3 | 4節の全ポリシー・ヘルパー関数をDBへ追加(**user-channel用ポリシーもここに含める**。方式Cのクライアントデプロイ〈段階5〉より前に必要) **(2026-11-22 本番適用済み)** | まだクライアントは`private:true`を送っておらず、「Allow public access」もONのままなので無影響であること | ポリシー・ヘルパー関数をdrop |
 | 4 | viewOnly側のクライアントコードで、viewOnly開始時+一定間隔で`grant_realtime_view_access`を呼ぶように変更・デプロイ | 新しい関数呼び出しが追加されるだけで既存動作に変化がないこと | コードを前の版に戻す |
 | 5 | 方式Cのクライアントコード(`user-{userId}`チャンネルの購読・通知payloadの縮小・DB取得)をデプロイ。**この間、方式Cへ移行する9イベント(`dm`/`group-dm`/`dm-edit`/`dm-delete`/`dm-reaction`/`group-reaction`/`group-created`/`group-renamed`/`mention`)はすべて残し、新方式と両方送る(dual-write)。新コードの受信側はid基準で重複除去する(現状未実装のため、このタイミングで追加実装する)** | 新旧クライアント混在でも二重表示・二重カウントが起きないこと | コードを前の版に戻す(方式Cの通知だけ届いて本文が出ない状態に戻るため、問題があれば段階5全体を戻す) |
 | 6 | 旧来のbroadcast送信のうち、**方式Cへ移行した9イベント**(`dm`/`group-dm`/`dm-edit`/`dm-delete`/`dm-reaction`/`group-reaction`/`group-created`/`group-renamed`/`mention`)をすべて削除する(**`caption`は対象外。第2段階まで現行のまま**) | 新コードのみで本文がDB経由で正しく表示されること | コードを前の版(段階5相当)に戻す |
@@ -563,6 +606,9 @@ presence(版不明・世代が古い人数)の表示を見て、**両方とも�
 2. **`service_role`はRLSをバイパスし、privateチャンネルにも送信できる。** `lib/broadcastForceLeave.ts`と同じ作り方・送信方法で実機確認済み。Postgres側`service_role`ロールの`rolbypassrls = true`とも整合する。したがって以前の未検証事項(下記旧1番)は解消し、段階7時点で`lib/broadcastForceLeave.ts`を`private:true`化しても追加の検証・切り戻し手順は不要と判断する。
 3. スクリプトC(テスト用アカウントでのログイン確認)は、A・Bの結果で十分と判断し、認証情報をファイルに置くリスクを避けるため、ユーザーの判断で省略した。
 4. **`can_access_avatar_room_topic()`のトピック判定(CASE式・正規表現・13文字目からの切り出し)を、本番のSQL Editorで文字列のみのSELECT(テーブル参照なし)により確認(2026-11-14)。** `avatar-room-`+UUIDのみ一致してUUIDが先頭のハイフンなしで正しく取り出され、`avatar-room-not-a-uuid`・`user-session-`+UUID・`user-`+UUID・`garbage`はいずれも不一致(NULL)でエラーなし。**※関数そのもの・ポリシーは未適用。この確認は判定式の部品のみ。**
+5. **2026-11-22、段階2・3を本番に適用。** 適用後、2つのブラウザ(通常の入室と、許可証を持たないviewOnly)で、在室表示・アバターの移動・全体チャット・DMがすべて従来どおり動くことを確認した。追加したポリシーは、private指定のないチャンネルには効かないことを実機で確認した。
+6. **同日、SQL Editorでの成りすましテストで、`can_access_avatar_room_topic()`の判定(街の持ち主=true、許可証なし=false、許可証の発行後=true)と、`can_message_user_channel`(許可証の前後でfalse→true)が正しいことを確認した。** 一方、`language sql`のCASE式の形では、`avatar-room-{UUID}`以外のトピック(`garbage`・`avatar-room-not-a-uuid`・`user-session-{UUID}`・`user-{UUID}`)でfalseを返さずに22P02になることが分かり、PL/pgSQLに修正した(原因は推定:CASE式で囲んでも、関数内の問い合わせの計画作成時などにuuid変換が実行されることがある)。
+7. **2026-11-22、修正(`2026-11-22_fix_realtime_topic_parsing.sql`)を本番に適用した。** `can_access_avatar_room_topic()`を`language plpgsql`に変更し、`can_message_user_channel_topic()`を新設し、"user-channel: insert same account"ポリシーをこの関数を呼ぶだけの形にしたことを、`pg_proc`・`pg_policies`で確認した(ポリシーは引き続き8件、新関数は anon からは実行不可)。SQL Editorでの成りすましテストで、判定の中身(街の持ち主=true、許可証なし=false、許可証の発行後=true、個人チャンネルへの送信は許可証の前後でfalse→true)が修正前と同じであること、形の違うトピック(`garbage`・`avatar-room-not-a-uuid`・`user-session-{UUID}`・`user-{UUID}`、および個人チャンネルの判定に`avatar-room-{UUID}`を渡した場合)がすべてエラーにならずfalseになることを確認した。テストで発行した許可証は残っていない(`realtime_view_grants`は0件)。2つのブラウザ(通常の入室と、許可証を持たないviewOnly)でのアプリ確認も従来どおりだった。
 
 ### 9-2. 未検証事項の一覧
 
