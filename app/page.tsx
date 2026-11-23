@@ -314,6 +314,112 @@ async function renderViewOnlyRoomJoin(
   );
 }
 
+// 入室の仕組みの作り替え 段階D-3。/?room=ルームID の入口
+// (まだどこからもリンクしない)。account_membersに載っているメンバーが、
+// 招待トークンを使わずに入室するための経路。
+const ROOM_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function renderMemberRoomJoin(
+  supabase: SupabaseClient,
+  user: User,
+  roomId: string,
+) {
+  // UUIDの形でなければDBに問い合わせずに無効な招待と同じ扱いにする。
+  if (!ROOM_ID_PATTERN.test(roomId)) {
+    redirect("/?error=invalid_invite");
+  }
+
+  const { data: entryRows, error: entryError } = await supabase.rpc(
+    "get_member_room_entry",
+    { p_room_id: roomId },
+  );
+  if (entryError) {
+    // eslint-disable-next-line no-console
+    console.error("メンバー入室時のルーム情報取得に失敗しました", entryError);
+  }
+  const entry = entryRows?.[0] ?? null;
+
+  if (!entry) {
+    // メンバーでない(またはBAN中・取得エラー)。通常のRLSでこのルームが
+    // 見えれば持ち主・移行前の古いゲストなので「/」へ、見えなければ
+    // 無効な招待と同じ扱いにする(BAN中かどうかは区別しない)。
+    const { data: ownRoom } = await supabase
+      .from("rooms")
+      .select("id")
+      .eq("id", roomId)
+      .maybeSingle();
+    if (ownRoom) {
+      redirect("/");
+    }
+    redirect("/?error=invalid_invite");
+  }
+
+  // 「自分のルームへ」ボタンの行き先。renderViewOnlyRoomJoinと同じ理由・
+  // 同じ処理(見ているルームの種類には依らない、閲覧者自身の情報)。
+  const routeState = await resolveUserRouteState(supabase, user.id);
+  let ownRoomHref: string | null = "/";
+  if (routeState.isMaster) {
+    const { data: ownAccountRows } = await supabase.rpc(
+      "get_own_account_guest_info",
+    );
+    const ownInviteToken = ownAccountRows?.[0]?.invite_token ?? null;
+    ownRoomHref = ownInviteToken ? `/?invite=${ownInviteToken}` : null;
+  }
+
+  const [{ data: profile }, { data: appSettings }] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("display_name, locale, avatar_mode, avatar_icon_url")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("app_settings")
+      .select(
+        "avatar_size_px, maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+      )
+      .eq("id", "default")
+      .maybeSingle(),
+  ]);
+
+  const rooms: Room[] = await applyTemplateNameToRooms(supabase, [
+    {
+      id: roomId,
+      accountId: entry.account_id,
+      templateId: entry.template_id,
+      name: entry.room_name,
+      previewImage: entry.preview_image,
+    },
+  ]);
+
+  const plan = (entry.plan as PlanId) ?? "free";
+
+  return (
+    <AvatarSpaceLoader
+      initialName={profile?.display_name ?? undefined}
+      rooms={rooms}
+      maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
+      screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
+      videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
+      voiceCallDailyMinutes={PLANS[plan].voiceCallDailyMinutes}
+      recordingEnabled={PLANS[plan].recordingEnabled}
+      dailyImageBytesLimit={PLANS[plan].dailyImageBytesLimit}
+      isAccountAdmin={false}
+      isMaster={false}
+      guestInviteToken={null}
+      avatarSizePx={appSettings?.avatar_size_px ?? undefined}
+      maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
+      maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
+      maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
+      isMemberEntry={true}
+      ownRoomHref={ownRoomHref}
+      initialProfileLocale={(profile?.locale as Locale) ?? undefined}
+      initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
+      initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
+    />
+  );
+}
+
 // 招待URL(?invite=トークン)をSlack/LINEなどに貼った際のリンクプレビュー
 // (OGP)に、管理画面で設定した招待者名を本文(description)として表示する
 // ための動的メタデータ。タイトル・アイコンはブラウザタブ表示と統一する
@@ -364,7 +470,7 @@ export async function generateMetadata({
 export default async function Home({
   searchParams,
 }: {
-  searchParams: { error?: string; invite?: string; billing?: string };
+  searchParams: { error?: string; invite?: string; billing?: string; room?: string };
 }) {
   const supabase = createClient();
   const {
@@ -372,6 +478,9 @@ export default async function Home({
   } = await supabase.auth.getUser();
 
   const inviteToken = searchParams.invite;
+  // 入室の仕組みの作り替え 段階D-3。/?room=ルームID の入口
+  // (まだどこからもリンクしない)。
+  const memberRoomId = searchParams.room;
 
   // 管理画面モーダル化 M-4(2026-11)。app/billing/return経由で戻った
   // 直後に表示する結果通知。想定外の値(無し・不正な文字列)は表示しない
@@ -424,6 +533,11 @@ export default async function Home({
         // no-account(通常起こらないはずの防御的フォールバック)は
         // 下の通常ルーティングに任せる。
       }
+    } else if (memberRoomId) {
+      // 入室の仕組みの作り替え 段階D-3。/?room=ルームID の入口
+      // (まだどこからもリンクしない)。invite・roomの両方がある時は
+      // 上のinviteの処理を優先する(このelse ifには入らない)。
+      return renderMemberRoomJoin(supabase, user, memberRoomId);
     }
 
     const state = await resolveUserRouteState(supabase, user.id);
