@@ -55,6 +55,27 @@ export async function POST(request: Request) {
     .eq("id", roomId)
     .maybeSingle();
   let authorized = !!ownRoom;
+
+  // 入室の仕組みの作り替え 段階C-2。メンバーの一覧表で通す経路。
+  // 段階Gで招待トークンの経路を削除予定。
+  if (!authorized) {
+    const { data: memberRoom, error: memberRoomError } = await supabase.rpc(
+      "get_own_or_member_room",
+      { p_room_id: roomId },
+    );
+    if (memberRoomError) {
+      // eslint-disable-next-line no-console
+      console.error("メンバーの一覧表によるアクセス確認に失敗しました", memberRoomError);
+    } else {
+      const matchedMember = (
+        memberRoom as
+          | Array<{ account_id: string; template_id: string | null }>
+          | null
+      )?.[0];
+      authorized = !!matchedMember?.account_id;
+    }
+  }
+
   if (!authorized && inviteToken) {
     const { data: viewRooms } = await supabase.rpc("list_rooms_by_invite_token", {
       token: inviteToken,
