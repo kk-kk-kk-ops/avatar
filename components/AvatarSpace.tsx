@@ -14312,6 +14312,14 @@ export default function AvatarSpace({
 
                 {(isAccountAdmin || isMaster) && (
                   <div className="space-y-2 border-t border-slate-700 pt-4">
+                    {/* ユーザー要望(2026-11-25)。見出しの表示条件は、この
+                        まとまり自体の表示条件(isAccountAdmin || isMaster)
+                        と同じにする(中のボタンが1つも出ない人には見出しも
+                        出さない)。見た目は同じパネルの他の見出し
+                        〈マイク・ステータス等〉と同じclassを使う。 */}
+                    <p className="mb-2 text-xs font-semibold text-slate-400">
+                      {t("settings.adminMenu")}
+                    </p>
                     {isAccountAdmin && (
                       <button
                         type="button"

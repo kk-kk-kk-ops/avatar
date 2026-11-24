@@ -394,6 +394,8 @@ const ja: Record<string, string> = {
   "settings.carLabel": "車(shift + x)",
   "settings.displayNameLabel": "表示名",
   "settings.statusLabel": "ステータス",
+  // ユーザー要望(2026-11-25)。設定パネルの管理用ボタンのまとまりの見出し。
+  "settings.adminMenu": "管理メニュー",
 
   "presence.available": "通話可能",
   "presence.busy": "取込み中",
@@ -909,6 +911,7 @@ const en: Record<string, string> = {
   "settings.carLabel": "Car (shift + x)",
   "settings.displayNameLabel": "Display name",
   "settings.statusLabel": "Status",
+  "settings.adminMenu": "Admin menu",
 
   "presence.available": "Available",
   "presence.busy": "Busy",
