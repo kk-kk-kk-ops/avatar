@@ -55,8 +55,10 @@ export default function RoomListSidebar({
       // 固定サイドバーになったため、この一覧が右の広い場所の主役になる。
       // 1440px中央寄せはこの一覧だけにかける(左のサイドバーは画面端に
       // 固定、親要素側にはmax-wを付けない)。スマホでは上(横1列)・PCでは
-      // 左サイドバーより先(order-1)に表示する。
-      className="order-1 flex shrink-0 gap-2 overflow-x-auto bg-slate-900 px-3 py-3 md:order-2 md:mx-auto md:w-auto md:min-h-0 md:max-w-[1440px] md:flex-1 md:flex-wrap md:content-start md:gap-3 md:overflow-x-visible md:overflow-y-auto md:p-4"
+      // 左サイドバーより先(order-1)に表示する。段階E-5-1b見直し
+      // (2026-11-25)。左のサイドバー(暗い)と見た目をそろえず、ここは
+      // 白い背景・明るいカードにする(ヘッダー・左サイドバーは暗いまま)。
+      className="order-1 flex shrink-0 gap-2 overflow-x-auto bg-white px-3 py-3 md:order-2 md:mx-auto md:w-auto md:min-h-0 md:max-w-[1440px] md:flex-1 md:flex-wrap md:content-start md:gap-3 md:overflow-x-visible md:overflow-y-auto md:p-4"
       style={{ WebkitOverflowScrolling: "touch" }}
     >
       {result.ownCard === "failed" && (
@@ -85,7 +87,7 @@ export default function RoomListSidebar({
 
 function FailedCard({ label }: { label: string }) {
   return (
-    <div className="w-40 shrink-0 rounded-lg border border-dashed border-slate-600 bg-slate-800 px-2 py-3 text-center text-[10px] text-slate-400 md:w-56">
+    <div className="w-40 shrink-0 rounded-lg border border-dashed border-slate-300 bg-white px-2 py-3 text-center text-[10px] text-slate-500 md:w-56">
       {label}
     </div>
   );
@@ -116,28 +118,28 @@ function RoomCardTile({
           className="aspect-video w-full rounded-t-lg object-cover"
         />
       ) : (
-        <div className="aspect-video w-full rounded-t-lg bg-slate-700" />
+        <div className="aspect-video w-full rounded-t-lg bg-slate-200" />
       )}
       <div className="px-2 py-1.5">
         {badge && (
-          <span className="mb-1 inline-block rounded bg-white px-1.5 py-0.5 text-[9px] font-semibold text-slate-900">
+          <span className="mb-1 inline-block rounded bg-slate-900 px-1.5 py-0.5 text-[9px] font-semibold text-white">
             {badge}
           </span>
         )}
         {card.roomId ? (
           <>
             <div className="flex items-center justify-between gap-1">
-              <p className="truncate text-xs font-semibold text-white">
+              <p className="truncate text-xs font-semibold text-slate-900">
                 {card.roomName}
               </p>
               {onlineCount !== undefined && (
-                <span className="shrink-0 text-[9px] font-semibold text-slate-400">
+                <span className="shrink-0 text-[9px] font-semibold text-slate-500">
                   {onlineCount}
                 </span>
               )}
             </div>
             {card.ownerDisplayName && (
-              <p className="truncate text-[10px] text-slate-300">
+              <p className="truncate text-[10px] text-slate-500">
                 {card.ownerDisplayName}
               </p>
             )}
@@ -150,17 +152,19 @@ function RoomCardTile({
             )}
           </>
         ) : (
-          <p className="text-[10px] text-amber-400">{t("lobby.noRoomYet")}</p>
+          <p className="text-[10px] text-amber-600">{t("lobby.noRoomYet")}</p>
         )}
       </div>
     </>
   );
 
+  // 段階E-5-1b見直し(2026-11-25)。右のカード一覧は白い背景・明るい
+  // カードにそろえる(左の暗いサイドバーとは別の配色にする決定事項)。
   const baseClassName =
-    "w-40 shrink-0 overflow-hidden rounded-lg border bg-slate-800 md:w-56";
+    "w-40 shrink-0 overflow-hidden rounded-lg border bg-white md:w-56";
   const borderClassName = selected
-    ? "border-white shadow-[0_0_0_2px_rgba(255,255,255,0.5)]"
-    : "border-slate-700 hover:border-slate-400";
+    ? "border-slate-900 shadow-[0_0_0_2px_rgba(15,23,42,0.15)]"
+    : "border-slate-200 hover:border-slate-400";
 
   if (!card.roomId) {
     return (

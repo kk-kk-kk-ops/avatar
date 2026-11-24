@@ -23,7 +23,14 @@ export default function AvatarPicker({ selected, onSelect, disabled }: Props) {
     <div
       className={
         USE_SCROLL_LAYOUT
-          ? "grid grid-flow-col grid-rows-2 gap-1.5 overflow-x-auto pb-1"
+          // 段階E-5-1b見直し(2026-11-25)。overflow-x-autoのブラウザ標準の
+          // 横スクロールバーが、暗い背景(左のサイドバー・設定パネル)の上で
+          // 白く浮いて見える指摘への対応。app/globals.cssに既存の
+          // no-scrollbarユーティリティ(横スクロール行でスクロールバーを
+          // 隠す用、これまで未使用)を適用する。マウス操作でのドラッグ・
+          // トラックパッド・スマホのスワイプでの横スクロール自体は変わらず
+          // 使える。
+          ? "no-scrollbar grid grid-flow-col grid-rows-2 gap-1.5 overflow-x-auto pb-1"
           : "grid grid-cols-4 gap-1.5"
       }
       style={USE_SCROLL_LAYOUT ? { gridAutoColumns: "3.75rem" } : undefined}
