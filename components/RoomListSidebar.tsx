@@ -175,12 +175,13 @@ function RoomCardTile({
     );
   }
 
-  // 2026-11-25指摘。影ではなく枠の色・太さで選択状態を示す(白い背景でも
-  // はっきり見える濃さ)。選択中はホバーしても緑のまま。太さは常に2pxに
-  // そろえ、選んだ時にカードの大きさや位置がずれないようにする。
+  // 2026-11-25指摘・再調整。ふだんの枠は薄い灰色、選んでいる時は緑の枠
+  // (border)に加えてカードの外側に緑の縁取り(ring、box-shadowで描かれ
+  // カードの大きさ・位置はずれない)を足して太く見せる。選択中はホバー
+  // しても見た目を変えない。
   const borderClassName = selected
-    ? "border-2 border-emerald-500"
-    : "border-2 border-slate-500 hover:border-slate-700";
+    ? "border-2 border-emerald-500 ring-2 ring-emerald-500"
+    : "border-2 border-slate-300 hover:border-slate-500";
 
   const roomId = card.roomId;
   return (
