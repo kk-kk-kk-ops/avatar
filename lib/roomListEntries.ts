@@ -16,6 +16,11 @@ export type RoomListCard = {
   // 2026-11-24確認)はnullになる。その場合はリンクしない
   // 「まだルームがありません」カードとして表示する。
   roomId: string | null;
+  // 段階E-5-1c(2026-11-25)。app/page.tsxのrenderRoomJoinが入室前の
+  // ルーム情報(Room型)を組み立てる際に使う(マップのデザインを決める
+  // テンプレートID)。memberカードには対応する使い道が無いが、型を
+  // 共通にするため同じ列を持たせる。
+  templateId: string | null;
   roomName: string | null;
   previewImage: string | null;
   // 管理者名はmemberカード(list_my_room_memberships()が返す
@@ -94,6 +99,7 @@ export async function fetchAccountRoomCard(
       kind,
       accountId,
       roomId: null,
+      templateId: null,
       roomName: null,
       previewImage: null,
       ownerDisplayName: null,
@@ -106,6 +112,7 @@ export async function fetchAccountRoomCard(
     kind,
     accountId,
     roomId: room.id,
+    templateId: room.template_id,
     roomName: override.name ?? room.name,
     previewImage: override.previewImage ?? room.preview_image,
     ownerDisplayName: null,
@@ -133,6 +140,10 @@ async function fetchMemberCards(
     kind: "member" as const,
     accountId: row.account_id,
     roomId: row.room_id,
+    // 段階E-5-1c(2026-11-25)。memberカードはrenderRoomJoinでの使い回しの
+    // 対象外(own/legacyGuestカードのみ使う)のため、list_my_room_memberships
+    // が返さないtemplateIdは常にnull。
+    templateId: null,
     roomName: row.room_name,
     previewImage: row.preview_image,
     ownerDisplayName: row.owner_display_name,
@@ -144,22 +155,24 @@ export async function getRoomListEntries(
   supabase: SupabaseClient,
   userId: string,
   routeState: UserRouteState,
+  // 段階E-5-1c(2026-11-25)。呼び出し元(app/page.tsxのrenderMemberRoomJoin
+  // の!entryブロック)が本人確認のために既にfetchAccountRoomCardを呼んで
+  // いる場合、その結果をここに渡せば、同じカード(rooms・templatesへの
+  // 問い合わせ)をもう一度取得しない。guest型(古いゲスト)の場合も、
+  // BAN確認(get_own_account_guest_info)自体は今までどおり行い、確認が
+  // 通った場合だけこの引数を使う(BAN中にlegacyGuestCardを出さない挙動は
+  // 変えない)。未指定の時は今までどおり自分で取得する。
+  knownAccountRoomCard?: RoomListCard | "failed",
 ): Promise<RoomListResult> {
   const memberCardsPromise = fetchMemberCards(supabase);
-  // 表示言語の判定(profiles.locale)と「ルームを作成する」ボタンの表示
-  // 判定(profiles.role)は、どちらもprofilesの1行で済むため、1回だけ
-  // 読み取る(2026-11-24指摘)。
-  const profilePromise = supabase
-    .from("profiles")
-    .select("role, locale")
-    .eq("user_id", userId)
-    .maybeSingle();
 
   let ownCard: RoomListSection<RoomListCard> = "none";
   let legacyGuestCard: RoomListSection<RoomListCard> = "none";
 
   if (routeState.type === "admin") {
-    ownCard = await fetchAccountRoomCard(supabase, routeState.accountId, "own");
+    ownCard =
+      knownAccountRoomCard ??
+      (await fetchAccountRoomCard(supabase, routeState.accountId, "own"));
   } else if (routeState.type === "guest") {
     // 移行前の古いゲストの特例カード(段階Eの移行期間中のみ。段階Fで
     // account_membersへの移し替えが終わったら削除する)。BAN確認は
@@ -171,18 +184,17 @@ export async function getRoomListEntries(
     if (guestInfoError) {
       legacyGuestCard = "failed";
     } else if (guestInfoRows && guestInfoRows.length > 0) {
-      legacyGuestCard = await fetchAccountRoomCard(
-        supabase,
-        routeState.accountId,
-        "legacyGuest",
-      );
+      legacyGuestCard =
+        knownAccountRoomCard ??
+        (await fetchAccountRoomCard(
+          supabase,
+          routeState.accountId,
+          "legacyGuest",
+        ));
     }
   }
 
-  const [memberCardsResult, { data: profileRow }] = await Promise.all([
-    memberCardsPromise,
-    profilePromise,
-  ]);
+  const memberCardsResult = await memberCardsPromise;
 
   if (
     legacyGuestCard !== "none" &&
@@ -204,15 +216,17 @@ export async function getRoomListEntries(
   // "no-account"の場合だけ「ルームを作成する」ボタンの対象になりうる。
   // profiles.roleがguestのまま残っている場合(通常は起きないはずだが、
   // 安全のため明示的に確認する。2026-11-24指摘)は出さない。
+  // 段階E-5-1c(2026-11-25)。profiles.role/localeはresolveUserRouteStateが
+  // 既に読んでいるため、ここでは別途読み取らずrouteState.profileを使う。
   const canCreateRoom =
-    routeState.type === "no-account" && profileRow?.role !== "guest";
+    routeState.type === "no-account" && routeState.profile.role !== "guest";
 
   return {
     ownCard,
     legacyGuestCard,
     memberCards: memberCardsResult,
     canCreateRoom,
-    profileLocale: profileRow?.locale ?? null,
+    profileLocale: routeState.profile.locale,
   };
 }
 

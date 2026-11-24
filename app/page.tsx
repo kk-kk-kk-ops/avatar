@@ -7,6 +7,7 @@ import {
   getRoomListEntries,
   fetchAccountRoomCard,
   pickFirstLinkableRoomId,
+  type RoomListCard,
   type RoomListResult,
 } from "@/lib/roomListEntries";
 import { translate, translateAuthError, type Locale } from "@/lib/i18n/translations";
@@ -105,6 +106,13 @@ async function renderRoomJoin(
   supabase: SupabaseClient,
   user: User,
   state: UserRouteState & { type: "admin" | "guest" },
+  // 段階E-5-1c(2026-11-25)。呼び出し元(renderMemberRoomJoinの!entry
+  // ブロック)が本人確認のために既にfetchAccountRoomCardで取得済みの
+  // own/legacyGuestカード。これをそのままroomsに使い、roomsテーブル・
+  // templatesテーブルの取り直しをやめる(L1)。roomCard.roomIdが
+  // nullの場合(自分のアカウントはあるがrooms行が無い)はroomsを
+  // 空配列にする(今までの「roomRowsが0行」の場合と同じ扱い)。
+  roomCard: RoomListCard,
   // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の左側に
   // 出すルームの一覧。呼び出し元(renderMemberRoomJoinのみ、下記)が
   // 既に取得済みの結果をそのまま渡す(ここで取り直さない)。
@@ -112,34 +120,17 @@ async function renderRoomJoin(
   initialRoomJoinError?: string | null,
   initialBillingNotice?: "checkout_success" | "portal_returned" | null,
 ) {
-  const [
-    { data: profile },
-    { data: guestInfoRows },
-    { data: roomRows },
-    { data: appSettings },
-  ] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("display_name, locale, avatar_mode, avatar_icon_url")
-      .eq("user_id", user.id)
-      .maybeSingle(),
+  const [{ data: guestInfoRows }, { data: appSettings }] = await Promise.all([
     // accountsの直接SELECTではなく、自分のprofiles.account_idが指すアカウント
     // のplan/invite_tokenだけを返すSECURITY DEFINER関数を使う(2026-11-15、
     // 段階4)。owner_user_idに関わらず持ち主・ゲストどちらでも同じ関数で
     // 取得できる(state.accountIdもprofiles.account_idから導出されるため、
     // 結果は常に一致する)。BAN中のゲストの場合は0行になる(下のBAN確認
     // ブロックで別途BannedNoticeを返すため、この時点ではplan等が未解決でも
-    // 問題ない。詳細はこの関数の直後のコメント参照)。
+    // 問題ない。詳細はこの関数の直後のコメント参照)。段階E-5-1c(2026-11-25)
+    // でも、指示cのとおりこの呼び出し自体は変えていない(app_settingsとは
+    // 互いに依存しないため、Promise.allで同時に取る)。
     supabase.rpc("get_own_account_guest_info"),
-    supabase
-      .from("rooms")
-      .select("id, account_id, template_id, name, preview_image")
-      .eq("account_id", state.accountId)
-      .order("created_at", { ascending: true })
-      // 全プラン共通でルーム数の上限は1つのため、常に1件のみ表示する
-      // (過去のプラン仕様で複数ルームを持つアカウントが残っていても、
-      // ここで1件に絞る)。
-      .limit(1),
     supabase
       .from("app_settings")
       .select(
@@ -149,16 +140,23 @@ async function renderRoomJoin(
       .maybeSingle(),
   ]);
 
-  const rooms: Room[] = await applyTemplateNameToRooms(
-    supabase,
-    (roomRows ?? []).map((r) => ({
-      id: r.id,
-      accountId: r.account_id,
-      templateId: r.template_id,
-      name: r.name,
-      previewImage: r.preview_image,
-    })),
-  );
+  // 段階E-5-1c(2026-11-25・L1)。roomCardはfetchAccountRoomCard経由で
+  // 既にテンプレートのname/previewImage上書き(fetchTemplateOverride)が
+  // 適用済みのため、ここでapplyTemplateNameToRoomsをもう一度呼ぶ必要は
+  // ない(優先順位〈テンプレート→ルーム自体の値〉が完全に同じロジックで
+  // あることをlib/roomListEntries.tsのfetchTemplateOverrideと比較して
+  // 確認済み)。
+  const rooms: Room[] = roomCard.roomId
+    ? [
+        {
+          id: roomCard.roomId,
+          accountId: roomCard.accountId,
+          templateId: roomCard.templateId,
+          name: roomCard.roomName ?? "",
+          previewImage: roomCard.previewImage ?? "",
+        },
+      ]
+    : [];
 
   const account = guestInfoRows?.[0] ?? null;
   const plan = (account?.plan as PlanId) ?? "free";
@@ -203,7 +201,7 @@ async function renderRoomJoin(
       // 残らないようにするため)。ルームが無い場合(roomsが空)は
       // アカウントIDを代わりに使う。
       key={rooms[0]?.id ?? state.accountId}
-      initialName={profile?.display_name ?? undefined}
+      initialName={state.profile.displayName ?? undefined}
       rooms={rooms}
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
       screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
@@ -218,9 +216,9 @@ async function renderRoomJoin(
       maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
       maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
-      initialProfileLocale={(profile?.locale as Locale) ?? undefined}
-      initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
-      initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
+      initialProfileLocale={(state.profile.locale as Locale) ?? undefined}
+      initialAvatarMode={(state.profile.avatarMode as AvatarMode) ?? undefined}
+      initialAvatarIconUrl={state.profile.avatarIconUrl ?? undefined}
       initialRoomJoinError={initialRoomJoinError ?? undefined}
       initialBillingNotice={initialBillingNotice ?? undefined}
       roomListResult={roomListResult}
@@ -408,15 +406,22 @@ async function renderMemberRoomJoin(
         return <RoomLoadFailedNotice locale={getServerLocale()} />;
       }
       if (ownCard.roomId === roomId) {
+        // 段階E-5-1c(2026-11-25・L2)。上で取得済みのownCardを渡し、
+        // getRoomListEntriesの中でown/legacyGuestカードを取り直さない。
         const roomListResult = await getRoomListEntries(
           supabase,
           user.id,
           routeState,
+          ownCard,
         );
+        // 段階E-5-1c(2026-11-25・L1)。同じownCardをrenderRoomJoinの
+        // rooms組み立てにもそのまま使う(rooms/templatesの取り直しを
+        // やめる)。
         return renderRoomJoin(
           supabase,
           user,
           routeState,
+          ownCard,
           roomListResult,
           translatedRoomJoinError,
           initialBillingNotice,
@@ -434,20 +439,16 @@ async function renderMemberRoomJoin(
     routeState,
   );
 
-  const [{ data: profile }, { data: appSettings }] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("display_name, locale, avatar_mode, avatar_icon_url")
-      .eq("user_id", user.id)
-      .maybeSingle(),
-    supabase
-      .from("app_settings")
-      .select(
-        "avatar_size_px, maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
-      )
-      .eq("id", "default")
-      .maybeSingle(),
-  ]);
+  // 段階E-5-1c(2026-11-25・L3)。profiles(display_name・locale・
+  // avatar_mode・avatar_icon_url)は上のresolveUserRouteStateが既に
+  // 読んでいるため、ここでは別途読み取らずrouteState.profileを使う。
+  const { data: appSettings } = await supabase
+    .from("app_settings")
+    .select(
+      "avatar_size_px, maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
+    )
+    .eq("id", "default")
+    .maybeSingle();
 
   const rooms: Room[] = await applyTemplateNameToRooms(supabase, [
     {
@@ -466,7 +467,7 @@ async function renderMemberRoomJoin(
       // 段階E-5-1の見直し(2026-11-24・①A案・d)。renderRoomJoinと同じ理由
       // (関数直前のコメント参照)。roomIdは関数の引数そのものを使う。
       key={roomId}
-      initialName={profile?.display_name ?? undefined}
+      initialName={routeState.profile.displayName ?? undefined}
       rooms={rooms}
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
       screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
@@ -482,9 +483,11 @@ async function renderMemberRoomJoin(
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
       maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
       isMemberEntry={true}
-      initialProfileLocale={(profile?.locale as Locale) ?? undefined}
-      initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
-      initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
+      initialProfileLocale={(routeState.profile.locale as Locale) ?? undefined}
+      initialAvatarMode={
+        (routeState.profile.avatarMode as AvatarMode) ?? undefined
+      }
+      initialAvatarIconUrl={routeState.profile.avatarIconUrl ?? undefined}
       initialRoomJoinError={translatedRoomJoinError ?? undefined}
       initialBillingNotice={initialBillingNotice ?? undefined}
       roomListResult={roomListResult}
