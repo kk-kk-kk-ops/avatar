@@ -51,7 +51,12 @@ export default function RoomListSidebar({
 
   return (
     <div
-      className="flex shrink-0 gap-2 overflow-x-auto bg-slate-900 px-3 py-3 md:w-auto md:min-h-0 md:flex-1 md:flex-wrap md:content-start md:gap-3 md:overflow-x-visible md:overflow-y-auto md:p-4"
+      // 段階E-5-1b(2026-11-25)。入力パネル(新設のRoomJoinSidebar)が左の
+      // 固定サイドバーになったため、この一覧が右の広い場所の主役になる。
+      // 1440px中央寄せはこの一覧だけにかける(左のサイドバーは画面端に
+      // 固定、親要素側にはmax-wを付けない)。スマホでは上(横1列)・PCでは
+      // 左サイドバーより先(order-1)に表示する。
+      className="order-1 flex shrink-0 gap-2 overflow-x-auto bg-slate-900 px-3 py-3 md:order-2 md:mx-auto md:w-auto md:min-h-0 md:max-w-[1440px] md:flex-1 md:flex-wrap md:content-start md:gap-3 md:overflow-x-visible md:overflow-y-auto md:p-4"
       style={{ WebkitOverflowScrolling: "touch" }}
     >
       {result.ownCard === "failed" && (

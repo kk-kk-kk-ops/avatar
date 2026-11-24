@@ -103,6 +103,7 @@ import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
 import RoomListSidebar from "./RoomListSidebar";
+import RoomJoinSidebar from "./RoomJoinSidebar";
 import GlobyLogo from "./GlobyLogo";
 import GlobyHeaderBar from "./GlobyHeaderBar";
 import { collectRoomListCards, type RoomListResult } from "@/lib/roomListEntries";
@@ -161,6 +162,40 @@ const COLORS = [
 
 function randomId() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+// 入室の仕組みの作り替え 段階E-5-1b(2026-11-25)。入室前の名前欄の
+// 入力途中の文字を、カード切り替え(keyによる再マウント)で消えないよう
+// 一時的に覚えておく。ブラウザのsessionStorageを使う(タブを閉じると
+// 消える。共用パソコンで次に使う人に前の人の名前が残らないようにする
+// ため、profiles.display_nameと同じDB保存やlocalStorageは使わない)。
+// キーにユーザーIDを含め、同じブラウザ・同じタブでも別ユーザーの
+// 入力が混ざらないようにする。sessionStorageが使えない環境(プライベート
+// ウィンドウ等)でも画面が壊れないよう、必ずtry/catchで囲む。
+const NAME_DRAFT_KEY_PREFIX = "globy-lobby-name-draft:";
+
+function readNameDraft(userId: string): string | null {
+  try {
+    return window.sessionStorage.getItem(`${NAME_DRAFT_KEY_PREFIX}${userId}`);
+  } catch {
+    return null;
+  }
+}
+
+function saveNameDraft(userId: string, value: string) {
+  try {
+    window.sessionStorage.setItem(`${NAME_DRAFT_KEY_PREFIX}${userId}`, value);
+  } catch {
+    // 保存できなくても動作自体には影響しない(既定値のまま進む)
+  }
+}
+
+function clearNameDraft(userId: string) {
+  try {
+    window.sessionStorage.removeItem(`${NAME_DRAFT_KEY_PREFIX}${userId}`);
+  } catch {
+    // 削除できなくても動作自体には影響しない
+  }
 }
 
 // サイドバーのタブ切替(参加者/チャット/通知/設定)用の線画アイコン。
@@ -1009,6 +1044,34 @@ export default function AvatarSpace({
   // 完了するまでローディング画面を表示し、移動・向き変更操作をロックする。
   const [assetsReady, setAssetsReady] = useState(false);
   const [nameInput, setNameInput] = useState(initialName ?? "");
+  // 段階E-5-1b(2026-11-25)。カード切り替え(key変更による再マウント)で
+  // 名前欄の入力途中の文字が消えてしまう問題への対応。マウント時に
+  // sessionStorageへ保存済みの入力があれば復元する(無ければinitialName
+  // のまま)。入室(handleJoin)・ログアウト(handleLogoutButtonClick)の
+  // 時にclearNameDraftで消すため、入室後・ログアウト後には残らない。
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (cancelled || !user) return;
+      const draft = readNameDraft(user.id);
+      if (draft) setNameInput(draft);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // 段階E-5-1b(2026-11-25)。入力のたびに(短い間隔でまとめて)
+  // sessionStorageへ保存する。authUserIdRefがまだ埋まっていない
+  // (マウント直後)場合は何もせず、次の入力時に改めて保存を試みる。
+  useEffect(() => {
+    const userId = authUserIdRef.current;
+    if (!userId) return;
+    const timer = window.setTimeout(() => {
+      saveNameDraft(userId, nameInput);
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [nameInput]);
   const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_IMAGES[0]);
   // 最後に選択していたアバタースプライトをブラウザのlocalStorageに記憶し、
   // 次回のロビー画面でも引き継ぐ(2026-11追加。ノイズ抑制フィルターの
@@ -5699,6 +5762,9 @@ export default function AvatarSpace({
     setAssetsReady(false);
     setJoined(true);
     saveDisplayName(name);
+    // 段階E-5-1b(2026-11-25)。名前がDBに保存された(入室できた)ので、
+    // 一時保存していた入力途中の名前は不要になる。
+    clearNameDraft(user.id);
   }, [
     nameInput,
     selectedAvatar,
@@ -10055,6 +10121,10 @@ export default function AvatarSpace({
       handleLeaveRoomButtonClick();
       return;
     }
+    // 段階E-5-1b(2026-11-25)。共用パソコンで次に使う人に前の人の入力
+    // 途中の名前が残らないよう、ログアウト時に一時保存を消す。
+    const userId = authUserIdRef.current;
+    if (userId) clearNameDraft(userId);
     setIsLoggingOut(true);
     performLogout().catch(() => setIsLoggingOut(false));
   }, [handleLeaveRoomButtonClick]);
@@ -11378,16 +11448,56 @@ export default function AvatarSpace({
     const maintenanceBlocking = isMaintenanceActive(maintenance) && !isMaster;
     return (
       <div className="flex h-full w-full flex-col overflow-hidden bg-slate-900">
-        {/* 段階E-5-1の見直し(2026-11-24・②③)。ヘッダーの帯は画面の端から
-            端まで(会議室の中と同じ見た目)。1440px中央寄せの対象は
-            この下のカード一覧+入室パネルの部分だけ。 */}
+        {/* 段階E-5-1b(2026-11-25)。ヘッダーの帯は画面の端から端まで
+            (会議室の中と同じ見た目、変更なし)。1440px中央寄せの対象は
+            右の広い場所(カード一覧、下記RoomListSidebar側)だけにする
+            (左の380px固定サイドバーは画面端に固定するため、この行自体には
+            max-wを付けない)。 */}
         <GlobyHeaderBar />
-        <div className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-hidden md:flex-row">
-          {/* 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。左(スマホでは上)の
-              ルーム一覧。会議室の中(joined===true、この分岐自体に来ない)
-              では出さない。roomListResult未指定の古い経路(段階Gまで残す
-              renderViewOnlyRoomJoin等)では一覧自体を出さず、従来どおり
-              右側(下記)だけの画面になる。 */}
+        <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden md:flex-row">
+          {/* 入室の仕組みの作り替え 段階E-5-1b(2026-11-25)。左(スマホでは
+              下)の380px固定サイドバー。入室の操作(ルーム名・お知らせ・
+              アバター/アイコン・名前・入室ボタン・マスターへ・ログアウト)
+              はすべてこの中に移した(見た目だけの変更。状態・ロジックは
+              AvatarSpace本体のまま、propsで渡すだけ)。roomListResult
+              未指定の古い経路(段階Gまで残すrenderViewOnlyRoomJoin等)でも、
+              このサイドバー自体は従来の右パネルと同じ役割のため常に出す。 */}
+          <RoomJoinSidebar
+            room={room}
+            onlineCount={room ? roomOnlineCounts[room.id] : undefined}
+            maxPeoplePerRoom={maxPeoplePerRoom}
+            maintenancePublished={maintenancePublished}
+            maintenanceBlocking={maintenanceBlocking}
+            maintenance={maintenance}
+            roomJoinError={roomJoinError}
+            billingNotice={billingNotice}
+            selectedAvatarMode={selectedAvatarMode}
+            avatarPickerLocked={avatarPickerLocked}
+            onSetAvatarMode={handleSetLobbyAvatarMode}
+            selectedAvatar={selectedAvatar}
+            onSelectAvatar={handleSelectLobbyAvatar}
+            selectedIconUrl={selectedIconUrl}
+            iconUploading={iconUploading}
+            iconUploadError={iconUploadError}
+            onIconFileChange={handleIconFileChange}
+            onRequestDeleteIcon={() => setShowDeleteIconConfirm(true)}
+            nameInput={nameInput}
+            onNameInputChange={setNameInput}
+            onJoin={handleJoin}
+            isJoining={isJoining}
+            isRoomSwitchPending={isRoomSwitchPending}
+            isMaster={isMaster}
+            onGoToMaster={handleGoToMasterButtonClick}
+            isStoppingRecording={isStoppingRecording}
+            onLogout={handleLogoutButtonClick}
+            isLoggingOut={isLoggingOut}
+            t={t}
+          />
+          {/* 右(スマホでは上)の広い場所:ルームのカード一覧
+              (components/RoomListSidebar.tsx、中身は変更なし)。
+              1440px中央寄せ・スマホでの表示順(カードが先)はRoomListSidebar
+              側のクラスで制御する(段階E-5-1b、2026-11-25)。roomListResult
+              未指定の古い経路では一覧自体を出さない(従来通り)。 */}
           {roomListResult && (
             <RoomListSidebar
               result={roomListResult}
@@ -11398,217 +11508,13 @@ export default function AvatarSpace({
               t={t}
             />
           )}
-          {/* 右側(スマホでは下側)の入室パネル。パソコン(md以上)では
-              幅およそ400px固定(縮まない)にし、左の一覧(上記)が残りの
-              幅を全部使う(2026-11-24修正2)。min-h-0は、flexアイテムの
-              既定のmin-height:autoによって高さがoverflow-y-autoより先に
-              広がってしまう(内部スクロールが効かない)問題を防ぐための
-              もの(2026-11-24修正4)。relativeは、カード切り替え中
-              (①A案)の「読み込み中」オーバーレイの位置基準。 */}
-          <div className="relative flex min-h-0 flex-1 overflow-y-auto px-4 py-6 md:flex-none md:w-[400px] md:shrink-0 md:py-10">
-        <div
-          className={`m-auto w-full max-w-sm rounded-xl bg-white p-6 shadow-xl transition-opacity ${
-            isRoomSwitchPending ? "opacity-50" : ""
-          }`}
-        >
-          {room ? (
-            <div className="mb-4 overflow-hidden rounded-lg bg-slate-100">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={room.previewImage}
-                alt={room.name}
-                className="aspect-video w-full object-cover"
-              />
-              <div className="flex items-center justify-between gap-1 px-2 py-1.5">
-                <p className="truncate text-xs font-semibold text-slate-700">
-                  {room.name}
-                </p>
-                <span className="shrink-0 text-[10px] font-semibold text-slate-500">
-                  {t("lobby.onlineCount", {
-                    count: String(roomOnlineCounts[room.id] ?? 0),
-                    max: String(maxPeoplePerRoom),
-                  })}
-                </span>
-              </div>
-            </div>
-          ) : (
-            <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              {t("lobby.noRoomYet")}
-            </p>
-          )}
-
-          <p className="mb-4 text-sm text-slate-500">
-            {t("lobby.selectAvatarPrompt")}
-          </p>
-
-          {maintenancePublished && maintenance.startsAt && maintenance.endsAt && (
-            <p className="mb-4 rounded-lg border border-red-300 px-3 py-2 text-xs font-semibold text-red-600">
-              {t("lobby.maintenanceNotice")}
-              <br />
-              {t("lobby.maintenancePeriod")}{formatMaintenanceDateTime(maintenance.startsAt)} 〜{" "}
-              {formatMaintenanceDateTime(maintenance.endsAt)}
-            </p>
-          )}
-
-          {roomJoinError && (
-            <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
-              {roomJoinError}
-            </p>
-          )}
-
-          {billingNotice && (
-            <p className="mb-4 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-              {billingNotice}
-            </p>
-          )}
-
-          <div className="mb-4">
-            <div className="mb-3 flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
-              <button
-                type="button"
-                disabled={avatarPickerLocked}
-                onClick={() => handleSetLobbyAvatarMode("avatar")}
-                className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  selectedAvatarMode === "avatar"
-                    ? "bg-white text-slate-900 shadow-sm"
-                    : "text-slate-500"
-                }`}
-              >
-                {t("settings.avatarModeAvatar")}
-              </button>
-              <button
-                type="button"
-                disabled={avatarPickerLocked}
-                onClick={() => handleSetLobbyAvatarMode("icon")}
-                className={`flex-1 rounded-md py-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  selectedAvatarMode === "icon"
-                    ? "bg-white text-slate-900 shadow-sm"
-                    : "text-slate-500"
-                }`}
-              >
-                {t("settings.avatarModeIcon")}
-              </button>
-            </div>
-
-            {selectedAvatarMode === "avatar" ? (
-              <AvatarPicker
-                selected={selectedAvatar}
-                onSelect={handleSelectLobbyAvatar}
-                disabled={avatarPickerLocked}
-              />
-            ) : (
-              <div className="flex flex-col items-center gap-2">
-                <div className="h-16 w-16 overflow-hidden rounded-full border-2 border-slate-300 bg-slate-100">
-                  {selectedIconUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={selectedIconUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-xl font-bold text-slate-400">
-                      {nameInput.trim().slice(0, 1) || "?"}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                    {iconUploading
-                      ? t("settings.iconUploading")
-                      : t("settings.iconUploadButton")}
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="hidden"
-                      disabled={iconUploading}
-                      onChange={handleIconFileChange}
-                    />
-                  </label>
-                  {selectedIconUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setShowDeleteIconConfirm(true)}
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      {t("common.delete")}
-                    </button>
-                  )}
-                </div>
-                <p className="text-center text-[10px] text-slate-400">
-                  {t("settings.iconSquareHint")}
-                </p>
-                {iconUploadError && (
-                  <p className="text-center text-[10px] text-red-500">
-                    {iconUploadError}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <input
-            autoFocus
-            value={nameInput}
-            onChange={(e) => setNameInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleJoin()}
-            placeholder={t("lobby.namePlaceholder")}
-            className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-          />
-          <button
-            onClick={handleJoin}
-            disabled={!room || isJoining || maintenanceBlocking || isRoomSwitchPending}
-            className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
-          >
-            {maintenanceBlocking
-              ? t("lobby.maintenanceInProgress")
-              : isJoining
-                ? t("lobby.checking")
-                : t("lobby.enterRoom")}
-          </button>
-
-          {/* 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の
-              「自分のルームへ」ボタンは削除(左のカード一覧で自分のルームの
-              カードを押せば同じことができるため)。会議室内のボタン
-              (viewOnlyInviteToken || isMemberEntry時、下記の別のreturn文
-              側)はそのまま残す。handleBackToOwnRoomButtonClick/ownRoomHref
-              自体はそちらで使われているため変更していない。 */}
-          {isMaster && (
-            <button
-              type="button"
-              onClick={handleGoToMasterButtonClick}
-              disabled={isStoppingRecording}
-              className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {t("room.goToMasterPanel")}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleLogoutButtonClick}
-            disabled={isStoppingRecording || isLoggingOut}
-            className="mt-2 block w-full rounded-lg border border-slate-300 py-2 text-center text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isLoggingOut ? t("admin.loggingOut") : t("admin.logout")}
-          </button>
         </div>
-
-        {/* 段階E-5-1の見直し(2026-11-24・①A案)。カード切り替え中の
-            「読み込み中」オーバーレイ。pointer-events-noneで、下の
-            (disabledにしていない)アバター選択等の操作自体は塞がない
-            (入室ボタンだけは上でdisabledにしている)。 */}
-        {isRoomSwitchPending && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <span className="rounded-lg bg-slate-900/80 px-4 py-2 text-sm font-semibold text-white">
-              {t("lobby.checking")}
-            </span>
-          </div>
-        )}
 
         {/* アイコン削除の確認モーダル。入室後の画面とは別のreturn文の
             ため、showDeleteIconConfirm/handleDeleteIconConfirm自体は
             共有しつつ、ロビー側にも同じモーダルを置く(無いと「削除」を
-            押しても何も表示されず、入室後に突然ポップアップが出てしまう)。 */}
+            押しても何も表示されず、入室後に突然ポップアップが出てしまう)。
+            段階E-5-1b(2026-11-25)でも位置・内容は変更していない。 */}
         {showDeleteIconConfirm && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
             <div className="w-full max-w-xs rounded-xl bg-white p-5 shadow-xl">
@@ -11632,8 +11538,6 @@ export default function AvatarSpace({
             </div>
           </div>
         )}
-          </div>
-        </div>
       </div>
     );
   }
