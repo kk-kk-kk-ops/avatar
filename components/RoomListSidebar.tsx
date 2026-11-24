@@ -161,18 +161,26 @@ function RoomCardTile({
   // 段階E-5-1b見直し(2026-11-25)。右のカード一覧は白い背景・明るい
   // カードにそろえる(左の暗いサイドバーとは別の配色にする決定事項)。
   const baseClassName =
-    "w-40 shrink-0 overflow-hidden rounded-lg border bg-white md:w-56";
-  const borderClassName = selected
-    ? "border-slate-900 shadow-[0_0_0_2px_rgba(15,23,42,0.15)]"
-    : "border-slate-200 hover:border-slate-400";
+    "w-40 shrink-0 overflow-hidden rounded-lg bg-white md:w-56";
 
   if (!card.roomId) {
+    // 「まだルームがありません」のカード(選べない)は今までの見た目の
+    // まま(2026-11-25指摘、変更対象外)。
     return (
-      <div className={`${baseClassName} ${borderClassName} opacity-60`}>
+      <div
+        className={`${baseClassName} border border-slate-200 opacity-60`}
+      >
         {content}
       </div>
     );
   }
+
+  // 2026-11-25指摘。影ではなく枠の色・太さで選択状態を示す(白い背景でも
+  // はっきり見える濃さ)。選択中はホバーしても緑のまま。太さは常に2pxに
+  // そろえ、選んだ時にカードの大きさや位置がずれないようにする。
+  const borderClassName = selected
+    ? "border-2 border-emerald-500"
+    : "border-2 border-slate-500 hover:border-slate-700";
 
   const roomId = card.roomId;
   return (
