@@ -83,7 +83,11 @@ export default function RoomJoinSidebar({
 
   return (
     <div
-      className="order-2 flex min-h-0 w-full flex-col overflow-y-auto border-t border-slate-700 bg-slate-900 px-4 py-4 text-white md:order-1 md:w-[380px] md:shrink-0 md:border-t-0 md:border-r md:py-6"
+      // 段階E-5-1b見直し(2026-11-25)。ブラウザ標準のスクロールバーが
+      // 暗い背景の上で白く浮いて見える指摘への対応。[color-scheme:dark]
+      // で、この要素の中のスクロールバー・フォーム部品を暗い配色にする
+      // (ページ全体には付けない。白いカード一覧側の見た目は変えない)。
+      className="order-2 flex min-h-0 w-full flex-col overflow-y-auto border-t border-slate-700 bg-slate-900 px-4 py-4 text-white [color-scheme:dark] md:order-1 md:w-[380px] md:shrink-0 md:border-t-0 md:border-r md:py-6"
     >
       {room ? (
         <div className="mb-4 flex items-center justify-between gap-2">

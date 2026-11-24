@@ -824,10 +824,6 @@ type Props = {
   // 省略時(false)は、以下の全ての分岐で今までどおりの動き(通常・
   // viewOnly)になる。
   isMemberEntry?: boolean;
-  // 「自分のルームへ」ボタンの行き先(2026-11-18追加)。viewOnlyInviteToken
-  // と組で渡され、nullの場合はボタン自体を表示しない(運営者で自分の
-  // 招待トークンが取得できなかった場合のみnullになる)。
-  ownRoomHref?: string | null;
   // メンテナンス予告・強制退出機能(2026-09追加)。app_settingsの
   // maintenance_*列をページ表示時点のスナップショットとして渡す
   // (入室後は別途ポーリングで最新値を取り直す。詳細は下の
@@ -878,7 +874,6 @@ export default function AvatarSpace({
   avatarSizePx,
   viewOnlyInviteToken,
   isMemberEntry,
-  ownRoomHref,
   maintenanceEnabled: initialMaintenanceEnabled,
   maintenanceStartsAt: initialMaintenanceStartsAt,
   maintenanceEndsAt: initialMaintenanceEndsAt,
@@ -10095,22 +10090,6 @@ export default function AvatarSpace({
     }
     handleLeaveRoom();
   }, [handleLeaveRoom]);
-  // 「自分のルームへ」ボタン押下時の処理(2026-11-18追加)。録画の開始者が
-  // 会議室の中から押した場合は、既存の「退出」ボタンと全く同じ処理
-  // (handleLeaveRoomButtonClick)を呼ぶだけにする。録画中の確認ダイアログ
-  // (showLeaveRoomWhileRecordingConfirm)・確認後の保存処理(stopRecording)は
-  // 既存の退出フローのまま一切変更しない。確認後に入室前の画面へ戻る
-  // ところまでは既存の退出ボタンと同じで、自分のルームへ実際に移るには、
-  // 入室画面側のこのボタンをもう一度押す必要がある。ページ全体の読み込み
-  // 直し(window.location.assign)は録画開始者でない場合のみ行う。
-  const handleBackToOwnRoomButtonClick = useCallback(() => {
-    if (!ownRoomHref) return;
-    if (recordingOwnerIdRef.current === selfId.current) {
-      handleLeaveRoomButtonClick();
-      return;
-    }
-    window.location.assign(ownRoomHref);
-  }, [ownRoomHref, handleLeaveRoomButtonClick]);
   // ログアウトボタン押下時の処理(2026-11-21追加)。録画の開始者が会議室の
   // 中から押した場合は、「自分のルームへ」ボタンと同じくhandleLeaveRoomButtonClick
   // を呼ぶだけにする(既存の録画中確認ダイアログ・保存処理は一切変更しない)。
@@ -12794,9 +12773,14 @@ export default function AvatarSpace({
             100%。PC版は右端のハンドルでドラッグリサイズ可能、幅は
             --sidebar-width(px)で制御し、リロードすると既定幅に戻る)。 */}
         <div
+          // 段階E-5-1b見直し(2026-11-25)。ブラウザ標準のスクロールバー・
+          // フォーム部品(入力欄・チェックボックス・選択欄など)が、暗い
+          // 背景の上で白く浮いて見える指摘への対応。[color-scheme:dark]は
+          // この要素とその中身全体に継承されるCSSプロパティのため、設定
+          // タブ内の個別のスクロール領域を1つずつ探して付ける必要はない。
           className={`${
             showParticipants ? "flex" : "hidden"
-          } fixed inset-y-0 left-0 z-40 w-full flex-col border-r border-slate-700 bg-slate-900 text-white sm:static sm:z-auto sm:order-1 sm:flex sm:w-[var(--sidebar-width)] sm:shrink-0`}
+          } fixed inset-y-0 left-0 z-40 w-full flex-col border-r border-slate-700 bg-slate-900 text-white [color-scheme:dark] sm:static sm:z-auto sm:order-1 sm:flex sm:w-[var(--sidebar-width)] sm:shrink-0`}
           style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
         >
           {/* サイドバー本体:ヘッダー+タブ(参加者/チャット/設定)+
@@ -14370,19 +14354,6 @@ export default function AvatarSpace({
                         {t("room.goToMasterPanel")}
                       </button>
                     )}
-                  </div>
-                )}
-                {/* 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。 */}
-                {(viewOnlyInviteToken || isMemberEntry) && ownRoomHref && (
-                  <div className="space-y-2 border-t border-slate-700 pt-4">
-                    <button
-                      type="button"
-                      onClick={handleBackToOwnRoomButtonClick}
-                      disabled={isStoppingRecording}
-                      className="block w-full rounded-lg bg-slate-800 py-2 text-center text-sm font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {t("lobby.backToOwnRoom")}
-                    </button>
                   </div>
                 )}
                 <div className="space-y-2 border-t border-slate-700 pt-4">

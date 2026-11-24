@@ -246,23 +246,6 @@ async function renderViewOnlyRoomJoin(
   const viewAccount = viewAccountRows?.[0];
   if (!viewAccount) return null; // トークンが無効 → 呼び出し元でフォールバック
 
-  // 「自分のルームへ」ボタンの行き先(2026-11-18追加)。運営者(is_master)の
-  // 場合、通常の"/"だとapp/page.tsx:413で/masterへ戻されてしまうため、
-  // app/billing/return/page.tsx:40-54と同じ方法(自分自身の招待URL経由)で
-  // ルーム入室画面へ進むようにする。運営者以外は"/"を開けば自分のルームの
-  // 入室画面に進むため(resolveUserRouteStateがprofiles.account_idから
-  // 自分のアカウントを解決するだけで済む)、招待トークンをクライアントに
-  // 渡さない。
-  const routeState = await resolveUserRouteState(supabase, user.id);
-  let ownRoomHref: string | null = "/";
-  if (routeState.isMaster) {
-    const { data: ownAccountRows } = await supabase.rpc(
-      "get_own_account_guest_info",
-    );
-    const ownInviteToken = ownAccountRows?.[0]?.invite_token ?? null;
-    ownRoomHref = ownInviteToken ? `/?invite=${ownInviteToken}` : null;
-  }
-
   const { data: banRow } = await supabase
     .from("banned_participants")
     .select("user_id")
@@ -346,7 +329,6 @@ async function renderViewOnlyRoomJoin(
       // profiles.account_idを書き換えていないため、通常のRLS経由では
       // ルームアクセスを証明できず、これが無いと音声/映像に参加できない。
       viewOnlyInviteToken={inviteToken}
-      ownRoomHref={ownRoomHref}
       initialProfileLocale={(profile?.locale as Locale) ?? undefined}
       initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
       initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
@@ -444,17 +426,7 @@ async function renderMemberRoomJoin(
     redirect("/?error=invalid_invite");
   }
 
-  // 「自分のルームへ」ボタンの行き先。renderViewOnlyRoomJoinと同じ理由・
-  // 同じ処理(見ているルームの種類には依らない、閲覧者自身の情報)。
   const routeState = await resolveUserRouteState(supabase, user.id);
-  let ownRoomHref: string | null = "/";
-  if (routeState.isMaster) {
-    const { data: ownAccountRows } = await supabase.rpc(
-      "get_own_account_guest_info",
-    );
-    const ownInviteToken = ownAccountRows?.[0]?.invite_token ?? null;
-    ownRoomHref = ownInviteToken ? `/?invite=${ownInviteToken}` : null;
-  }
   // 段階E-5-1(2026-11-24)。入室前の画面の左側に出すルームの一覧。
   const roomListResult = await getRoomListEntries(
     supabase,
@@ -510,7 +482,6 @@ async function renderMemberRoomJoin(
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
       maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
       isMemberEntry={true}
-      ownRoomHref={ownRoomHref}
       initialProfileLocale={(profile?.locale as Locale) ?? undefined}
       initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
       initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}

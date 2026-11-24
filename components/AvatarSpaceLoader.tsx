@@ -26,7 +26,6 @@ type Props = {
   viewOnlyInviteToken?: string;
   // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
   isMemberEntry?: boolean;
-  ownRoomHref?: string | null;
   maintenanceEnabled?: boolean;
   maintenanceStartsAt?: string | null;
   maintenanceEndsAt?: string | null;
@@ -61,7 +60,6 @@ export default function AvatarSpaceLoader({
   avatarSizePx,
   viewOnlyInviteToken,
   isMemberEntry,
-  ownRoomHref,
   maintenanceEnabled,
   maintenanceStartsAt,
   maintenanceEndsAt,
@@ -96,7 +94,6 @@ export default function AvatarSpaceLoader({
         avatarSizePx={avatarSizePx}
         viewOnlyInviteToken={viewOnlyInviteToken}
         isMemberEntry={isMemberEntry}
-        ownRoomHref={ownRoomHref}
         maintenanceEnabled={maintenanceEnabled}
         maintenanceStartsAt={maintenanceStartsAt}
         maintenanceEndsAt={maintenanceEndsAt}

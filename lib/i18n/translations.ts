@@ -113,7 +113,6 @@ const ja: Record<string, string> = {
   "lobby.maintenanceInProgress": "メンテナンス中",
   "lobby.checking": "確認中...",
   "lobby.enterRoom": "入室",
-  "lobby.backToOwnRoom": "自分のルームへ",
 
   "roomList.yourRoomBadge": "あなたのルーム",
   "roomList.createRoomButton": "ルームを作成する",
@@ -632,7 +631,6 @@ const en: Record<string, string> = {
   "lobby.maintenanceInProgress": "Under maintenance",
   "lobby.checking": "Checking...",
   "lobby.enterRoom": "Enter",
-  "lobby.backToOwnRoom": "Back to my room",
 
   "roomList.yourRoomBadge": "Your room",
   "roomList.createRoomButton": "Create a room",
