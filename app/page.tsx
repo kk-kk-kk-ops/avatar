@@ -196,6 +196,9 @@ async function renderRoomJoin(
 // 既に自分自身の別アカウントを持っている人(admin/masterなど)が、他人の
 // 招待URLを一時的に閲覧しているケース(viewOnly)。プロフィールは一切
 // 書き換えていないため、URLのトークンから毎回対象アカウントを解決する。
+// 段階E-3(2026-11-24)以降、招待URLの処理(joinAccountViaInvite)からは
+// 呼ばれなくなった(この場合もaccount_membersに載せてカード一覧に出す
+// 方式へ変更したため)。コードは段階Gまで残す。
 async function renderViewOnlyRoomJoin(
   supabase: SupabaseClient,
   user: User,
@@ -561,6 +564,12 @@ export default async function Home({
     if (inviteToken) {
       const result = await joinAccountViaInvite(supabase, user.id, inviteToken);
       if (!result.ok) {
+        if (result.error === "banned") {
+          // 段階E-3(2026-11-24)。招待URLを開いた時点でBAN中だった場合。
+          // ログアウトの行き先は招待トークンを付けず"/login"にする
+          // (共用パソコン対策。段階F・Gでこの経路自体が無くなる予定)。
+          return <BannedNotice logoutRedirectTo="/login" />;
+        }
         if (result.error === "join_failed") {
           // eslint-disable-next-line no-console
           console.error("招待経由の参加に失敗しました", result.detail);
@@ -569,16 +578,7 @@ export default async function Home({
           `/?error=${result.error === "invalid_invite" ? "invalid_invite" : "auth_failed"}`,
         );
       }
-      if (result.viewOnly) {
-        const rendered = await renderViewOnlyRoomJoin(
-          supabase,
-          user,
-          inviteToken,
-        );
-        if (rendered) return rendered;
-        // トークンが(直後に無効化されたなど)解決できなかった場合のみ、
-        // 通常のルーティングにフォールスルーする。
-      } else {
+      if (result.isOwnAccount) {
         const state = await resolveUserRouteState(supabase, user.id);
         if (state.type === "admin" || state.type === "guest") {
           return renderRoomJoin(
@@ -591,6 +591,22 @@ export default async function Home({
         }
         // no-account(通常起こらないはずの防御的フォールバック)は
         // 下の通常ルーティングに任せる。
+      } else {
+        // 段階E-3(2026-11-24)。参加した後は、roomsテーブルを直接読まず
+        // (新しいメンバーにはRLSで読めない見込みのため)、
+        // list_my_room_memberships()の結果から、今参加したアカウントの
+        // room_idを特定し、/?room=へリダイレクトしてアドレス欄から招待
+        // トークンを消す(renderMemberRoomJoinを経由させる)。見つからない
+        // 場合(ルームが無いなど)は"/"へ。
+        const { data: membershipRows } = await supabase.rpc(
+          "list_my_room_memberships",
+        );
+        const membership = (
+          membershipRows as
+            | Array<{ account_id: string; room_id: string }>
+            | null
+        )?.find((m) => m.account_id === result.accountId);
+        redirect(membership ? `/?room=${membership.room_id}` : "/");
       }
     } else if (memberRoomId) {
       // 入室の仕組みの作り替え 段階D-3。/?room=ルームID の入口

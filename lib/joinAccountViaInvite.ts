@@ -1,30 +1,40 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createServiceRoleClient } from "./supabase/serviceRole";
+
+// supabase/migrations/2026-11-23_account_members.sql の
+// join_account_by_invite_token 内の raise exception の文言と完全に
+// 一致させること(この文字列一致判定がBAN判定の唯一の手段のため)。
+export const ACCOUNT_MEMBERS_BANNED_ERROR_MESSAGE =
+  "このルームへのアクセスが制限されています";
 
 export type JoinInviteResult =
-  | { ok: true; isOwnAccount: boolean; viewOnly: boolean }
-  | { ok: false; error: "invalid_invite" | "join_failed"; detail?: string };
+  | { ok: true; isOwnAccount: true }
+  | { ok: true; isOwnAccount: false; accountId: string }
+  | {
+      ok: false;
+      error: "invalid_invite" | "join_failed" | "banned";
+      detail?: string;
+    };
 
-// 招待トークンのアカウントを扱う。3パターンに分岐する。
+// 入室の仕組みの作り替え 段階E-3(2026-11-24)。招待URLのアカウントを扱う。
+// 2パターンに分岐する。
 // - 自分自身がオーナーのアカウントの招待URL(自分の招待URL)だった場合:
-//   プロフィールは書き換えない(isOwnAccount: true)。呼び出し元
-//   (app/page.tsx)はisMaster/管理者かどうかに関わらず、必ずこの
-//   アカウントのルーム入室画面を描画する(通常のログイン後ルーティングに
-//   任せるとマスターは/masterへ戻ってしまう〈以前は管理者も/adminへ
-//   戻っていた〉ため、これが実装漏れでバグになっていた)。
-// - 既に自分自身の別アカウントを持っている(=どこかのadmin)場合:
-//   プロフィールは一切書き換えない(viewOnly: true)。ここでprofiles.
-//   account_id/roleを上書きしてしまうと、管理者がテスト等で他人の
-//   招待URLを一度踏んだだけで自分の管理者アカウントとの紐付けが永久に
-//   失われ、ログアウトしても二度と管理画面に戻れなくなる不具合になる
-//   (実際に発生した)。この場合、呼び出し元は/?invite=トークンのように
-//   URLだけで一時的に対象アカウントを閲覧させ、プロフィールには何も
-//   残さない。
-// - それ以外(自分は現時点でどのアカウントも持っていない、純粋な
-//   ゲスト)の場合: 通常通りprofiles.account_id/roleを更新して恒久的に
-//   参加する(viewOnly: false)。招待URLを毎回踏まなくても次回から
-//   普通にログインするだけでこのアカウントのルームに入れるようにする
-//   ため。
+//   何も書き込まない(isOwnAccount: true)。呼び出し元(app/page.tsx)は
+//   これまでと同じ経路(resolveUserRouteState→renderRoomJoin)で処理する
+//   (段階E-4で見直す予定、今回は変更しない)。
+// - それ以外(既に自分の別アカウントを持っている人〈以前はviewOnlyとして
+//   プロフィールを書き換えずに一時閲覧させていた〉も、純粋なゲスト参加も、
+//   同じ扱いにする。2026-11-24決定: viewOnlyのままだと一覧にカードが
+//   増えず、毎回招待URLが必要なままになってしまい、カード一覧〈段階
+//   E-1+E-2〉の目的が果たせないため)。join_account_by_invite_token
+//   RPCを呼び、account_membersにメンバーとして載せる。BAN確認は書き込みの
+//   前にSQL側で行われる(raise exceptionの文言はACCOUNT_MEMBERS_
+//   BANNED_ERROR_MESSAGEで判定する)。profilesは一切書き換えない
+//   (以前はここでservice_roleによりprofiles.account_id/roleを書き換えて
+//   いたが、BAN確認前に書き換えてしまう不具合があったうえ、既に別の
+//   アカウントに所属している人〈古いゲストなど〉の所属を上書きで失わせて
+//   しまう問題もあったため、段階E-3でこの書き換え自体をやめた)。
+//   renderViewOnlyRoomJoinなど古い経路はコードとして残すが、この関数からは
+//   もう呼ばれない(段階Gで削除予定)。
 export async function joinAccountViaInvite(
   supabase: SupabaseClient,
   userId: string,
@@ -41,43 +51,19 @@ export async function joinAccountViaInvite(
   if (!account) return { ok: false, error: "invalid_invite" };
 
   if (account.owner_user_id === userId) {
-    return { ok: true, isOwnAccount: true, viewOnly: false };
+    return { ok: true, isOwnAccount: true };
   }
 
-  const { data: ownedAccount, error: ownedError } = await supabase
-    .from("accounts")
-    .select("id")
-    .eq("owner_user_id", userId)
-    .maybeSingle();
-  if (ownedError) {
-    return { ok: false, error: "join_failed", detail: ownedError.message };
-  }
-  if (ownedAccount) {
-    return { ok: true, isOwnAccount: false, viewOnly: true };
-  }
-
-  const { data: existingProfile, error: selectError } = await supabase
-    .from("profiles")
-    .select("account_id")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (selectError) {
-    return { ok: false, error: "join_failed", detail: selectError.message };
-  }
-
-  if (existingProfile?.account_id !== account.id) {
-    // roleは本人による自己書き換えを防ぐDBトリガー(consolidated_setup.sql)の
-    // 対象列のため、service_roleクライアントで更新する(招待トークンの
-    // 検証は直前のlookup_account_by_invite_tokenで完了済みなので、この
-    // 1回の書き込みに限りRLS/トリガーをバイパスしても安全)。
-    const { error } = await createServiceRoleClient()
-      .from("profiles")
-      .update({ account_id: account.id, role: "guest" })
-      .eq("user_id", userId);
-    if (error) {
-      return { ok: false, error: "join_failed", detail: error.message };
+  const { error: joinError } = await supabase.rpc(
+    "join_account_by_invite_token",
+    { token: inviteToken },
+  );
+  if (joinError) {
+    if (joinError.message === ACCOUNT_MEMBERS_BANNED_ERROR_MESSAGE) {
+      return { ok: false, error: "banned" };
     }
+    return { ok: false, error: "join_failed", detail: joinError.message };
   }
 
-  return { ok: true, isOwnAccount: false, viewOnly: false };
+  return { ok: true, isOwnAccount: false, accountId: account.id };
 }

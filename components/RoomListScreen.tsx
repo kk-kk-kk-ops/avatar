@@ -105,11 +105,21 @@ function FailedCard({ label }: { label: string }) {
   );
 }
 
+// 日本標準時(Asia/Tokyo)は夏時間が無く常にUTC+9固定のため、Intl API等を
+// 使わずシンプルな固定オフセット計算で求める(lib/dailyUsage.tsの
+// getJstDayKeyと同じ考え方)。サーバーのローカルタイムゾーン(Vercelの
+// 既定はUTCの見込み、未検証)に依存させないため、オフセットを足した後は
+// UTC表記のメソッド(getUTCMonth/getUTCDate)を使う(2026-11-24修正。
+// 以前はgetMonth/getDateを使っており、日本時間0〜9時だと前日の日付に
+// なっていた)。
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
 function formatLastAccessedDate(iso: string): string {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    return `${d.getMonth() + 1}/${d.getDate()}`;
+    const jst = new Date(d.getTime() + JST_OFFSET_MS);
+    return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()}`;
   } catch {
     return iso;
   }
