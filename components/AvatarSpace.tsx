@@ -11419,6 +11419,14 @@ export default function AvatarSpace({
           previewImage: lobbyRoomInfo?.previewImage ?? rooms[0].previewImage,
         }
       : undefined;
+    // 段階E-5-1bの見直し(2026-11-25)。左サイドバーの見出し決定用。
+    // roomListResultのカード一覧(自分のルーム・古いゲストの特例カード・
+    // メンバーの全ルーム)から、今選んでいるroomと同じroomIdのカードを
+    // 探す(roomListResult未指定の古い経路では常に見つからず、従来どおり
+    // ルーム名を見出しにする)。
+    const matchedRoomCard = roomListResult
+      ? collectRoomListCards(roomListResult).find((c) => c.roomId === room?.id)
+      : undefined;
     // メンテナンス予告・入室ブロック(2026-09追加)。マスターは期間中も
     // 通常通り入室できる(他人の招待URLを閲覧中のviewOnlyではisMasterが
     // 常にfalseになるため、そちらは対象外にならない=ブロック対象になる)。
@@ -11443,6 +11451,8 @@ export default function AvatarSpace({
               このサイドバー自体は従来の右パネルと同じ役割のため常に出す。 */}
           <RoomJoinSidebar
             room={room}
+            roomCardKind={matchedRoomCard?.kind}
+            roomOwnerDisplayName={matchedRoomCard?.ownerDisplayName}
             onlineCount={room ? roomOnlineCounts[room.id] : undefined}
             maxPeoplePerRoom={maxPeoplePerRoom}
             maintenancePublished={maintenancePublished}

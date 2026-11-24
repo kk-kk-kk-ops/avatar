@@ -113,6 +113,9 @@ const ja: Record<string, string> = {
   "lobby.maintenanceInProgress": "メンテナンス中",
   "lobby.checking": "確認中...",
   "lobby.enterRoom": "入室",
+  // 段階E-5-1bの見直し(2026-11-25)。入室前の左サイドバーの見出し用
+  // (メンバーのルームを選んでいる時、管理者名で表示する)。
+  "lobby.roomOfOwner": "{name}のルーム",
 
   "roomList.yourRoomBadge": "あなたのルーム",
   "roomList.createRoomButton": "ルームを作成する",
@@ -631,6 +634,7 @@ const en: Record<string, string> = {
   "lobby.maintenanceInProgress": "Under maintenance",
   "lobby.checking": "Checking...",
   "lobby.enterRoom": "Enter",
+  "lobby.roomOfOwner": "{name}'s room",
 
   "roomList.yourRoomBadge": "Your room",
   "roomList.createRoomButton": "Create a room",

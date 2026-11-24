@@ -12,6 +12,13 @@ import { formatMaintenanceDateTime, type MaintenanceSettings } from "@/lib/types
 // ロジックは置かない)。
 export type RoomJoinSidebarProps = {
   room: Pick<Room, "id" | "name" | "previewImage"> | undefined;
+  // 段階E-5-1bの見直し(2026-11-25)。見出しの文言決定用。roomに対応する
+  // カード(components/RoomListSidebar.tsxの一覧)の種類と管理者名。
+  // AvatarSpace.tsx側でroomListResultから求めて渡す(ここではロジックを
+  // 持たない)。カードが見つからない・ownerDisplayNameが無い場合は
+  // 従来どおりroom.nameを見出しにする。
+  roomCardKind?: "own" | "member" | "legacyGuest";
+  roomOwnerDisplayName?: string | null;
   onlineCount: number | undefined;
   maxPeoplePerRoom: number;
   maintenancePublished: boolean;
@@ -44,6 +51,8 @@ export type RoomJoinSidebarProps = {
 
 export default function RoomJoinSidebar({
   room,
+  roomCardKind,
+  roomOwnerDisplayName,
   onlineCount,
   maxPeoplePerRoom,
   maintenancePublished,
@@ -81,6 +90,17 @@ export default function RoomJoinSidebar({
       ? t("lobby.checking")
       : t("lobby.enterRoom");
 
+  // 段階E-5-1bの見直し(2026-11-25)。見出しの文言:自分のルームなら
+  // 「あなたのルーム」、メンバーのルームで管理者名が取れれば「{名前}の
+  // ルーム」、それ以外(古いゲストのルーム・管理者名が空・カードが
+  // 見つからない古い経路)は今までどおりルーム名。
+  const roomHeadingText =
+    roomCardKind === "own"
+      ? t("roomList.yourRoomBadge")
+      : roomCardKind === "member" && roomOwnerDisplayName
+        ? t("lobby.roomOfOwner", { name: roomOwnerDisplayName })
+        : room?.name;
+
   return (
     <div
       // 段階E-5-1b見直し(2026-11-25)。ブラウザ標準のスクロールバーが
@@ -92,7 +112,7 @@ export default function RoomJoinSidebar({
       {room ? (
         <div className="mb-4 flex items-center justify-between gap-2">
           <p className="truncate text-sm font-semibold text-white">
-            {room.name}
+            {roomHeadingText}
           </p>
           <span className="shrink-0 text-xs font-semibold text-slate-400">
             {t("lobby.onlineCount", {
