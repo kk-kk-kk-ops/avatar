@@ -85,7 +85,7 @@ const ja: Record<string, string> = {
   "authError.session_superseded":
     "別の場所でログインされたため、このセッションは終了しました。",
   "lobby.invalidInviteRejoined":
-    "この招待リンクは無効です(再発行された可能性があります)。下に表示しているのは、あなたが既に参加しているルームです。新しい招待リンクが必要な場合は、招待した管理者にお問い合わせください。",
+    "この招待リンクは無効です(再発行された可能性があります)。すでに参加しているルームには、通常どおり入れます。新しい招待リンクが必要な場合は、招待した管理者にお問い合わせください。",
   "lobby.billingCheckoutSuccess":
     "お支払いが完了しました。プランの反映には少し時間がかかることがあります。",
   "lobby.billingPortalReturned":
@@ -114,6 +114,15 @@ const ja: Record<string, string> = {
   "lobby.checking": "確認中...",
   "lobby.enterRoom": "入室",
   "lobby.backToOwnRoom": "自分のルームへ",
+
+  "roomList.yourRoomBadge": "あなたのルーム",
+  "roomList.createRoomButton": "ルームを作成する",
+  "roomList.lastAccessed": "最終アクセス:{date}",
+  "roomList.empty": "まだ参加しているルームがありません",
+  "roomList.loadFailed":
+    "ルームの一覧を取得できませんでした。もう一度お試しください。",
+  "roomList.removeConfirmBody":
+    "外すと、このルームは一覧に表示されなくなります。もう一度入るには、管理者から招待URLをもらう必要があります。",
 
   "room.disabledInWorkArea": "作業エリア内では利用できません",
   "room.mic.onTitle": "マイク: ON(クリックでミュート)",
@@ -596,7 +605,7 @@ const en: Record<string, string> = {
   "authError.session_superseded":
     "This session has ended because you logged in elsewhere.",
   "lobby.invalidInviteRejoined":
-    "This invite link is no longer valid (it may have been reissued). The room shown below is one you've already joined. If you need a new invite link, please contact the admin who invited you.",
+    "This invite link is no longer valid (it may have been reissued). You can still enter any room you've already joined, as usual. If you need a new invite link, please contact the admin who invited you.",
   "lobby.billingCheckoutSuccess":
     "Payment completed. It may take a moment for your plan change to take effect.",
   "lobby.billingPortalReturned":
@@ -624,6 +633,15 @@ const en: Record<string, string> = {
   "lobby.checking": "Checking...",
   "lobby.enterRoom": "Enter",
   "lobby.backToOwnRoom": "Back to my room",
+
+  "roomList.yourRoomBadge": "Your room",
+  "roomList.createRoomButton": "Create a room",
+  "roomList.lastAccessed": "Last visited: {date}",
+  "roomList.empty": "You haven't joined any rooms yet.",
+  "roomList.loadFailed":
+    "We couldn't load your room list. Please try again.",
+  "roomList.removeConfirmBody":
+    "This room will no longer appear in your list. To join again, you'll need an invite link from the room's admin.",
 
   "room.disabledInWorkArea": "Not available inside a work area",
   "room.mic.onTitle": "Mic: ON (click to mute)",
