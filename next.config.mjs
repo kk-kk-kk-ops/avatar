@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    staleTimes: { dynamic: 0 },
+  },
   // 段階0(docs/realtime-authorization-plan.md 6-2節): 自分がどのデプロイで
   // ビルドされたかをクライアント側で知るための値。VERCEL_DEPLOYMENT_IDは
   // Vercel上のビルドでのみ設定され、ローカル開発では未設定(undefined)の

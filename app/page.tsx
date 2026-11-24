@@ -197,6 +197,12 @@ async function renderRoomJoin(
 
   return (
     <AvatarSpaceLoader
+      // 段階E-5-1の見直し(2026-11-24・①A案・d)。選んでいるルームのIDを
+      // keyにし、カード切り替え(画面内の移動)の時にAvatarSpaceが確実に
+      // 作り直されるようにする(roomIdの遅延初期化等のstateが古いまま
+      // 残らないようにするため)。ルームが無い場合(roomsが空)は
+      // アカウントIDを代わりに使う。
+      key={rooms[0]?.id ?? state.accountId}
       initialName={profile?.display_name ?? undefined}
       rooms={rooms}
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
@@ -485,6 +491,9 @@ async function renderMemberRoomJoin(
 
   return (
     <AvatarSpaceLoader
+      // 段階E-5-1の見直し(2026-11-24・①A案・d)。renderRoomJoinと同じ理由
+      // (関数直前のコメント参照)。roomIdは関数の引数そのものを使う。
+      key={roomId}
       initialName={profile?.display_name ?? undefined}
       rooms={rooms}
       maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}

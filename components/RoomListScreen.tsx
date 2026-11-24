@@ -5,6 +5,7 @@ import {
   type RoomListResult,
 } from "@/lib/roomListEntries";
 import LogoutButton from "@/components/auth/LogoutButton";
+import GlobyHeaderBar from "@/components/GlobyHeaderBar";
 
 type Props = {
   result: RoomListResult;
@@ -39,7 +40,11 @@ export default function RoomListScreen({
     memberCards.length === 0;
 
   return (
-    <div className="flex min-h-screen w-full flex-col items-center bg-slate-900 px-4 py-10">
+    <div className="flex min-h-screen w-full flex-col bg-slate-900">
+      {/* 段階E-5-1の見直し(2026-11-24・f)。入室前の統合画面(components/
+          AvatarSpace.tsx)と同じヘッダーの帯とロゴ。 */}
+      <GlobyHeaderBar />
+      <div className="flex w-full flex-1 flex-col items-center px-4 py-10">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
         {initialRoomJoinError && (
           <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
@@ -97,6 +102,7 @@ export default function RoomListScreen({
         )}
 
         <LogoutButton className="mt-4 block w-full rounded-lg border border-slate-300 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50" />
+      </div>
       </div>
     </div>
   );

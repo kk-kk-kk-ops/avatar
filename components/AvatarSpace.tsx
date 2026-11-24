@@ -1,7 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { RealtimeChannel } from "@supabase/supabase-js";
 import {
   DisconnectReason,
@@ -95,6 +103,8 @@ import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
 import RoomListSidebar from "./RoomListSidebar";
+import GlobyLogo from "./GlobyLogo";
+import GlobyHeaderBar from "./GlobyHeaderBar";
 import { collectRoomListCards, type RoomListResult } from "@/lib/roomListEntries";
 import {
   uploadRawChatImageWithProgress,
@@ -850,6 +860,29 @@ export default function AvatarSpace({
   // auth.uid()がRLS側で常にnullになっていた)。useStateの遅延初期化で
   // マウント時に一度だけ生成する。
   const [supabase] = useState(() => createClient());
+
+  // 入室の仕組みの作り替え 段階E-5-1の見直し(2026-11-24・①A案)。左の
+  // カード一覧でルームを切り替える時、ページ全体の読み込み直しではなく
+  // Next.jsの画面内の移動(router.replace、履歴を増やさない)にする。
+  // pendingRoomIdは押した瞬間に(startTransitionの外で)即座に更新して
+  // カードをすぐ強調し、実際の移動(router.replace)はstartTransitionで
+  // 包んでisPendingを得る(押した瞬間の「読み込み中」表示・入室ボタンの
+  // 無効化に使う)。ルームが変わるとAvatarSpaceLoader側のkeyが変わり
+  // コンポーネント自体が作り直されるため、pendingRoomId等のこのstateも
+  // 新しいルームのマウント時にリセットされる(明示的なリセット処理は
+  // 不要)。
+  const router = useRouter();
+  const [isRoomSwitchPending, startRoomSwitchTransition] = useTransition();
+  const [pendingRoomId, setPendingRoomId] = useState<string | null>(null);
+  const handleSelectRoomCard = useCallback(
+    (targetRoomId: string) => {
+      setPendingRoomId(targetRoomId);
+      startRoomSwitchTransition(() => {
+        router.replace(`/?room=${targetRoomId}`);
+      });
+    },
+    [router],
+  );
 
   const { locale, setLocale, t } = useLocale();
   const { setInRoomPollingActive } = useVersionWatcher();
@@ -11344,28 +11377,40 @@ export default function AvatarSpace({
       isMaintenanceScheduled(maintenance) || isMaintenanceActive(maintenance);
     const maintenanceBlocking = isMaintenanceActive(maintenance) && !isMaster;
     return (
-      <div className="flex h-full w-full flex-col overflow-hidden bg-slate-900 md:flex-row">
-        {/* 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。左(スマホでは上)の
-            ルーム一覧。会議室の中(joined===true、この分岐自体に来ない)
-            では出さない。roomListResult未指定の古い経路(段階Gまで残す
-            renderViewOnlyRoomJoin等)では一覧自体を出さず、従来どおり
-            右側(下記)だけの画面になる。 */}
-        {roomListResult && (
-          <RoomListSidebar
-            result={roomListResult}
-            selectedRoomId={room?.id ?? null}
-            onlineCounts={roomOnlineCounts}
-            t={t}
-          />
-        )}
-        {/* 右側(スマホでは下側)の入室パネル。パソコン(md以上)では
-            幅およそ400px固定(縮まない)にし、左の一覧(上記)が残りの
-            幅を全部使う(2026-11-24修正2)。min-h-0は、flexアイテムの
-            既定のmin-height:autoによって高さがoverflow-y-autoより先に
-            広がってしまう(内部スクロールが効かない)問題を防ぐための
-            もの(2026-11-24修正4)。 */}
-        <div className="flex min-h-0 flex-1 overflow-y-auto px-4 py-6 md:flex-none md:w-[400px] md:shrink-0 md:py-10">
-        <div className="m-auto w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+      <div className="flex h-full w-full flex-col overflow-hidden bg-slate-900">
+        {/* 段階E-5-1の見直し(2026-11-24・②③)。ヘッダーの帯は画面の端から
+            端まで(会議室の中と同じ見た目)。1440px中央寄せの対象は
+            この下のカード一覧+入室パネルの部分だけ。 */}
+        <GlobyHeaderBar />
+        <div className="mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-hidden md:flex-row">
+          {/* 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。左(スマホでは上)の
+              ルーム一覧。会議室の中(joined===true、この分岐自体に来ない)
+              では出さない。roomListResult未指定の古い経路(段階Gまで残す
+              renderViewOnlyRoomJoin等)では一覧自体を出さず、従来どおり
+              右側(下記)だけの画面になる。 */}
+          {roomListResult && (
+            <RoomListSidebar
+              result={roomListResult}
+              selectedRoomId={room?.id ?? null}
+              pendingRoomId={pendingRoomId}
+              onlineCounts={roomOnlineCounts}
+              onSelectRoom={handleSelectRoomCard}
+              t={t}
+            />
+          )}
+          {/* 右側(スマホでは下側)の入室パネル。パソコン(md以上)では
+              幅およそ400px固定(縮まない)にし、左の一覧(上記)が残りの
+              幅を全部使う(2026-11-24修正2)。min-h-0は、flexアイテムの
+              既定のmin-height:autoによって高さがoverflow-y-autoより先に
+              広がってしまう(内部スクロールが効かない)問題を防ぐための
+              もの(2026-11-24修正4)。relativeは、カード切り替え中
+              (①A案)の「読み込み中」オーバーレイの位置基準。 */}
+          <div className="relative flex min-h-0 flex-1 overflow-y-auto px-4 py-6 md:flex-none md:w-[400px] md:shrink-0 md:py-10">
+        <div
+          className={`m-auto w-full max-w-sm rounded-xl bg-white p-6 shadow-xl transition-opacity ${
+            isRoomSwitchPending ? "opacity-50" : ""
+          }`}
+        >
           {room ? (
             <div className="mb-4 overflow-hidden rounded-lg bg-slate-100">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -11512,7 +11557,7 @@ export default function AvatarSpace({
           />
           <button
             onClick={handleJoin}
-            disabled={!room || isJoining || maintenanceBlocking}
+            disabled={!room || isJoining || maintenanceBlocking || isRoomSwitchPending}
             className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
           >
             {maintenanceBlocking
@@ -11548,6 +11593,18 @@ export default function AvatarSpace({
           </button>
         </div>
 
+        {/* 段階E-5-1の見直し(2026-11-24・①A案)。カード切り替え中の
+            「読み込み中」オーバーレイ。pointer-events-noneで、下の
+            (disabledにしていない)アバター選択等の操作自体は塞がない
+            (入室ボタンだけは上でdisabledにしている)。 */}
+        {isRoomSwitchPending && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="rounded-lg bg-slate-900/80 px-4 py-2 text-sm font-semibold text-white">
+              {t("lobby.checking")}
+            </span>
+          </div>
+        )}
+
         {/* アイコン削除の確認モーダル。入室後の画面とは別のreturn文の
             ため、showDeleteIconConfirm/handleDeleteIconConfirm自体は
             共有しつつ、ロビー側にも同じモーダルを置く(無いと「削除」を
@@ -11575,6 +11632,7 @@ export default function AvatarSpace({
             </div>
           </div>
         )}
+          </div>
         </div>
       </div>
     );
@@ -11769,19 +11827,9 @@ export default function AvatarSpace({
       )}
       {/* ヘッダー */}
       <div className="flex h-16 min-w-0 items-center justify-between gap-2 border-b border-slate-700 bg-slate-900 px-4 text-white">
-        <div className="flex shrink-0 items-center gap-2">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/logo.png"
-              alt="Globy"
-              className="h-5 w-5 object-contain"
-            />
-          </div>
-          <span className="hidden text-sm font-semibold sm:inline">
-            Globy
-          </span>
-        </div>
+        {/* 段階E-5-1の見直し(2026-11-24)。ロゴ部分を共有部品化
+            (components/GlobyLogo.tsx)。見た目は変えていない。 */}
+        <GlobyLogo />
 
         {/* 右側:テキスト情報(幅が足りない時だけ横スクロールで隠れてよい)と、
       操作アイコン(常に全部見える必要がある)を別グループに分ける。
