@@ -58,29 +58,50 @@ export default function RoomListSidebar({
       // 左サイドバーより先(order-1)に表示する。段階E-5-1b見直し
       // (2026-11-25)。左のサイドバー(暗い)と見た目をそろえず、ここは
       // 白い背景・明るいカードにする(ヘッダー・左サイドバーは暗いまま)。
-      className="order-1 flex shrink-0 gap-2 overflow-x-auto bg-white px-3 py-3 md:order-2 md:mx-auto md:w-auto md:min-h-0 md:max-w-[1440px] md:flex-1 md:flex-wrap md:content-start md:gap-3 md:overflow-x-visible md:overflow-y-auto md:p-4"
-      style={{ WebkitOverflowScrolling: "touch" }}
+      // ユーザー要望(2026-11-25)。見出し「ロビー」・説明をこのdivの
+      // 直下(=カードの横スクロールの外)に置くため、縦のflex-colにし、
+      // 横スクロール(overflow-x-auto)・カードのflex-wrapは下の内側のdiv
+      // に移した。PC版の縦スクロール(md:overflow-y-auto)はこの外側の
+      // divにかけ、見出し・カードが一緒に流れるようにする(固定しない)。
+      className="order-1 flex shrink-0 flex-col bg-white md:order-2 md:mx-auto md:w-auto md:min-h-0 md:max-w-[1440px] md:flex-1 md:overflow-y-auto"
     >
-      {result.ownCard === "failed" && (
-        <FailedCard label={t("roomList.loadFailed")} />
-      )}
-      {result.legacyGuestCard === "failed" && (
-        <FailedCard label={t("roomList.loadFailed")} />
-      )}
-      {result.memberCards === "failed" && (
-        <FailedCard label={t("roomList.loadFailed")} />
-      )}
-      {cards.map((card) => (
-        <RoomCardTile
-          key={`${card.kind}-${card.accountId}`}
-          card={card}
-          badge={card.kind === "own" ? t("roomList.yourRoomBadge") : undefined}
-          selected={!!card.roomId && card.roomId === highlightedRoomId}
-          onlineCount={card.roomId ? onlineCounts[card.roomId] : undefined}
-          onSelectRoom={onSelectRoom}
-          t={t}
-        />
-      ))}
+      {/* ユーザー要望(2026-11-25)。右の白い場所の一番上の見出し・説明。
+          左端をこの下のカードの左端にそろえるため、左右のpaddingを
+          カード側(px-3/md:p-4)と同じ値にする。スマホでは余白を小さめに
+          (pb-2)し、高さを取りすぎないようにする。 */}
+      <div className="shrink-0 px-3 pt-3 pb-2 md:px-4 md:pt-4 md:pb-3">
+        <h2 className="text-lg font-semibold text-slate-900">
+          {t("lobby.title")}
+        </h2>
+        <p className="text-sm text-slate-500">{t("lobby.subtitle")}</p>
+      </div>
+      <div
+        className="flex shrink-0 gap-2 overflow-x-auto px-3 pb-3 md:flex-1 md:flex-wrap md:content-start md:gap-3 md:overflow-x-visible md:px-4 md:pb-4"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        {result.ownCard === "failed" && (
+          <FailedCard label={t("roomList.loadFailed")} />
+        )}
+        {result.legacyGuestCard === "failed" && (
+          <FailedCard label={t("roomList.loadFailed")} />
+        )}
+        {result.memberCards === "failed" && (
+          <FailedCard label={t("roomList.loadFailed")} />
+        )}
+        {cards.map((card) => (
+          <RoomCardTile
+            key={`${card.kind}-${card.accountId}`}
+            card={card}
+            badge={
+              card.kind === "own" ? t("roomList.yourRoomBadge") : undefined
+            }
+            selected={!!card.roomId && card.roomId === highlightedRoomId}
+            onlineCount={card.roomId ? onlineCounts[card.roomId] : undefined}
+            onSelectRoom={onSelectRoom}
+            t={t}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -104,6 +104,10 @@ const ja: Record<string, string> = {
   "lang.english": "English",
 
   "lobby.noRoomYet": "ルームを準備できませんでした。お手数ですが、お問い合わせください。",
+  // ユーザー要望(2026-11-25)。右の白い場所(カードの並び・ルーム0件の
+  // 画面)の一番上に出す見出し・説明。
+  "lobby.title": "ロビー",
+  "lobby.subtitle": "入るルームを選んでください",
   "lobby.onlineCount": "{count}/{max}名",
   "lobby.selectAvatarPrompt":
     "アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)",
@@ -627,6 +631,8 @@ const en: Record<string, string> = {
   "lang.english": "English",
 
   "lobby.noRoomYet": "We couldn't set up your room. Please contact us.",
+  "lobby.title": "Lobby",
+  "lobby.subtitle": "Choose a room to enter",
   "lobby.onlineCount": "{count}/{max}",
   "lobby.selectAvatarPrompt":
     "Choose an avatar and enter the name to display (leave it blank to join as a guest).",
