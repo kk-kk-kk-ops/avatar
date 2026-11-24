@@ -215,3 +215,51 @@ export async function getRoomListEntries(
     profileLocale: profileRow?.locale ?? null,
   };
 }
+
+// カード一覧を「自分のルーム→移行前の古いゲストの特例カード→メンバーの
+// ルーム(最終アクセスの新しい順)」の順にフラットな配列にする
+// (components/RoomListScreen.tsxの表示順と同じ)。段階E-5-1(2026-11-24)で、
+// 左のカード一覧(components/RoomListSidebar.tsx)と、「/」での先頭カード
+// 選び(pickFirstLinkableRoomId)の両方から使う共通の並び順。
+export function collectRoomListCards(result: RoomListResult): RoomListCard[] {
+  const cards: RoomListCard[] = [];
+  if (result.ownCard !== "none" && result.ownCard !== "failed") {
+    cards.push(result.ownCard);
+  }
+  if (result.legacyGuestCard !== "none" && result.legacyGuestCard !== "failed") {
+    cards.push(result.legacyGuestCard);
+  }
+  if (result.memberCards !== "failed") {
+    cards.push(...result.memberCards);
+  }
+  return cards;
+}
+
+// 段階E-5-1(2026-11-24)。「/」(招待・?room=のいずれも無い通常アクセス)
+// で最初に選ぶ(=/?room=へ移す)カードのroomIdを決める。リンクできる
+// (roomIdがある)カードが1枚も無い場合はnullを返す(呼び出し元は
+// redirectせず、その場でカード一覧を出す)。
+export function pickFirstLinkableRoomId(result: RoomListResult): string | null {
+  const card = collectRoomListCards(result).find((c) => c.roomId);
+  return card?.roomId ?? null;
+}
+
+// 日本標準時(Asia/Tokyo)は夏時間が無く常にUTC+9固定のため、Intl API等を
+// 使わずシンプルな固定オフセット計算で求める(lib/dailyUsage.tsの
+// getJstDayKeyと同じ考え方)。サーバーのローカルタイムゾーン(Vercelの
+// 既定はUTCの見込み、未検証)に依存させないため、オフセットを足した後は
+// UTC表記のメソッド(getUTCMonth/getUTCDate)を使う。段階E-5-1
+// (2026-11-24)でcomponents/RoomListScreen.tsxから移動し、新設の
+// components/RoomListSidebar.tsxとも共有できるようにした。
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+export function formatLastAccessedDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const jst = new Date(d.getTime() + JST_OFFSET_MS);
+    return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()}`;
+  } catch {
+    return iso;
+  }
+}

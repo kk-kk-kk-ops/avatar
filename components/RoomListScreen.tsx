@@ -1,5 +1,9 @@
 import { translate, type Locale } from "@/lib/i18n/translations";
-import type { RoomListCard, RoomListResult } from "@/lib/roomListEntries";
+import {
+  formatLastAccessedDate,
+  type RoomListCard,
+  type RoomListResult,
+} from "@/lib/roomListEntries";
 import LogoutButton from "@/components/auth/LogoutButton";
 
 type Props = {
@@ -10,12 +14,13 @@ type Props = {
 };
 
 // 入室の仕組みの作り替え 段階E-1+E-2(2026-11-24)。「/」で表示する
-// カード一覧画面。自分のルーム→メンバーのルーム(最終アクセスの新しい
-// 順)→(移行期間中のみ)古いゲストの特例カードの順で表示する。カードを
-// 押すと/?room=ルームIDへ遷移する(持ち主・メンバー・古いゲストの
-// いずれでも、app/page.tsxのrenderMemberRoomJoinが本人の所属先かどうか
-// を判定する)。「一覧から外す」操作は段階E-3で実装する(今回はカードの
-// 表示のみ)。
+// カード一覧画面。自分のルーム→(移行期間中のみ)古いゲストの特例カード
+// →メンバーのルーム(最終アクセスの新しい順)の順で表示する。
+// 段階E-5-1(2026-11-24)以降、リンクできるカードが1枚もない場合
+// (ルーム0件など、app/page.tsxのpickFirstLinkableRoomIdがnullを
+// 返す場合)だけ、この画面が使われる(それ以外は/?room=へ移り、
+// 左にカード一覧・右に入室パネルを出す統合画面〈components/
+// AvatarSpace.tsx〉になる)。
 export default function RoomListScreen({
   result,
   locale,
@@ -103,26 +108,6 @@ function FailedCard({ label }: { label: string }) {
       {label}
     </div>
   );
-}
-
-// 日本標準時(Asia/Tokyo)は夏時間が無く常にUTC+9固定のため、Intl API等を
-// 使わずシンプルな固定オフセット計算で求める(lib/dailyUsage.tsの
-// getJstDayKeyと同じ考え方)。サーバーのローカルタイムゾーン(Vercelの
-// 既定はUTCの見込み、未検証)に依存させないため、オフセットを足した後は
-// UTC表記のメソッド(getUTCMonth/getUTCDate)を使う(2026-11-24修正。
-// 以前はgetMonth/getDateを使っており、日本時間0〜9時だと前日の日付に
-// なっていた)。
-const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
-
-function formatLastAccessedDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const jst = new Date(d.getTime() + JST_OFFSET_MS);
-    return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()}`;
-  } catch {
-    return iso;
-  }
 }
 
 function RoomCardView({

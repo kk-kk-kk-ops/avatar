@@ -94,6 +94,8 @@ import VideoTile from "./VideoTile";
 import ScreenShareButton from "./ScreenShareButton";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
+import RoomListSidebar from "./RoomListSidebar";
+import { collectRoomListCards, type RoomListResult } from "@/lib/roomListEntries";
 import {
   uploadRawChatImageWithProgress,
   validateChatImageFile,
@@ -809,6 +811,11 @@ type Props = {
   // 請求ポータルから戻った)。initialRoomJoinErrorとは別の状態として
   // 扱う(エラー表示のスタイルを流用しないため)。
   initialBillingNotice?: "checkout_success" | "portal_returned";
+  // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の左側
+  // (スマホでは上側)に出すルームの一覧。未指定(renderViewOnlyRoomJoin
+  // など段階Gまで残す古い経路)の場合は一覧を出さず、従来どおり
+  // roomsの1件だけの表示になる。
+  roomListResult?: RoomListResult;
 };
 
 export default function AvatarSpace({
@@ -835,6 +842,7 @@ export default function AvatarSpace({
   initialAvatarIconUrl,
   initialRoomJoinError,
   initialBillingNotice,
+  roomListResult,
 }: Props) {
   // ログインセッションを持つSupabaseクライアント。map_layoutテーブルのRLSを
   // 「認証済みユーザーのみ」に絞れるよう、認証操作(ログイン/ログアウト)と
@@ -11179,13 +11187,34 @@ export default function AvatarSpace({
     setSelectedIconUrl(null);
   }, [applySelfStateUpdate, saveAvatarSettings]);
 
+  // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。左のカード一覧の
+  // 全カードの在室人数を出すため、roomsの1件だけでなくroomListResultの
+  // 全カード(自分のルーム・古いゲストの特例カード・メンバーの全ルーム)
+  // 分のroomIdを対象にする(roomListResult未指定の古い経路は、従来通り
+  // roomsの1件だけを対象にする)。重複(roomsの対象がroomListResultの
+  // カードにも含まれる場合など)は1本の購読にまとめる。
+  const previewRoomIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (roomListResult) {
+      for (const card of collectRoomListCards(roomListResult)) {
+        if (card.roomId) ids.add(card.roomId);
+      }
+    }
+    for (const room of rooms) {
+      ids.add(room.id);
+    }
+    return Array.from(ids);
+  }, [roomListResult, rooms]);
+
   // 入室前の画面にいる間、ルームのRealtimeチャンネルにpresence観測者として
   // 接続し、プレビュー表示用のオンライン人数を取得する(入室後は不要なので
-  // joinedになったら購読解除する)。
+  // joinedになったら購読解除する)。観測者は.track()を呼ばない(sync
+  // イベントの受信のみ)ため、見ている本人が相手のpresenceに「在室中」
+  // として現れることはない(2026-11-24確認)。
   useEffect(() => {
-    if (joined || rooms.length === 0) return;
-    const channels = rooms.map((room) => {
-      const channel = supabase.channel(`avatar-room-${room.id}`, {
+    if (joined || previewRoomIds.length === 0) return;
+    const channels = previewRoomIds.map((roomId) => {
+      const channel = supabase.channel(`avatar-room-${roomId}`, {
         config: { presence: { key: `observer-${randomId()}` } },
       });
       channel
@@ -11193,7 +11222,7 @@ export default function AvatarSpace({
           const state = channel.presenceState();
           setRoomOnlineCounts((prev) => ({
             ...prev,
-            [room.id]: Object.keys(state).length,
+            [roomId]: Object.keys(state).length,
           }));
         })
         .subscribe();
@@ -11203,7 +11232,7 @@ export default function AvatarSpace({
     return () => {
       channels.forEach((channel) => supabase.removeChannel(channel));
     };
-  }, [joined, rooms, supabase]);
+  }, [joined, previewRoomIds, supabase]);
 
   // 入室前ロビー画面のプレビュー画像・ルーム名を常に最新化する
   // (2026-09報告)。roomsはapp/page.tsxがページ表示時に1回だけ取得した
@@ -11315,8 +11344,28 @@ export default function AvatarSpace({
       isMaintenanceScheduled(maintenance) || isMaintenanceActive(maintenance);
     const maintenanceBlocking = isMaintenanceActive(maintenance) && !isMaster;
     return (
-      <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
-        <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+      <div className="flex h-full w-full flex-col overflow-hidden bg-slate-900 md:flex-row">
+        {/* 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。左(スマホでは上)の
+            ルーム一覧。会議室の中(joined===true、この分岐自体に来ない)
+            では出さない。roomListResult未指定の古い経路(段階Gまで残す
+            renderViewOnlyRoomJoin等)では一覧自体を出さず、従来どおり
+            右側(下記)だけの画面になる。 */}
+        {roomListResult && (
+          <RoomListSidebar
+            result={roomListResult}
+            selectedRoomId={room?.id ?? null}
+            onlineCounts={roomOnlineCounts}
+            t={t}
+          />
+        )}
+        {/* 右側(スマホでは下側)の入室パネル。パソコン(md以上)では
+            幅およそ400px固定(縮まない)にし、左の一覧(上記)が残りの
+            幅を全部使う(2026-11-24修正2)。min-h-0は、flexアイテムの
+            既定のmin-height:autoによって高さがoverflow-y-autoより先に
+            広がってしまう(内部スクロールが効かない)問題を防ぐための
+            もの(2026-11-24修正4)。 */}
+        <div className="flex min-h-0 flex-1 overflow-y-auto px-4 py-6 md:flex-none md:w-[400px] md:shrink-0 md:py-10">
+        <div className="m-auto w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
           {room ? (
             <div className="mb-4 overflow-hidden rounded-lg bg-slate-100">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -11473,17 +11522,12 @@ export default function AvatarSpace({
                 : t("lobby.enterRoom")}
           </button>
 
-          {/* 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。 */}
-          {(viewOnlyInviteToken || isMemberEntry) && ownRoomHref && (
-            <button
-              type="button"
-              onClick={handleBackToOwnRoomButtonClick}
-              disabled={isStoppingRecording}
-              className="mt-2 block w-full rounded-lg bg-slate-100 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {t("lobby.backToOwnRoom")}
-            </button>
-          )}
+          {/* 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の
+              「自分のルームへ」ボタンは削除(左のカード一覧で自分のルームの
+              カードを押せば同じことができるため)。会議室内のボタン
+              (viewOnlyInviteToken || isMemberEntry時、下記の別のreturn文
+              側)はそのまま残す。handleBackToOwnRoomButtonClick/ownRoomHref
+              自体はそちらで使われているため変更していない。 */}
           {isMaster && (
             <button
               type="button"
@@ -11531,6 +11575,7 @@ export default function AvatarSpace({
             </div>
           </div>
         )}
+        </div>
       </div>
     );
   }

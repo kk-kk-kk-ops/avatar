@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import type { AvatarMode, Room } from "@/lib/types";
 import type { Locale } from "@/lib/i18n/translations";
+import type { RoomListResult } from "@/lib/roomListEntries";
 
 // canvasやwindow/keyboardイベントを使うためSSRを無効化
 const AvatarSpace = dynamic(() => import("@/components/AvatarSpace"), {
@@ -38,6 +39,11 @@ type Props = {
   // 管理画面モーダル化 M-4(2026-11)。app/billing/return経由で戻った
   // 直後に表示する結果通知。
   initialBillingNotice?: "checkout_success" | "portal_returned";
+  // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の左側に
+  // 出すルームの一覧(自分のルーム・メンバーのルーム・古いゲストの特例
+  // カード)。未指定(renderViewOnlyRoomJoinなど段階Gまで残す古い経路)の
+  // 場合は一覧を出さない。
+  roomListResult?: RoomListResult;
 };
 
 export default function AvatarSpaceLoader({
@@ -64,6 +70,7 @@ export default function AvatarSpaceLoader({
   initialAvatarIconUrl,
   initialRoomJoinError,
   initialBillingNotice,
+  roomListResult,
 }: Props) {
   return (
     // バーチャル空間は「画面ぴったりに固定し、スクロールで動かさない」
@@ -98,6 +105,7 @@ export default function AvatarSpaceLoader({
         initialAvatarIconUrl={initialAvatarIconUrl}
         initialRoomJoinError={initialRoomJoinError}
         initialBillingNotice={initialBillingNotice}
+        roomListResult={roomListResult}
       />
     </div>
   );

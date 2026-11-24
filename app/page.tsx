@@ -3,7 +3,12 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState, type UserRouteState } from "@/lib/authRouting";
 import { joinAccountViaInvite } from "@/lib/joinAccountViaInvite";
-import { getRoomListEntries, fetchAccountRoomCard } from "@/lib/roomListEntries";
+import {
+  getRoomListEntries,
+  fetchAccountRoomCard,
+  pickFirstLinkableRoomId,
+  type RoomListResult,
+} from "@/lib/roomListEntries";
 import { translate, translateAuthError, type Locale } from "@/lib/i18n/translations";
 import { getServerLocale } from "@/lib/i18n/getServerLocale";
 import { PLANS, type AvatarMode, type PlanId, type Room } from "@/lib/types";
@@ -73,6 +78,25 @@ function BannedNotice({ logoutRedirectTo }: { logoutRedirectTo: string }) {
   );
 }
 
+// 段階E-5-1(2026-11-24・修正1)。入室前のルーム情報取得(get_member_room_entry
+// 等)がエラーを返した場合に表示する画面。「/」は先頭のカードの/?room=へ
+// リダイレクトするため、ここでも/?error=invalid_inviteへredirectしてしまうと
+// 「/」(リンクできるカードを選び直す)→/?room=(同じカードで再度エラー)→
+// /?error=invalid_invite→「/」…のようにredirectが繰り返される恐れがある
+// (一時的なエラーが収まるまで)。エラー時はredirectせずその場で表示する。
+function RoomLoadFailedNotice({ locale }: { locale: Locale }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center overflow-hidden bg-slate-900 px-4">
+      <div className="w-full max-w-xs rounded-2xl bg-white p-8 text-center shadow-xl">
+        <p className="mb-6 text-sm text-slate-600">
+          {translate(locale, "roomList.loadFailed")}
+        </p>
+        <LogoutButton className="w-full rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white hover:bg-slate-700" />
+      </div>
+    </div>
+  );
+}
+
 // アカウント所有者(admin)またはゲスト(guest)として、自分の所属する
 // アカウントのルームへのアバター選択・入室画面を描画する。通常のログイン後
 // フロー(招待なし)、および招待URL経由(自分自身の招待URL・ゲスト参加の
@@ -81,6 +105,10 @@ async function renderRoomJoin(
   supabase: SupabaseClient,
   user: User,
   state: UserRouteState & { type: "admin" | "guest" },
+  // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の左側に
+  // 出すルームの一覧。呼び出し元(renderMemberRoomJoinのみ、下記)が
+  // 既に取得済みの結果をそのまま渡す(ここで取り直さない)。
+  roomListResult: RoomListResult,
   initialRoomJoinError?: string | null,
   initialBillingNotice?: "checkout_success" | "portal_returned" | null,
 ) {
@@ -189,6 +217,7 @@ async function renderRoomJoin(
       initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
       initialRoomJoinError={initialRoomJoinError ?? undefined}
       initialBillingNotice={initialBillingNotice ?? undefined}
+      roomListResult={roomListResult}
     />
   );
 }
@@ -329,7 +358,16 @@ async function renderMemberRoomJoin(
   supabase: SupabaseClient,
   user: User,
   roomId: string,
+  // 段階E-5-1(2026-11-24・修正A)。「/」から/?room=へ引き継がれた
+  // 無効招待の通知・請求結果の通知。memberRoomIdの入口(Home()の
+  // else ifの時点ではまだ未確定)から直接渡される場合もある。
+  initialRoomJoinErrorCode: "invalid_invite" | null = null,
+  initialBillingNotice: "checkout_success" | "portal_returned" | null = null,
 ) {
+  const translatedRoomJoinError =
+    initialRoomJoinErrorCode === "invalid_invite"
+      ? translate(getServerLocale(), "lobby.invalidInviteRejoined")
+      : null;
   // UUIDの形でなければDBに問い合わせずに無効な招待と同じ扱いにする。
   if (!ROOM_ID_PATTERN.test(roomId)) {
     redirect("/?error=invalid_invite");
@@ -340,8 +378,11 @@ async function renderMemberRoomJoin(
     { p_room_id: roomId },
   );
   if (entryError) {
+    // 段階E-5-1(2026-11-24・修正1)。エラー時はredirectせずその場で表示する
+    // (理由は関数直前のRoomLoadFailedNoticeのコメント参照)。
     // eslint-disable-next-line no-console
     console.error("メンバー入室時のルーム情報取得に失敗しました", entryError);
+    return <RoomLoadFailedNotice locale={getServerLocale()} />;
   }
   const entry = entryRows?.[0] ?? null;
 
@@ -368,8 +409,30 @@ async function renderMemberRoomJoin(
         routeState.accountId,
         routeState.type === "admin" ? "own" : "legacyGuest",
       );
-      if (ownCard !== "failed" && ownCard.roomId === roomId) {
-        return renderRoomJoin(supabase, user, routeState, null, null);
+      // 段階E-5-1(2026-11-24・修正1、2回目)。fetchAccountRoomCardが
+      // エラーで"failed"を返した場合も、redirect("/?error=invalid_invite")
+      // はしない(entryErrorの時と同じ理由。「/」の先頭カードが持ち主・
+      // 古いゲストのルームだった場合、一時的なエラーが続く間
+      // 「/」→/?room=→/?error=invalid_invite→「/」…を繰り返す恐れが
+      // あったため)。"failed"でなく単に一致しない(他人のルームIDを
+      // 開いた場合など)時は、今までどおりredirectする。
+      if (ownCard === "failed") {
+        return <RoomLoadFailedNotice locale={getServerLocale()} />;
+      }
+      if (ownCard.roomId === roomId) {
+        const roomListResult = await getRoomListEntries(
+          supabase,
+          user.id,
+          routeState,
+        );
+        return renderRoomJoin(
+          supabase,
+          user,
+          routeState,
+          roomListResult,
+          translatedRoomJoinError,
+          initialBillingNotice,
+        );
       }
     }
     redirect("/?error=invalid_invite");
@@ -386,6 +449,12 @@ async function renderMemberRoomJoin(
     const ownInviteToken = ownAccountRows?.[0]?.invite_token ?? null;
     ownRoomHref = ownInviteToken ? `/?invite=${ownInviteToken}` : null;
   }
+  // 段階E-5-1(2026-11-24)。入室前の画面の左側に出すルームの一覧。
+  const roomListResult = await getRoomListEntries(
+    supabase,
+    user.id,
+    routeState,
+  );
 
   const [{ data: profile }, { data: appSettings }] = await Promise.all([
     supabase
@@ -436,23 +505,24 @@ async function renderMemberRoomJoin(
       initialProfileLocale={(profile?.locale as Locale) ?? undefined}
       initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
       initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
+      initialRoomJoinError={translatedRoomJoinError ?? undefined}
+      initialBillingNotice={initialBillingNotice ?? undefined}
+      roomListResult={roomListResult}
     />
   );
 }
 
-// 入室の仕組みの作り替え 段階E-2(2026-11-24)。"/"(招待URL・?room=の
-// いずれも無い通常アクセス)で表示するカード一覧画面。自分のルーム・
-// メンバーのルーム・(移行期間中のみ)移行前の古いゲストの特例カードを
-// まとめて取得して渡す。招待トークンなど秘密の値はlib/roomListEntries.ts
-// の戻り値に含まれないため、ここでも扱わない。
+// 入室の仕組みの作り替え 段階E-2(2026-11-24)、段階E-5-1(2026-11-24)で
+// 役割を変更。「/」で、リンクできる(roomIdがある)カードが1枚も無い
+// 場合(ルーム0件など、Home()側のpickFirstLinkableRoomIdがnullを返す
+// 場合)だけ表示するカード一覧画面(それ以外は/?room=へ移り、左にカード
+// 一覧・右に入室パネルを出す統合画面になる)。resultはHome()側で既に
+// 取得済みのものを受け取る(ここで取り直さない)。
 async function renderRoomListCard(
-  supabase: SupabaseClient,
-  user: User,
-  state: UserRouteState,
+  result: RoomListResult,
   initialRoomJoinError: string | null,
   initialBillingNotice: "checkout_success" | "portal_returned" | null,
 ) {
-  const result = await getRoomListEntries(supabase, user.id, state);
   // 表示言語は、既存のロビー画面(components/AvatarSpace.tsx:846-858)と
   // 同じ非対称なルールにそろえる(2026-11-24指摘)。profiles.localeが
   // "en"ならそれを優先し、それ以外はクッキー由来のgetServerLocale()の
@@ -579,15 +649,26 @@ export default async function Home({
         );
       }
       if (result.isOwnAccount) {
+        // 段階E-5-1(2026-11-24・修正B)。自分の招待URLを開いた場合も
+        // /?room=自分のルームIDへ移してアドレス欄から招待トークンを
+        // 消す(統合画面〈左の一覧+右の入室パネル〉に合流させる)。
+        // ルームIDの選び方はfetchAccountRoomCardと同じ(持ち主→own、
+        // 古いゲスト→legacyGuest)。取れない場合(ルームが無いなど)は
+        // "/"へ(運営者の/masterの「ルームへ」のリンク先自体
+        // 〈/?invite=〉は変えない、E-4で行う)。
         const state = await resolveUserRouteState(supabase, user.id);
         if (state.type === "admin" || state.type === "guest") {
-          return renderRoomJoin(
+          const ownCard = await fetchAccountRoomCard(
             supabase,
-            user,
-            state,
-            null,
-            initialBillingNotice,
+            state.accountId,
+            state.type === "admin" ? "own" : "legacyGuest",
           );
+          if (ownCard !== "failed" && ownCard.roomId) {
+            const params = new URLSearchParams({ room: ownCard.roomId });
+            if (initialBillingNotice) params.set("billing", initialBillingNotice);
+            redirect(`/?${params.toString()}`);
+          }
+          redirect("/");
         }
         // no-account(通常起こらないはずの防御的フォールバック)は
         // 下の通常ルーティングに任せる。
@@ -609,22 +690,42 @@ export default async function Home({
         redirect(membership ? `/?room=${membership.room_id}` : "/");
       }
     } else if (memberRoomId) {
-      // 入室の仕組みの作り替え 段階D-3。/?room=ルームID の入口
-      // (まだどこからもリンクしない)。invite・roomの両方がある時は
-      // 上のinviteの処理を優先する(このelse ifには入らない)。
-      return renderMemberRoomJoin(supabase, user, memberRoomId);
+      // 入室の仕組みの作り替え 段階D-3。/?room=ルームID の入口。
+      // invite・roomの両方がある時は上のinviteの処理を優先する
+      // (このelse ifには入らない)。段階E-5-1(2026-11-24・修正A)。
+      // "/"から引き継がれた無効招待・請求結果の通知もここで渡す。
+      return renderMemberRoomJoin(
+        supabase,
+        user,
+        memberRoomId,
+        searchParams.error === "invalid_invite" ? "invalid_invite" : null,
+        initialBillingNotice,
+      );
     }
 
     const state = await resolveUserRouteState(supabase, user.id);
     if (state.isMaster) redirect("/master");
-    // 入室の仕組みの作り替え 段階E-2(2026-11-24決定)。以前はここで
-    // state.type==="no-account"の場合だけ/planへ転送し、admin/guestの
-    // 場合だけrenderRoomJoinを呼んでいた。カード一覧画面の導入に合わせて、
-    // no-accountも含め常にカード一覧(renderRoomListCard)を返す(自分の
-    // ルームが無い人にもカード0件+「ルームを作成する」ボタンを見せる)。
-    // /planへの自動転送はやめる(ボタンを押した時だけ/planへ進む。
-    // app/plan/CreateRoomStart.tsx)。
-    //
+
+    // 入室の仕組みの作り替え 段階E-5-1(2026-11-24決定・修正C)。「/」
+    // (招待・?room=のいずれも無い通常アクセス)では、一覧の先頭の
+    // 「リンクできるカード」(roomIdがあるもの。自分のルーム→古いゲストの
+    // 特例カード→メンバーのルーム〈最終アクセス順〉の順、
+    // pickFirstLinkableRoomId参照)へ/?room=でリダイレクトし、統合画面
+    // (左にカード一覧・右に入室パネル)を表示する。無効招待・請求結果の
+    // 通知(修正A)は移り先へそのまま引き継ぐ(統合画面側
+    // 〈components/AvatarSpace.tsx〉が表示後にアドレス欄から消す)。
+    // リンクできるカードが1枚も無い場合(ルーム0件など)だけ、redirectせず
+    // この場でカード一覧(RoomListScreen、「ルームを作成する」ボタン含む)
+    // を返す。
+    const roomListResult = await getRoomListEntries(supabase, user.id, state);
+    const firstLinkableRoomId = pickFirstLinkableRoomId(roomListResult);
+    if (firstLinkableRoomId) {
+      const params = new URLSearchParams({ room: firstLinkableRoomId });
+      if (searchParams.error) params.set("error", searchParams.error);
+      if (searchParams.billing) params.set("billing", searchParams.billing);
+      redirect(`/?${params.toString()}`);
+    }
+
     // 無効化された招待URL(他人の招待URLが再発行等で無効になった後に
     // 踏んだ場合)の通知(2026-11追加)。ログイン済みの人がinvalid_invite
     // で/?error=invalid_inviteへ戻された場合、これまでは何も表示せず
@@ -638,9 +739,7 @@ export default async function Home({
         ? translate(getServerLocale(), "lobby.invalidInviteRejoined")
         : null;
     return renderRoomListCard(
-      supabase,
-      user,
-      state,
+      roomListResult,
       initialRoomJoinError,
       initialBillingNotice,
     );
