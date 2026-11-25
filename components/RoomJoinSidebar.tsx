@@ -41,7 +41,10 @@ export type RoomJoinSidebarProps = {
   onJoin: () => void;
   isJoining: boolean;
   isRoomSwitchPending: boolean;
-  isMaster: boolean;
+  // 段階E-4(2026-11-25)。「マスター画面へ」ボタンを出すためだけの目印
+  // (isMasterそのものではない。components/AvatarSpace.tsx側で、他人の
+  // ルームの中では運営者としての扱いを効かせないisMasterと分けて渡す)。
+  showMasterPanelLink: boolean;
   onGoToMaster: () => void;
   isStoppingRecording: boolean;
   onLogout: () => void;
@@ -75,7 +78,7 @@ export default function RoomJoinSidebar({
   onJoin,
   isJoining,
   isRoomSwitchPending,
-  isMaster,
+  showMasterPanelLink,
   onGoToMaster,
   isStoppingRecording,
   onLogout,
@@ -253,7 +256,7 @@ export default function RoomJoinSidebar({
         {joinButtonLabel}
       </button>
 
-      {isMaster && (
+      {showMasterPanelLink && (
         <button
           type="button"
           onClick={onGoToMaster}

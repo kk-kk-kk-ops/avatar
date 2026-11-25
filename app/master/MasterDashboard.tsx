@@ -51,7 +51,7 @@ export default function MasterDashboard({
   bugReports,
   maintenance,
   showRoomsLink,
-  ownInviteToken,
+  ownRoomId,
   userEmail,
   avatarSizePx,
 }: {
@@ -66,7 +66,7 @@ export default function MasterDashboard({
   bugReports: (BugReport & { unread: boolean })[];
   maintenance: MaintenanceSettings;
   showRoomsLink: boolean;
-  ownInviteToken: string | null;
+  ownRoomId: string | null;
   userEmail: string;
   avatarSizePx: number;
 }) {
@@ -281,15 +281,16 @@ export default function MasterDashboard({
         </nav>
 
         <div className="space-y-2 border-t border-slate-800 p-3">
-          {showRoomsLink && ownInviteToken && (
+          {showRoomsLink && ownRoomId && (
             <Link
-              // 通常の"/"はログイン済みマスターを/masterへ戻してしまうため、
-              // 自分自身の招待URL経由でルーム入室画面へ進む(F-3)。
-              href={`/?invite=${ownInviteToken}`}
+              // 段階E-4(2026-11-25)。通常の"/"はログイン済みマスターを
+              // /masterへ戻してしまうため、/?room=自分のルームIDへ進む
+              // (E-1の持ち主の経路、renderRoomJoinへ到達する)。
+              href={`/?room=${ownRoomId}`}
               onClick={(e) => {
                 if (!editorGuardRef.current?.isDirty()) return;
                 e.preventDefault();
-                guardNavigation(() => router.push(`/?invite=${ownInviteToken}`));
+                guardNavigation(() => router.push(`/?room=${ownRoomId}`));
               }}
               className="block w-full rounded-lg border border-slate-700 px-3 py-2 text-center text-xs font-semibold text-slate-200 hover:bg-slate-800"
             >

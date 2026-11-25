@@ -21,6 +21,13 @@ type Props = {
   dailyImageBytesLimit: number;
   isAccountAdmin: boolean;
   isMaster: boolean;
+  // 段階E-4(2026-11-25)。「マスター画面へ」ボタンを出すためだけの目印。
+  // isMasterはメンテナンス中の入室ブロック除外など他の権限判定にも
+  // 使われているため、ボタンの表示条件だけをここで分離する(他人の
+  // ルームの中でisMasterをtrueにすると運営者としての扱いが効いてしまう
+  // ため、isMaster自体は変えない)。省略時はfalse扱い(段階Gまで残す
+  // renderViewOnlyRoomJoinなど、未対応の古い経路向け)。
+  showMasterPanelLink?: boolean;
   guestInviteToken?: string | null;
   avatarSizePx?: number;
   viewOnlyInviteToken?: string;
@@ -56,6 +63,7 @@ export default function AvatarSpaceLoader({
   dailyImageBytesLimit,
   isAccountAdmin,
   isMaster,
+  showMasterPanelLink,
   guestInviteToken,
   avatarSizePx,
   viewOnlyInviteToken,
@@ -90,6 +98,7 @@ export default function AvatarSpaceLoader({
         dailyImageBytesLimit={dailyImageBytesLimit}
         isAccountAdmin={isAccountAdmin}
         isMaster={isMaster}
+        showMasterPanelLink={showMasterPanelLink}
         guestInviteToken={guestInviteToken}
         avatarSizePx={avatarSizePx}
         viewOnlyInviteToken={viewOnlyInviteToken}

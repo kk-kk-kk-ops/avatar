@@ -808,6 +808,13 @@ type Props = {
   dailyImageBytesLimit: number;
   isAccountAdmin: boolean;
   isMaster: boolean;
+  // 段階E-4(2026-11-25)。「マスター画面へ」ボタン(入室前の左サイドバー・
+  // 会議室内の設定パネル)を出すためだけの目印。isMasterはメンテナンス中の
+  // 入室ブロック除外(:7459・:11435付近)にも使われているため、ボタンの
+  // 表示条件だけをここで分離する(他人のルームの中でisMaster自体を
+  // trueにすると、運営者としての扱い〈メンテナンス中でも入れる等〉が
+  // 効いてしまうため、isMasterの意味は変えない)。未指定時はfalse扱い。
+  showMasterPanelLink?: boolean;
   // 他人の招待URL経由で参加しているゲストの場合のみ渡される招待
   // トークン。ログアウト後、管理者用ログイン画面ではなく元の招待URLの
   // ゲスト用ログイン画面に戻すために使う。
@@ -870,6 +877,7 @@ export default function AvatarSpace({
   dailyImageBytesLimit,
   isAccountAdmin,
   isMaster,
+  showMasterPanelLink = false,
   guestInviteToken,
   avatarSizePx,
   viewOnlyInviteToken,
@@ -11475,7 +11483,7 @@ export default function AvatarSpace({
             onJoin={handleJoin}
             isJoining={isJoining}
             isRoomSwitchPending={isRoomSwitchPending}
-            isMaster={isMaster}
+            showMasterPanelLink={showMasterPanelLink}
             onGoToMaster={handleGoToMasterButtonClick}
             isStoppingRecording={isStoppingRecording}
             onLogout={handleLogoutButtonClick}
@@ -14310,13 +14318,16 @@ export default function AvatarSpace({
                   {t("bugReport.title")}
                 </button>
 
-                {(isAccountAdmin || isMaster) && (
+                {(isAccountAdmin || showMasterPanelLink) && (
                   <div className="space-y-2 border-t border-slate-700 pt-4">
                     {/* ユーザー要望(2026-11-25)。見出しの表示条件は、この
-                        まとまり自体の表示条件(isAccountAdmin || isMaster)
-                        と同じにする(中のボタンが1つも出ない人には見出しも
-                        出さない)。見た目は同じパネルの他の見出し
-                        〈マイク・ステータス等〉と同じclassを使う。 */}
+                        まとまり自体の表示条件(isAccountAdmin ||
+                        showMasterPanelLink)と同じにする(中のボタンが1つも
+                        出ない人には見出しも出さない)。見た目は同じパネルの
+                        他の見出し〈マイク・ステータス等〉と同じclassを使う。
+                        段階E-4(2026-11-25)で、運営者がメンバーとして入る
+                        ルームでも「マスター画面へ」だけが出るよう、isMaster
+                        からshowMasterPanelLinkに変更した。 */}
                     <p className="mb-2 text-xs font-semibold text-slate-400">
                       {t("settings.adminMenu")}
                     </p>
@@ -14362,7 +14373,7 @@ export default function AvatarSpace({
                         )}
                       </button>
                     )}
-                    {isMaster && (
+                    {showMasterPanelLink && (
                       <button
                         type="button"
                         onClick={handleGoToMasterButtonClick}

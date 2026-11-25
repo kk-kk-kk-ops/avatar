@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { resolveUserRouteState } from "@/lib/authRouting";
+import { fetchAccountRoomCard } from "@/lib/roomListEntries";
 import {
   PLANS,
   NEW_ITEM_SIZE,
@@ -43,24 +44,19 @@ export default async function MasterPage() {
     redirect("/master/mfa-challenge");
   }
 
-  // 「ルームへ」リンク用。通常の"/"はログイン済みマスターを/masterへ
-  // 戻してしまうため、自分自身の招待URL経由でルーム入室画面へ進む
-  // (F-3で、自分自身の招待URLは常にルーム入室画面へ遷移するようになった
-  // ことを利用している)。
-  let ownInviteToken: string | null = null;
+  // 段階E-4(2026-11-25)。「ルームへ」リンク用。以前は自分自身の招待URL
+  // 経由(/?invite=トークン)でルーム入室画面へ進んでいたが、/?room=
+  // 自分のルームIDでも同じ場所(renderMemberRoomJoinの!entryブロック→
+  // 本人確認一致→renderRoomJoin、E-1の持ち主の経路)へ到達することを
+  // 確認できたため、こちらに変更する。選び方はlib/roomListEntries.tsの
+  // fetchAccountRoomCardと同じ関数を使う(取得に失敗した場合は"failed"が
+  // 返り、ownRoomIdはnullのままになるため、リンク自体を出さない)。
+  let ownRoomId: string | null = null;
   if (state.type !== "no-account") {
-    // accountsの直接SELECTではなく、自分のprofiles.account_idが指すアカウント
-    // の情報だけを返すSECURITY DEFINER関数を使う(2026-11-15、段階5)。
-    // isMasterはtype(admin/guest)と独立した軸のため、マスターが他人の
-    // アカウントの恒久的なゲストである場合もここを通るが、その場合でも
-    // 「自分が今いるアカウント」の招待トークンを返すという目的に変わりは
-    // ない。service_role直読みにしないのは、この関数がBAN中は何も返さない
-    // (is_banned_for_account)仕様のため、BANされたゲストであるマスターに
-    // 招待トークンを渡してしまうことを避けられるから。
-    const { data: ownAccountRows } = await supabase.rpc(
-      "get_own_account_guest_info",
-    );
-    ownInviteToken = ownAccountRows?.[0]?.invite_token ?? null;
+    const ownCard = await fetchAccountRoomCard(supabase, state.accountId, "own");
+    if (ownCard !== "failed") {
+      ownRoomId = ownCard.roomId;
+    }
   }
 
   // マスター権限を持つユーザーが所有するアカウントは、集計上は課金対象の
@@ -329,7 +325,7 @@ export default async function MasterPage() {
         endsAt: appSettings?.maintenance_ends_at ?? null,
       }}
       showRoomsLink={state.type !== "no-account"}
-      ownInviteToken={ownInviteToken}
+      ownRoomId={ownRoomId}
       userEmail={user.email ?? ""}
       avatarSizePx={appSettings?.avatar_size_px ?? 17}
     />

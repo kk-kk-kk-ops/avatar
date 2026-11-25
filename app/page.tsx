@@ -211,6 +211,8 @@ async function renderRoomJoin(
       dailyImageBytesLimit={PLANS[plan].dailyImageBytesLimit}
       isAccountAdmin={isAccountAdmin}
       isMaster={isAccountAdmin && state.isMaster}
+      // 段階E-4(2026-11-25)。自分のルームなので、isMasterと同じ値。
+      showMasterPanelLink={isAccountAdmin && state.isMaster}
       guestInviteToken={guestInviteToken}
       avatarSizePx={appSettings?.avatar_size_px ?? undefined}
       maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
@@ -477,6 +479,11 @@ async function renderMemberRoomJoin(
       dailyImageBytesLimit={PLANS[plan].dailyImageBytesLimit}
       isAccountAdmin={false}
       isMaster={false}
+      // 段階E-4(2026-11-25)。isMasterはfalseのまま(他人のルームの中で
+      // 運営者としての扱い〈メンテナンス中でも入れる等〉を効かせないため)。
+      // 「マスター画面へ」ボタンを出すためだけの目印は、上のconst
+      // routeStateのisMasterをそのまま渡す。
+      showMasterPanelLink={routeState.isMaster}
       guestInviteToken={null}
       avatarSizePx={appSettings?.avatar_size_px ?? undefined}
       maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
