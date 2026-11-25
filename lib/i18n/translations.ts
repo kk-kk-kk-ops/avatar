@@ -109,8 +109,6 @@ const ja: Record<string, string> = {
   "lobby.title": "ロビー",
   "lobby.subtitle": "入るルームを選んでください",
   "lobby.onlineCount": "{count}/{max}名",
-  "lobby.selectAvatarPrompt":
-    "アバターを選んで、表示する名前を入力してください(空欄の場合はゲスト表示になります)",
   "lobby.maintenanceNotice": "【メンテナンスのお知らせ】",
   "lobby.maintenancePeriod": "期間:",
   "lobby.namePlaceholder": "例:みく",
@@ -641,8 +639,6 @@ const en: Record<string, string> = {
   "lobby.title": "Lobby",
   "lobby.subtitle": "Choose a room to enter",
   "lobby.onlineCount": "{count}/{max}",
-  "lobby.selectAvatarPrompt":
-    "Choose an avatar and enter the name to display (leave it blank to join as a guest).",
   "lobby.maintenanceNotice": "[Maintenance Notice]",
   "lobby.maintenancePeriod": "Period:",
   "lobby.namePlaceholder": "e.g. Mike",

@@ -130,10 +130,6 @@ export default function RoomJoinSidebar({
         </p>
       )}
 
-      <p className="mb-4 text-sm text-slate-400">
-        {t("lobby.selectAvatarPrompt")}
-      </p>
-
       {maintenancePublished && maintenance.startsAt && maintenance.endsAt && (
         <p className="mb-4 rounded-lg border border-red-800 bg-red-900/40 px-3 py-2 text-xs font-semibold text-red-200">
           {t("lobby.maintenanceNotice")}
@@ -240,6 +236,9 @@ export default function RoomJoinSidebar({
         )}
       </div>
 
+      <p className="mb-2 text-xs font-semibold text-slate-400">
+        {t("settings.displayNameLabel")}
+      </p>
       <input
         autoFocus
         value={nameInput}
