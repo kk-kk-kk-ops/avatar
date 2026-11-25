@@ -127,8 +127,15 @@ const ja: Record<string, string> = {
   "roomList.empty": "まだ参加しているルームがありません",
   "roomList.loadFailed":
     "ルームの一覧を取得できませんでした。もう一度お試しください。",
+  // 段階E-5-2(2026-11-25)。「一覧から外す」(メンバーのカードのみ)。
+  "roomList.moreOptionsAria": "その他の操作",
+  "roomList.remove": "一覧から外す",
+  "roomList.removeConfirmTitle": "このルームを一覧から外しますか?",
   "roomList.removeConfirmBody":
     "外すと、このルームは一覧に表示されなくなります。もう一度入るには、管理者から招待URLをもらう必要があります。",
+  "roomList.removeButton": "外す",
+  "roomList.removeFailed":
+    "一覧から外せませんでした。もう一度お試しください。",
 
   "room.disabledInWorkArea": "作業エリア内では利用できません",
   "room.mic.onTitle": "マイク: ON(クリックでミュート)",
@@ -650,8 +657,13 @@ const en: Record<string, string> = {
   "roomList.empty": "You haven't joined any rooms yet.",
   "roomList.loadFailed":
     "We couldn't load your room list. Please try again.",
+  "roomList.moreOptionsAria": "More options",
+  "roomList.remove": "Remove from list",
+  "roomList.removeConfirmTitle": "Remove this room from your list?",
   "roomList.removeConfirmBody":
     "This room will no longer appear in your list. To join again, you'll need an invite link from the room's admin.",
+  "roomList.removeButton": "Remove",
+  "roomList.removeFailed": "Couldn't remove the room. Please try again.",
 
   "room.disabledInWorkArea": "Not available inside a work area",
   "room.mic.onTitle": "Mic: ON (click to mute)",

@@ -52,6 +52,14 @@ export type RoomListResult = {
   // の値を使う。既存のロビー画面〈components/AvatarSpace.tsx:846-858〉の
   // 非対称なルールと合わせるため、2026-11-24追加)に使う。
   profileLocale: string | null;
+  // 段階E-5-2(2026-11-25)。「一覧から外す」メニューをメンバーのカードに
+  // 出す時、閲覧者自身の所属アカウントID(admin/guest型のみ。no-account
+  // 型はnull)と同じaccountIdのメンバーカードには出さない判定に使う
+  // (古いゲストが自分の所属ルームのメンバーにもなっている場合、外すと
+  // legacyGuestCardがまた出てきてしまうため)。招待トークン等の秘密の
+  // 値ではないので、クライアント(components/RoomListSidebar.tsx)へ
+  // そのまま渡してよい。
+  ownAccountId: string | null;
 };
 
 async function fetchTemplateOverride(
@@ -227,6 +235,7 @@ export async function getRoomListEntries(
     memberCards: memberCardsResult,
     canCreateRoom,
     profileLocale: routeState.profile.locale,
+    ownAccountId: routeState.type === "no-account" ? null : routeState.accountId,
   };
 }
 

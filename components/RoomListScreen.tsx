@@ -47,13 +47,14 @@ export default function RoomListScreen({
       <div className="flex w-full flex-1 flex-col items-center px-4 py-10">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
         {/* ユーザー要望(2026-11-25)。入室前の画面(components/
-            RoomListSidebar.tsx)の見出しと同じものを、ルーム0件の画面の
-            白い箱の一番上にも出す。 */}
+            RoomListSidebar.tsx)と同じ見出し「ロビー」をルーム0件の画面の
+            白い箱の一番上にも出す。この画面には選べるルームが無く、下の
+            「まだ参加しているルームがありません」と合わないため、説明
+            (lobby.subtitle)は出さない(2026-11-25指摘)。 */}
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-slate-900">
             {t("lobby.title")}
           </h2>
-          <p className="text-sm text-slate-500">{t("lobby.subtitle")}</p>
         </div>
         {initialRoomJoinError && (
           <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">

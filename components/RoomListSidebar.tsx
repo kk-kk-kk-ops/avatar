@@ -1,5 +1,8 @@
 "use client";
 
+import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import {
   collectRoomListCards,
   formatLastAccessedDate,
@@ -46,8 +49,59 @@ export default function RoomListSidebar({
   onSelectRoom,
   t,
 }: Props) {
+  const router = useRouter();
+  // 段階E-5-2(2026-11-25)。「一覧から外す」(leave_account_membership)
+  // 専用のSupabaseクライアント。認証済みセッションを持つブラウザ側の
+  // クライアント(components/AvatarSpace.tsxと同じ生成関数)。このRPCは
+  // security definerでauth.uid()を見るだけのため、ここで直接呼んでよい。
+  const [supabase] = useState(() => createClient());
   const cards = collectRoomListCards(result);
   const highlightedRoomId = pendingRoomId ?? selectedRoomId;
+
+  // 「…」メニューが開いているカード(accountIdで識別。1枚だけ開ける)。
+  const [openMenuAccountId, setOpenMenuAccountId] = useState<string | null>(
+    null,
+  );
+  // 「一覧から外す」の確認ダイアログの対象カード(無ければダイアログ非表示)。
+  const [removeTarget, setRemoveTarget] = useState<RoomListCard | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  const handleRequestRemove = useCallback((card: RoomListCard) => {
+    setOpenMenuAccountId(null);
+    setRemoveError(null);
+    setRemoveTarget(card);
+  }, []);
+
+  const handleCancelRemove = useCallback(() => {
+    if (removing) return;
+    setRemoveTarget(null);
+    setRemoveError(null);
+  }, [removing]);
+
+  const handleConfirmRemove = useCallback(async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
+    setRemoveError(null);
+    const { error } = await supabase.rpc("leave_account_membership", {
+      p_account_id: removeTarget.accountId,
+    });
+    setRemoving(false);
+    if (error) {
+      setRemoveError(t("roomList.removeFailed"));
+      return;
+    }
+    const wasSelected = removeTarget.roomId === highlightedRoomId;
+    setRemoveTarget(null);
+    if (wasSelected) {
+      // 今選んでいるルームを外した場合は"/"へ移す(残りの先頭のカードが
+      // 選ばれる、既存のpickFirstLinkableRoomIdの仕組みに任せる)。
+      router.replace("/");
+    } else {
+      // ほかのカードを外した場合は、一覧だけを読み直してそのカードを消す。
+      router.refresh();
+    }
+  }, [removeTarget, supabase, router, highlightedRoomId, t]);
 
   return (
     <div
@@ -98,10 +152,66 @@ export default function RoomListSidebar({
             selected={!!card.roomId && card.roomId === highlightedRoomId}
             onlineCount={card.roomId ? onlineCounts[card.roomId] : undefined}
             onSelectRoom={onSelectRoom}
+            // 段階E-5-2(2026-11-25)。「一覧から外す」はメンバーのカード
+            // (kind === "member")だけに出す。自分のルーム(own)・古い
+            // ゲストの特例カード(legacyGuest)には出さない。さらに、古い
+            // ゲストが自分の所属ルーム(result.ownAccountId)のメンバーにも
+            // なっている場合は、そのメンバーカードにも出さない(外すと
+            // 特例カードがまた出てきてしまうため、段階Fまでの措置)。
+            canRemove={
+              card.kind === "member" && card.accountId !== result.ownAccountId
+            }
+            menuOpen={openMenuAccountId === card.accountId}
+            onToggleMenu={() =>
+              setOpenMenuAccountId((current) =>
+                current === card.accountId ? null : card.accountId,
+              )
+            }
+            onCloseMenu={() => setOpenMenuAccountId(null)}
+            onRequestRemove={() => handleRequestRemove(card)}
             t={t}
           />
         ))}
       </div>
+
+      {/* 段階E-5-2(2026-11-25)。「一覧から外す」の確認ダイアログ。見た目は
+          components/AvatarSpace.tsxの既存のダイアログ(アイコン削除の確認
+          など)に合わせる。 */}
+      {removeTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-xs rounded-xl bg-white p-5 shadow-xl">
+            <p className="mb-2 text-left text-sm font-semibold text-slate-800">
+              {t("roomList.removeConfirmTitle")}
+            </p>
+            <p className="mb-4 text-left text-xs text-slate-500">
+              {t("roomList.removeConfirmBody")}
+            </p>
+            {removeError && (
+              <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                {removeError}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleCancelRemove}
+                disabled={removing}
+                className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmRemove}
+                disabled={removing}
+                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {removing ? t("lobby.checking") : t("roomList.removeButton")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -120,6 +230,11 @@ function RoomCardTile({
   selected,
   onlineCount,
   onSelectRoom,
+  canRemove,
+  menuOpen,
+  onToggleMenu,
+  onCloseMenu,
+  onRequestRemove,
   t,
 }: {
   card: RoomListCard;
@@ -127,6 +242,11 @@ function RoomCardTile({
   selected: boolean;
   onlineCount?: number;
   onSelectRoom: (roomId: string) => void;
+  canRemove: boolean;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onCloseMenu: () => void;
+  onRequestRemove: () => void;
   t: (key: string, params?: Record<string, string>) => string;
 }) {
   const content = (
@@ -206,28 +326,73 @@ function RoomCardTile({
 
   const roomId = card.roomId;
   return (
-    <a
-      href={`/?room=${roomId}`}
-      onClick={(e) => {
-        // 新しいタブで開く操作(Ctrl/Cmd/Shiftクリック・中クリック等)は
-        // ブラウザ標準の動作に任せ、通常の左クリックの時だけ画面内の
-        // 移動に差し替える(2026-11-24・①A案)。
-        if (
-          e.defaultPrevented ||
-          e.button !== 0 ||
-          e.metaKey ||
-          e.ctrlKey ||
-          e.shiftKey ||
-          e.altKey
-        ) {
-          return;
-        }
-        e.preventDefault();
-        onSelectRoom(roomId);
-      }}
-      className={`block ${baseClassName} ${borderClassName}`}
-    >
-      {content}
-    </a>
+    // 段階E-5-2(2026-11-25)。「…」ボタン・メニューは<a>の中には置かない
+    // (リンクの中にボタンを入れるのはHTMLの決まりに反し、押すとカードの
+    // 切り替え〈onSelectRoom〉が起きてしまう恐れがあるため)。この
+    // relativeな外枠の上にabsoluteで重ねる、<a>とは別の要素にする。
+    <div className="relative shrink-0">
+      <a
+        href={`/?room=${roomId}`}
+        onClick={(e) => {
+          // 新しいタブで開く操作(Ctrl/Cmd/Shiftクリック・中クリック等)は
+          // ブラウザ標準の動作に任せ、通常の左クリックの時だけ画面内の
+          // 移動に差し替える(2026-11-24・①A案)。
+          if (
+            e.defaultPrevented ||
+            e.button !== 0 ||
+            e.metaKey ||
+            e.ctrlKey ||
+            e.shiftKey ||
+            e.altKey
+          ) {
+            return;
+          }
+          e.preventDefault();
+          onSelectRoom(roomId);
+        }}
+        className={`block ${baseClassName} ${borderClassName}`}
+      >
+        {content}
+      </a>
+      {canRemove && (
+        <>
+          <button
+            type="button"
+            aria-label={t("roomList.moreOptionsAria")}
+            onClick={(e) => {
+              // <a>の外にあるため本来bubbleしないが、将来の構造変更に
+              // 備えて明示的に止めておく(押してもカードの切り替えが
+              // 起きないことを保証する)。
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleMenu();
+            }}
+            className="absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-full bg-black/40 text-base font-bold leading-none text-white hover:bg-black/60"
+          >
+            ⋯
+          </button>
+          {menuOpen && (
+            <>
+              {/* メニュー外側をクリックしたら閉じる、ただ透明な全画面の
+                  クリック受け皿(2026-11-25)。 */}
+              <div className="fixed inset-0 z-40" onClick={onCloseMenu} />
+              <div className="absolute right-1 top-10 z-50 w-36 overflow-hidden rounded-lg bg-white text-xs text-slate-700 shadow-lg ring-1 ring-slate-200">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onRequestRemove();
+                  }}
+                  className="block w-full px-3 py-2 text-left hover:bg-slate-100"
+                >
+                  {t("roomList.remove")}
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
   );
 }
