@@ -14,6 +14,7 @@ import {
   type MeetingZone,
   type WarpPoint,
   type PlacedObject,
+  type LogoZone,
   type Rect,
   type TemplateObjectImage,
   type AccountSummary,
@@ -200,7 +201,7 @@ export default async function MasterPage() {
   const { data: templateRows } = await supabase
     .from("templates")
     .select(
-      "id, name, background_image_url, thumbnail_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, object_library, placed_objects, camera_boundary",
+      "id, name, background_image_url, thumbnail_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, object_library, placed_objects, camera_boundary, logo_zones, default_logo_image_url",
     )
     .order("created_at", { ascending: true });
 
@@ -288,6 +289,17 @@ export default async function MasterPage() {
           }
         : null;
 
+    const rawLogoZones = Array.isArray(t.logo_zones) ? t.logo_zones : [];
+    const logoZones: LogoZone[] = rawLogoZones.map(
+      (z: Partial<LogoZone>, i: number) => ({
+        id: z.id ?? `logo-zone-${i}`,
+        x: z.x ?? 0,
+        y: z.y ?? 0,
+        width: z.width ?? NEW_ITEM_SIZE,
+        height: z.height ?? NEW_ITEM_SIZE,
+      }),
+    );
+
     return {
       id: t.id,
       name: t.name,
@@ -305,6 +317,8 @@ export default async function MasterPage() {
       objectLibrary,
       placedObjects,
       cameraBoundary,
+      logoZones,
+      defaultLogoImageUrl: t.default_logo_image_url ?? null,
     };
   });
 

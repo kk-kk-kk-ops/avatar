@@ -70,6 +70,7 @@ import {
   MeetingZone,
   WarpPoint,
   PlacedObject,
+  LogoZone,
   Rect,
   WARP_POINT_RADIUS,
   DEFAULT_OBSTACLES,
@@ -2013,6 +2014,14 @@ export default function AvatarSpace({
   // 移動ループ(rAF)から同期的に読む必要がなく、refでの同期は不要
   // (通常のReact stateのみで十分)。
   const [placedObjects, setPlacedObjects] = useState<PlacedObject[]>([]);
+  // ロゴ区画(2026-11追加)。placedObjectsと同じく当たり判定を持たず、
+  // rAFからの同期読み取りも不要なため通常のReact stateのみで持つ。
+  // logoZonesは区画の位置・大きさの一覧、defaultLogoImageUrlは全区画が
+  // 共通で表示するロゴ画像(未設定なら何も表示しない)。
+  const [logoZones, setLogoZones] = useState<LogoZone[]>([]);
+  const [defaultLogoImageUrl, setDefaultLogoImageUrl] = useState<
+    string | null
+  >(null);
   // ワープ直後、瞬間移動先の丸にも重なっているため、そのまま同じフレームで
   // 逆方向へワープし直してしまう(行ったり来たりの無限ループ)のを防ぐため、
   // 「現在重なっている(と扱っている)ワープ地点のID」を記録する。時間経過
@@ -5684,7 +5693,7 @@ export default function AvatarSpace({
         const { data } = await supabase
           .from("templates")
           .select(
-            "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, placed_objects, camera_boundary",
+            "background_image_url, obstacles, meeting_area, warp_points, map_width, map_height, spawn_x, spawn_y, placed_objects, camera_boundary, logo_zones, default_logo_image_url",
           )
           .eq("id", templateId)
           .maybeSingle();
@@ -5692,6 +5701,19 @@ export default function AvatarSpace({
 
         if (data.background_image_url) {
           setBackgroundImageUrl(data.background_image_url);
+        }
+
+        setDefaultLogoImageUrl(data.default_logo_image_url ?? null);
+        if (Array.isArray(data.logo_zones)) {
+          setLogoZones(
+            (data.logo_zones as Array<Partial<LogoZone>>).map((z, i) => ({
+              id: z.id ?? `logo-zone-${i}`,
+              x: z.x ?? 0,
+              y: z.y ?? 0,
+              width: z.width ?? NEW_ITEM_SIZE,
+              height: z.height ?? NEW_ITEM_SIZE,
+            })),
+          );
         }
 
         if (data.map_width && data.map_height) {
@@ -12362,6 +12384,34 @@ export default function AvatarSpace({
               backgroundColor: "#334155",
             }}
           >
+            {/* ロゴ区画(2026-11追加)。マップの絵のすぐ後、ミーティングエリアより
+                前に描画し、アバター(z-10、Avatar.tsx)より奥にする(z-indexは
+                付けない=既定のz-autoのまま。机などのオブジェクト(z-20)や
+                アバターの重なり順はここでは変えない)。ロゴ画像(defaultLogo
+                ImageUrl)が無い間は何も描画しない(区画も枠も見えない)。
+                当たり判定(obstacles)には混ぜず、pointer-events-noneで
+                クリック・ドラッグの邪魔もしない。 */}
+            {defaultLogoImageUrl &&
+              logoZones.map((zone) => (
+                <div
+                  key={zone.id}
+                  className="pointer-events-none absolute overflow-hidden"
+                  style={{
+                    left: zone.x,
+                    top: zone.y,
+                    width: zone.width,
+                    height: zone.height,
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={defaultLogoImageUrl}
+                    alt=""
+                    className="h-full w-full object-contain"
+                  />
+                </div>
+              ))}
+
             {/* ミーティングエリア(複数設置可能)。配置はマスターがテンプレート側で編集する
                 (ルーム内での編集は廃止)。「会議室」(kind: "conference")は機能は
                 同じ(同エリア内での自動音声接続)。

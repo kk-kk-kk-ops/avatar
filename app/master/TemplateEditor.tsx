@@ -17,6 +17,7 @@ import type {
   WarpPoint,
   PlacedObject,
   TemplateObjectImage,
+  LogoZone,
   Rect,
 } from "@/lib/types";
 import {
@@ -25,6 +26,7 @@ import {
   MIN_OBSTACLE_WIDTH,
   MIN_OBSTACLE_HEIGHT,
   MIN_PLACED_OBJECT_SIZE,
+  MAX_LOGO_ZONES,
   AVATAR_HITBOX_WIDTH,
   AVATAR_HITBOX_HEIGHT,
   WARP_CHANNELS,
@@ -39,16 +41,18 @@ import {
   updateTemplateObjectLibrary,
   replaceTemplateImage,
   replaceTemplateThumbnail,
+  replaceTemplateDefaultLogo,
   renameTemplate,
 } from "./actions";
 import {
   uploadTemplateImageClient,
   uploadTemplateObjectImageClient,
+  uploadTemplateLogoRawImageClient,
 } from "./uploadTemplateImage";
 import TemplateRoomPreview from "./TemplateRoomPreview";
 import { useTemplateEditorGuard } from "./templateEditorGuard";
 
-type ItemType = "obstacle" | "zone" | "object";
+type ItemType = "obstacle" | "zone" | "object" | "logoZone";
 
 // コピー(Ctrl+C・「コピー」吹き出し)したアイテムの見た目情報。貼り付け時に
 // 同じ種類のアイテムを新しいidで作り直すために使う。DBには一切保存しない
@@ -74,6 +78,11 @@ type CopiedItemTemplate =
       height: number;
       rotation: number;
       imageUrl: string;
+    }
+  | {
+      itemType: "logoZone";
+      width: number;
+      height: number;
     };
 
 // 元に戻す/やり直すのために保持する、レイアウトの一時点の状態(「保存」で
@@ -87,6 +96,7 @@ type LayoutSnapshot = {
   warpPoints: WarpPoint[];
   placedObjects: PlacedObject[];
   cameraBoundary: Rect | null;
+  logoZones: LogoZone[];
 };
 
 type DragState =
@@ -213,6 +223,10 @@ export default function TemplateEditor({
   const [meetingZones, setMeetingZones] = useState<MeetingZone[]>(
     template.meetingZones,
   );
+  // ロゴ区画(2026-11追加)。壁(obstacles)と同じく「保存」ボタンで
+  // 一括保存する(logoZones自体は位置・サイズの一覧のみで、表示する
+  // ロゴ画像自体はdefaultLogoImageUrl、全区画で共有する)。
+  const [logoZones, setLogoZones] = useState<LogoZone[]>(template.logoZones);
   // 入室時のアバター初期位置(中心座標)。1点のみ持てる。未設定ならnull
   // (=マップ中心にスポーンする従来の挙動のまま)。
   const [spawnPoint, setSpawnPoint] = useState<{ x: number; y: number } | null>(
@@ -237,6 +251,13 @@ export default function TemplateEditor({
     template.thumbnailImageUrl,
   );
   const [thumbnailUploading, setThumbnailUploading] = useState(false);
+  // テンプレート標準のロゴ画像(2026-11追加)。未設定ならnull(=全区画とも
+  // 何も表示しない)。サムネイル画像と同じく「保存」ボタンを待たず
+  // アップロード・解除のたびに即時保存する。
+  const [defaultLogoImageUrl, setDefaultLogoImageUrl] = useState(
+    template.defaultLogoImageUrl,
+  );
+  const [logoUploading, setLogoUploading] = useState(false);
   // オブジェクト登録(2026-09追加)。objectLibraryは登録済み画像の一覧
   // (背景画像と同じく、アップロードのたびに即時保存する。placedObjects
   // は他の壁・エリア等と同じく「保存」ボタンで一括保存する)。
@@ -313,9 +334,10 @@ export default function TemplateEditor({
   const [measuringImageSize, setMeasuringImageSize] = useState(false);
 
   // 「保存」ボタンで一括保存される項目(壁・エリア・マップサイズ・
-  // アバター初期位置・ワープ・配置オブジェクト)のいずれかが変化したら
-  // dirtyを立てる。背景画像・オブジェクトライブラリ・名前は変更した
-  // 時点で即座にDBへ保存されるため、ここには含めない。
+  // アバター初期位置・ワープ・配置オブジェクト・ロゴ区画)のいずれかが
+  // 変化したらdirtyを立てる。背景画像・オブジェクトライブラリ・名前・
+  // ロゴ画像自体(defaultLogoImageUrl)は変更した時点で即座にDBへ保存
+  // されるため、ここには含めない。
   useEffect(() => {
     if (!dirtyEffectMountedRef.current) {
       dirtyEffectMountedRef.current = true;
@@ -325,6 +347,7 @@ export default function TemplateEditor({
   }, [
     obstacles,
     meetingZones,
+    logoZones,
     mapWidth,
     mapHeight,
     spawnPoint,
@@ -475,6 +498,7 @@ export default function TemplateEditor({
     warpPoints,
     placedObjects,
     cameraBoundary,
+    logoZones,
   });
 
   // 壁・エリア・ワープ・配置オブジェクト・マップサイズ・アバター初期位置の
@@ -500,6 +524,7 @@ export default function TemplateEditor({
     setWarpPoints(snap.warpPoints);
     setPlacedObjects(snap.placedObjects);
     setCameraBoundary(snap.cameraBoundary);
+    setLogoZones(snap.logoZones);
   };
 
   const handleUndo = () => {
@@ -530,9 +555,10 @@ export default function TemplateEditor({
 
   // 「リセット」ボタン(確認モーダルの「リセット」押下時)。エリア(壁・
   // ミーティング・会議・作業・アナウンス。obstacles/meetingZonesの2配列に
-  // 分かれて入っている)・配置済みオブジェクト(placedObjects)・
-  // ワープポイント(warpPoints)をすべて削除する。背景画像・マップサイズ・
-  // アバター初期位置・オブジェクトライブラリ(登録画像そのもの)は対象外
+  // 分かれて入っている)・ロゴ区画(logoZones)・配置済みオブジェクト
+  // (placedObjects)・ワープポイント(warpPoints)をすべて削除する。
+  // 背景画像・マップサイズ・アバター初期位置・オブジェクトライブラリ
+  // (登録画像そのもの)・ロゴ画像自体(defaultLogoImageUrl)は対象外
   // (変更しない)。pushUndoを先に呼んでおくので、誤操作時は通常のUndoで
   // 元に戻せる。
   const handleReset = () => {
@@ -541,6 +567,7 @@ export default function TemplateEditor({
     setMeetingZones([]);
     setPlacedObjects([]);
     setWarpPoints([]);
+    setLogoZones([]);
     setSelectedItem(null);
     setResetConfirmOpen(false);
   };
@@ -558,7 +585,9 @@ export default function TemplateEditor({
         ? obstacles
         : itemType === "object"
           ? placedObjects
-          : meetingZones;
+          : itemType === "logoZone"
+            ? logoZones
+            : meetingZones;
     const item = list.find((i) => i.id === id);
     if (!item) return;
     setSelectedItem({ itemType, id });
@@ -857,6 +886,8 @@ export default function TemplateEditor({
       setPlacedObjects((prev) =>
         applyDrag(prev, drag, dx, dy, MIN_PLACED_OBJECT_SIZE, MIN_PLACED_OBJECT_SIZE),
       );
+    } else if (drag.itemType === "logoZone") {
+      setLogoZones((prev) => applyDrag(prev, drag, dx, dy));
     } else {
       setMeetingZones((prev) => applyDrag(prev, drag, dx, dy));
     }
@@ -1059,6 +1090,32 @@ export default function TemplateEditor({
     ]);
   };
 
+  // 「区画設置」: 壁(addObstacle)と同じ作りで、今見えている範囲の中心に
+  // 四角い区画を1つ置く。回転・labelは持たない。MAX_LOGO_ZONES個までの
+  // 上限はボタン側(disabled)で防ぐため、ここでは呼ばれた時点で追加する
+  // だけで良い。
+  const addLogoZone = () => {
+    pushUndo();
+    const center = getVisibleCenterMapPoint();
+    const pos = clampPosition(
+      center.x - NEW_ITEM_SIZE / 2,
+      center.y - NEW_ITEM_SIZE / 2,
+      NEW_ITEM_SIZE,
+      NEW_ITEM_SIZE,
+      mapWidth,
+      mapHeight,
+    );
+    setLogoZones((prev) => [
+      ...prev,
+      {
+        id: randomItemId("logo-zone"),
+        ...pos,
+        width: NEW_ITEM_SIZE,
+        height: NEW_ITEM_SIZE,
+      },
+    ]);
+  };
+
   const addMeetingZone = () => {
     pushUndo();
     const center = getVisibleCenterMapPoint();
@@ -1211,6 +1268,11 @@ export default function TemplateEditor({
     setPlacedObjects((prev) => prev.filter((o) => o.id !== id));
     deselectIfRemoved("object", id);
   };
+  const removeLogoZone = (id: string) => {
+    pushUndo();
+    setLogoZones((prev) => prev.filter((z) => z.id !== id));
+    deselectIfRemoved("logoZone", id);
+  };
 
   // 「オブジェクト登録」: 選択したPNG画像をアップロードし、ライブラリに
   // 即時追加・保存する(背景画像の変更と同じ考え方。詳細はobjectLibrary
@@ -1331,7 +1393,7 @@ export default function TemplateEditor({
         label: target.label,
         kind: target.kind,
       };
-    } else {
+    } else if (selectedItem.itemType === "object") {
       const target = placedObjects.find((o) => o.id === selectedItem.id);
       if (!target) return;
       copiedItemTemplateRef.current = {
@@ -1341,6 +1403,14 @@ export default function TemplateEditor({
         rotation: target.rotation ?? 0,
         imageUrl: target.imageUrl,
       };
+    } else {
+      const target = logoZones.find((z) => z.id === selectedItem.id);
+      if (!target) return;
+      copiedItemTemplateRef.current = {
+        itemType: "logoZone",
+        width: target.width,
+        height: target.height,
+      };
     }
   };
 
@@ -1349,6 +1419,16 @@ export default function TemplateEditor({
   const pasteCopiedItemAt = (mapX: number, mapY: number) => {
     const copied = copiedItemTemplateRef.current;
     if (!copied) return;
+    // ロゴ区画だけはコピー元の種類に関わらず最大件数(MAX_LOGO_ZONES)の
+    // 対象(他のアイテム種別には上限が無い)。「区画設置」ボタンと同じ
+    // 上限を、貼り付け(Ctrl+V・「貼り付け」吹き出し)でも超えないように
+    // する。何も変更していないのでpushUndoの前に判定し、既存のエラー
+    // 表示(setError、サイドバー上部)と同じ出し方で知らせる。
+    if (copied.itemType === "logoZone" && logoZones.length >= MAX_LOGO_ZONES) {
+      setError(`ロゴ区画は最大${MAX_LOGO_ZONES}個までです`);
+      setPasteBubbleAt(null);
+      return;
+    }
     pushUndo();
     const pos = clampPosition(
       mapX - copied.width / 2,
@@ -1386,7 +1466,7 @@ export default function TemplateEditor({
         },
       ]);
       setSelectedItem({ itemType: "zone", id });
-    } else {
+    } else if (copied.itemType === "object") {
       const id = randomItemId("placed-object");
       setPlacedObjects((prev) => [
         ...prev,
@@ -1400,6 +1480,13 @@ export default function TemplateEditor({
         },
       ]);
       setSelectedItem({ itemType: "object", id });
+    } else {
+      const id = randomItemId("logo-zone");
+      setLogoZones((prev) => [
+        ...prev,
+        { id, ...pos, width: copied.width, height: copied.height },
+      ]);
+      setSelectedItem({ itemType: "logoZone", id });
     }
     setPasteBubbleAt(null);
   };
@@ -1435,6 +1522,7 @@ export default function TemplateEditor({
       warpPoints,
       placedObjects,
       cameraBoundary,
+      logoZones,
     );
     if (!result.ok) {
       setError(result.error);
@@ -1476,6 +1564,7 @@ export default function TemplateEditor({
       warpPoints,
       placedObjects,
       cameraBoundary,
+      logoZones,
     );
     if (!result.ok) {
       setError(result.error);
@@ -1495,6 +1584,7 @@ export default function TemplateEditor({
     warpPoints,
     placedObjects,
     cameraBoundary,
+    logoZones,
     router,
   ]);
 
@@ -1650,6 +1740,54 @@ export default function TemplateEditor({
     }
   };
 
+  // ロゴ区画の標準ロゴ画像のアップロード(2026-11追加)。サムネイルと
+  // 違い、クライアント側では形式・サイズの検証とアップロードのみ行い、
+  // 実際の形式確認・縮小・WebP変換はreplaceTemplateDefaultLogo
+  // (Server Action、サービスロール)側で行う(運営者だけが実行できる)。
+  const handleLogoImageChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError(null);
+    setLogoUploading(true);
+    try {
+      const rawPath = await uploadTemplateLogoRawImageClient(file);
+      const result = await replaceTemplateDefaultLogo(template.id, rawPath);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setDefaultLogoImageUrl(result.url);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "画像の登録に失敗しました");
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
+  // ロゴ画像の解除。区画自体(logoZones)は残り、ロゴが無い状態
+  // (薄い黄色の区画)に戻る。
+  const handleRemoveDefaultLogo = async () => {
+    setError(null);
+    setLogoUploading(true);
+    try {
+      const result = await replaceTemplateDefaultLogo(template.id, null);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setDefaultLogoImageUrl(null);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "解除に失敗しました");
+    } finally {
+      setLogoUploading(false);
+    }
+  };
+
   // ---- キーボードショートカット(Ctrl+Z/Ctrl+Y/Ctrl+C/Ctrl+V) ----
   // Mac配列も考慮しCmdキー(metaKey)も同様に扱う。名前変更・マップサイズ・
   // ワープの名前欄などテキスト入力中は、ブラウザ標準のテキスト編集用
@@ -1802,6 +1940,57 @@ export default function TemplateEditor({
           </div>
           <p className="mt-1 text-[10px] text-slate-400">
             ※サイズ：1MB以下　形式：WEBPのみ　未設定時は背景画像を使用
+          </p>
+        </div>
+
+        <div>
+          <p className="mb-1 text-xs font-semibold text-slate-500">
+            ロゴ区画
+          </p>
+          <div className="mb-2 flex h-16 w-28 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+            {defaultLogoImageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={defaultLogoImageUrl}
+                alt=""
+                className="h-full w-full object-contain"
+              />
+            ) : (
+              <span className="text-[10px] text-slate-400">ロゴなし</span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={addLogoZone}
+            disabled={logoZones.length >= MAX_LOGO_ZONES}
+            className="mb-1.5 w-full rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            区画設置({logoZones.length}/{MAX_LOGO_ZONES})
+          </button>
+          <div className="flex items-center gap-1.5">
+            <label className="block flex-1 cursor-pointer rounded-lg bg-slate-800 px-3 py-1.5 text-center text-xs font-semibold text-white hover:bg-slate-700">
+              {logoUploading ? "アップロード中..." : "ロゴ挿入"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handleLogoImageChange}
+                disabled={logoUploading}
+              />
+            </label>
+            {defaultLogoImageUrl && (
+              <button
+                type="button"
+                onClick={handleRemoveDefaultLogo}
+                disabled={logoUploading}
+                className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              >
+                解除
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[10px] text-slate-400">
+            ※画像：PNG/JPEG/WebP・10MB以下(長い辺1600pxに縮小)
           </p>
         </div>
 
@@ -2657,6 +2846,82 @@ export default function TemplateEditor({
                   <div
                     onPointerDown={(e) =>
                       handlePointerDown(e, "obstacle", o.id, "resize", "bl")
+                    }
+                    className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
+                  />
+                  {isSelected && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={copySelectedItem}
+                      className={copyBubbleClassName}
+                    >
+                      コピー
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* ロゴ区画(2026-11追加)。壁と同形式のRectだが回転・labelは
+                持たない。ロゴが無い時は薄い黄色半透明+点線枠+「ロゴ区画」
+                の文字、ロゴがある時は点線枠は残したまま中にdefaultLogo
+                ImageUrlをobject-containで表示する(全区画で共通の1枚)。 */}
+            {logoZones.map((z) => {
+              const isSelected = isItemSelected("logoZone", z.id);
+              return (
+                <div
+                  key={z.id}
+                  onPointerDown={(e) => handlePointerDown(e, "logoZone", z.id, "move")}
+                  className={`absolute flex cursor-move items-center justify-center overflow-hidden border-2 border-dashed text-center text-[10px] font-semibold text-yellow-900 ${
+                    isSelected ? "border-red-500" : "border-yellow-400"
+                  } ${defaultLogoImageUrl ? "" : "bg-yellow-200/40"}`}
+                  style={{
+                    left: z.x * scale,
+                    top: z.y * scale,
+                    width: z.width * scale,
+                    height: z.height * scale,
+                  }}
+                >
+                  {defaultLogoImageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={defaultLogoImageUrl}
+                      alt=""
+                      className="pointer-events-none h-full w-full object-contain"
+                    />
+                  ) : (
+                    "ロゴ区画"
+                  )}
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => removeLogoZone(z.id)}
+                    className="absolute right-0 top-0 rounded bg-red-600 px-1.5 text-[10px] leading-4 text-white"
+                  >
+                    ×
+                  </button>
+                  {/* リサイズハンドル(4隅)。壁と同じ考え方だが回転は無い。 */}
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "logoZone", z.id, "resize", "br")
+                    }
+                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "logoZone", z.id, "resize", "tl")
+                    }
+                    className="absolute left-0 top-0 h-3 w-3 cursor-nwse-resize"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "logoZone", z.id, "resize", "tr")
+                    }
+                    className="absolute right-0 top-0 h-3 w-3 cursor-nesw-resize"
+                  />
+                  <div
+                    onPointerDown={(e) =>
+                      handlePointerDown(e, "logoZone", z.id, "resize", "bl")
                     }
                     className="absolute bottom-0 left-0 h-3 w-3 cursor-nesw-resize"
                   />

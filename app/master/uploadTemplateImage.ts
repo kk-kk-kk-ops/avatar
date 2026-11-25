@@ -27,6 +27,47 @@ export async function uploadTemplateImageClient(file: File): Promise<string> {
   return publicUrl;
 }
 
+// ロゴ区画(2026-11追加)用の、サーバー側で縮める前の生画像アップロード。
+// 形式の検証(PNG/JPEG/WebPのみ、SVGは拒否)・長い辺1600px以下への縮小・
+// WebP変換はreplaceTemplateDefaultLogo(Server Action)がサービスロールで
+// 行うため、ここでは「10MB以下か」のクライアント側チェックだけ行い、
+// 元のファイルをそのまま"logos/raw/"配下へ直接アップロードする(背景
+// 画像と同じ理由でServer Actions経由にはしない)。戻り値はStorage上の
+// パス(公開URLではない。Server Action側がサービスロールでdownloadする
+// ための位置情報として使う)。
+const MAX_LOGO_RAW_IMAGE_BYTES = 10 * 1024 * 1024;
+
+export async function uploadTemplateLogoRawImageClient(
+  file: File,
+): Promise<string> {
+  const isPng = file.type === "image/png" || /\.png$/i.test(file.name);
+  const isJpeg =
+    file.type === "image/jpeg" || /\.(jpe?g)$/i.test(file.name);
+  const isWebp = file.type === "image/webp" || /\.webp$/i.test(file.name);
+  if (!isPng && !isJpeg && !isWebp) {
+    throw new Error("PNG・JPEG・WebP形式の画像のみ登録できます");
+  }
+  if (file.size > MAX_LOGO_RAW_IMAGE_BYTES) {
+    throw new Error("画像は10MB以下にしてください");
+  }
+  const contentType = isPng
+    ? "image/png"
+    : isJpeg
+      ? "image/jpeg"
+      : "image/webp";
+  const supabase = createClient();
+  const extMatch = /\.[a-zA-Z0-9]+$/.exec(file.name);
+  const ext = extMatch ? extMatch[0] : "";
+  const path = `logos/raw/${crypto.randomUUID()}${ext}`;
+  const { error } = await supabase.storage
+    .from("template-images")
+    .upload(path, file, { contentType });
+  if (error) {
+    throw new Error(`画像のアップロードに失敗しました: ${error.message}`);
+  }
+  return path;
+}
+
 // 「オブジェクト登録」用の透過PNG/WEBP画像アップロード(2026-09追加、
 // 2026-11にWEBPも許可)。背景画像と同じバケット(template-images)を
 // 使うが、"objects/"配下に分けて置く(バケット自体のMIME制限は背景画像と

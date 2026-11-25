@@ -350,6 +350,12 @@ export type MapTemplate = {
   // コメント参照。
   objectLibrary: TemplateObjectImage[];
   placedObjects: PlacedObject[];
+  // ロゴ区画(2026-11追加)。logoZonesはマップ上の区画の一覧(壁と同形式、
+  // 最大MAX_LOGO_ZONES個)、defaultLogoImageUrlはテンプレート標準のロゴ
+  // 画像(未設定=nullなら、全区画とも何も表示しない)。全区画が同じ
+  // defaultLogoImageUrlを表示する(区画ごとに別の画像は持たない)。
+  logoZones: LogoZone[];
+  defaultLogoImageUrl: string | null;
 };
 
 // 「オブジェクト登録」で登録した透過PNG画像のライブラリ(テンプレートごと)。
@@ -557,6 +563,12 @@ export type Rect = { x: number; y: number; width: number; height: number };
 // (既存データにはこのキーが無いが、読み出し側で ?? 0 として扱うため
 // マイグレーション不要)。
 export type Obstacle = Rect & { id: string; label: string; rotation?: number };
+
+// ロゴ区画(2026-11追加)。テンプレートのマップ上に複数置ける四角い区画で、
+// 全区画が同じロゴ(templates.default_logo_image_url)を表示する。壁
+// (Obstacle)と違い当たり判定は持たず、回転も無い(壁より単純なRect+idのみ)。
+export type LogoZone = Rect & { id: string };
+export const MAX_LOGO_ZONES = 20; // 1テンプレートに置ける区画の上限
 
 // ミーティングエリア(複数設置可能。同じエリアIDにいる人同士だけ自動で音声接続される)。
 // kind: "meeting"(デフォルト、省略時もこれと同じ扱い)はバーチャル空間内でも

@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import sharp from "sharp";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type {
   Obstacle,
@@ -9,8 +11,10 @@ import type {
   WarpPoint,
   PlacedObject,
   TemplateObjectImage,
+  LogoZone,
   Rect,
 } from "@/lib/types";
+import { MAX_LOGO_ZONES } from "@/lib/types";
 
 // Server Actionからthrowしたエラーは、本番ビルドでは詳細メッセージが
 // Next.jsによって「An error occurred in the Server Components render...」
@@ -86,6 +90,25 @@ export async function renameTemplate(
   return { ok: true };
 }
 
+// logoZonesの形(配列・各要素のid/x/y/width/height・件数上限)をここで
+// サーバー側として確かめる(クライアント側のaddLogoZone/applyDrag等は
+// 正しい形しか作らないはずだが、Server Actionは誰からでも直接呼べるため、
+// 他のアイテム種別には無いこの検証をロゴ区画にだけ新設する)。
+function isValidLogoZones(value: unknown): value is LogoZone[] {
+  if (!Array.isArray(value)) return false;
+  if (value.length > MAX_LOGO_ZONES) return false;
+  return value.every(
+    (z) =>
+      typeof z === "object" &&
+      z !== null &&
+      typeof (z as LogoZone).id === "string" &&
+      typeof (z as LogoZone).x === "number" &&
+      typeof (z as LogoZone).y === "number" &&
+      typeof (z as LogoZone).width === "number" &&
+      typeof (z as LogoZone).height === "number",
+  );
+}
+
 export async function updateTemplateLayout(
   templateId: string,
   obstacles: Obstacle[],
@@ -96,8 +119,15 @@ export async function updateTemplateLayout(
   warpPoints: WarpPoint[],
   placedObjects: PlacedObject[],
   cameraBoundary: Rect | null,
+  logoZones: LogoZone[],
 ): Promise<ActionResult> {
   const { supabase } = await requireMaster();
+  if (!isValidLogoZones(logoZones)) {
+    return {
+      ok: false,
+      error: `ロゴ区画は最大${MAX_LOGO_ZONES}個までです`,
+    };
+  }
   const { error } = await supabase
     .from("templates")
     .update({
@@ -110,6 +140,7 @@ export async function updateTemplateLayout(
       warp_points: warpPoints,
       placed_objects: placedObjects,
       camera_boundary: cameraBoundary,
+      logo_zones: logoZones,
     })
     .eq("id", templateId);
   if (error) return { ok: false, error: "レイアウトの保存に失敗しました" };
@@ -208,6 +239,155 @@ export async function replaceTemplateThumbnail(
 
   revalidatePath("/master");
   return { ok: true };
+}
+
+export type ReplaceLogoResult =
+  | { ok: true; url: string | null }
+  | { ok: false; error: string };
+
+// default_logo_image_urlの公開URLから、Storage上のパス(例:
+// "logos/xxxx.webp")だけを取り出す。削除(storage.remove)にはバケット内の
+// パスが必要なため。形が想定と違えばnullを返し、呼び出し側は削除を
+// スキップする(消せなくても致命的ではないため、ここでは失敗にしない)。
+function logoPathFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const marker = "/template-images/";
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  return url.slice(idx + marker.length);
+}
+
+// 前のロゴ画像を削除してよいパスかどうか。"logos/"配下(変換済みの
+// ロゴ本体)だけを対象とし、"logos/raw/"配下(アップロード直後の元画像、
+// 別の処理が別タイミングで削除・参照している途中の可能性がある)は
+// 対象から外す。logoPathFromUrlが形を認識できなかった場合もfalse。
+function isDeletableOldLogoPath(path: string | null): path is string {
+  return !!path && path.startsWith("logos/") && !path.startsWith("logos/raw/");
+}
+
+// ロゴ区画の標準ロゴ画像の登録・解除(2026-11追加)。サムネイル画像と
+// 同じく「保存」ボタンを待たず即時保存する。
+// - rawPathを渡すと新しい画像として登録する: uploadTemplateLogoRawImage
+//   Clientが直接アップロードした"logos/raw/"配下の元画像を、サービス
+//   ロールで読み込み、sharpのmetadataで形式を確かめ(png/jpeg/webp以外、
+//   SVGを含めて拒否)、長い辺1600px以下に縮め(元が小さければ拡大しない)、
+//   WebP(quality 90、透明は保持)にして"logos/"配下へ保存し直し、元画像
+//   (raw)を削除する。
+// - rawPathにnullを渡すと解除する(default_logo_image_urlをnullにし、
+//   それまでの画像があれば削除する)。
+export async function replaceTemplateDefaultLogo(
+  templateId: string,
+  rawPath: string | null,
+): Promise<ReplaceLogoResult> {
+  const { supabase } = await requireMaster();
+
+  const { data: template } = await supabase
+    .from("templates")
+    .select("default_logo_image_url")
+    .eq("id", templateId)
+    .maybeSingle();
+  if (!template) return { ok: false, error: "テンプレートが見つかりません" };
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  // TODO: 全環境の差し替えが終わったら右側のフォールバックを削除する
+  const serviceRoleKey =
+    process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceRoleKey) {
+    return { ok: false, error: "Service Roleの設定が不足しています" };
+  }
+  const serviceClient = createSupabaseClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false },
+  });
+
+  if (!rawPath) {
+    const oldPath = logoPathFromUrl(template.default_logo_image_url);
+    if (isDeletableOldLogoPath(oldPath)) {
+      await serviceClient.storage.from("template-images").remove([oldPath]);
+    }
+    const { error } = await supabase
+      .from("templates")
+      .update({ default_logo_image_url: null })
+      .eq("id", templateId);
+    if (error) return { ok: false, error: "ロゴ画像の解除に失敗しました" };
+    revalidatePath("/master");
+    return { ok: true, url: null };
+  }
+
+  if (!rawPath.startsWith("logos/raw/")) {
+    return { ok: false, error: "不正な画像パスです" };
+  }
+
+  const { data: rawBlob, error: downloadError } = await serviceClient.storage
+    .from("template-images")
+    .download(rawPath);
+  if (downloadError || !rawBlob) {
+    return { ok: false, error: "画像の取得に失敗しました" };
+  }
+
+  const inputBuffer = Buffer.from(await rawBlob.arrayBuffer());
+  const metadata = await sharp(inputBuffer)
+    .metadata()
+    .catch(() => null);
+  // SVGもここで拒否される(png/jpeg/webp以外はすべて断るため)。
+  if (!metadata?.format || !["png", "jpeg", "webp"].includes(metadata.format)) {
+    await serviceClient.storage.from("template-images").remove([rawPath]);
+    return {
+      ok: false,
+      error: "対応していない画像形式です(PNG/JPEG/WebPのみ、SVGは登録できません)",
+    };
+  }
+
+  // 縮小・WebP変換と、変換後の画像の保存をtry/catchで囲む。sharpの処理
+  // (壊れた画像の途中失敗等)・upload()が例外を投げた場合のどちらでも、
+  // logos/raw/の元画像を消してから失敗として返す(raw画像を消し忘れて
+  // ゴミが残ることを防ぐ)。upload()自体はエラーを投げずに{error}を返す
+  // 実装だが、throwしてcatchへ合流させることで後処理を1か所にまとめる。
+  let finalPath: string;
+  let publicUrl: string;
+  try {
+    const outputBuffer = await sharp(inputBuffer)
+      .rotate() // EXIFの回転情報を反映してから焼き込む(compress-imageと同じ)
+      .resize({
+        width: 1600,
+        height: 1600,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 90 }) // 透明な部分はwebp変換後も保持される
+      .toBuffer();
+
+    finalPath = `logos/${crypto.randomUUID()}.webp`;
+    const { error: uploadError } = await serviceClient.storage
+      .from("template-images")
+      .upload(finalPath, outputBuffer, { contentType: "image/webp" });
+    if (uploadError) throw uploadError;
+
+    publicUrl = serviceClient.storage
+      .from("template-images")
+      .getPublicUrl(finalPath).data.publicUrl;
+  } catch (err) {
+    console.error("ロゴ画像の変換・保存に失敗しました", err);
+    await serviceClient.storage.from("template-images").remove([rawPath]);
+    return { ok: false, error: "画像の変換に失敗しました" };
+  }
+
+  await serviceClient.storage.from("template-images").remove([rawPath]);
+
+  const { error } = await supabase
+    .from("templates")
+    .update({ default_logo_image_url: publicUrl })
+    .eq("id", templateId);
+  if (error) return { ok: false, error: "ロゴ画像の更新に失敗しました" };
+
+  // 前のロゴ画像(logos/配下。logos/raw/の元画像は上で既に削除済み)が
+  // 残っていれば削除する。
+  const oldPath = logoPathFromUrl(template.default_logo_image_url);
+  if (isDeletableOldLogoPath(oldPath) && oldPath !== finalPath) {
+    await serviceClient.storage.from("template-images").remove([oldPath]);
+  }
+
+  revalidatePath("/master");
+  return { ok: true, url: publicUrl };
 }
 
 export async function updateAvatarSize(sizePx: number): Promise<ActionResult> {
