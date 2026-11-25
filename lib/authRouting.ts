@@ -8,7 +8,7 @@ import { ProfileRole } from "./types";
 // isMasterはaccount_id/roleとは独立した軸(プラットフォーム全体を横断して
 // 見られる権限)。k.one.for.all.k@gmail.comのように「自分のアカウントの
 // adminであり、かつマスターでもある」状態を表現するため、type(no-account/
-// admin/guest)を上書きせずisMasterを別フィールドとして持たせている。
+// admin)を上書きせずisMasterを別フィールドとして持たせている。
 // TOPページ(/)はisMasterを優先して/masterへ振り分ける(マスターが
 // 自分のルームに入る時は、/master画面の「ルームへ」から自分の招待URL
 // 〈/?invite=トークン〉経由で入る)。
@@ -28,7 +28,6 @@ export type UserRouteStateProfile = {
 export type UserRouteState = (
   | { type: "no-account"; isMaster: boolean } // プラン未選択・未招待の新規ユーザー → /plan
   | { type: "admin"; accountId: string; isMaster: boolean } // アカウントのオーナー → /(ルーム入室画面)
-  | { type: "guest"; accountId: string; isMaster: boolean } // 招待されたゲスト → /(ルーム入室画面)
 ) & { profile: UserRouteStateProfile };
 
 export async function resolveUserRouteState(
@@ -56,18 +55,18 @@ export async function resolveUserRouteState(
     return { type: "no-account", isMaster, profile: profileFields };
   }
 
-  const role = (profile.role as ProfileRole | null) ?? "guest";
-  return role === "admin"
-    ? {
-        type: "admin",
-        accountId: profile.account_id,
-        isMaster,
-        profile: profileFields,
-      }
-    : {
-        type: "guest",
-        accountId: profile.account_id,
-        isMaster,
-        profile: profileFields,
-      };
+  // 段階Fの後のコード整理(2026-11-25)。account_idがあってもroleが
+  // 'admin'でない場合(段階Fより前の古いゲストの名残り。本番で該当0件を
+  // 確認済み)は、管理者権限を誤って与えないよう"no-account"と同じ扱いに
+  // する。
+  if (profile.role !== "admin") {
+    return { type: "no-account", isMaster, profile: profileFields };
+  }
+
+  return {
+    type: "admin",
+    accountId: profile.account_id,
+    isMaster,
+    profile: profileFields,
+  };
 }

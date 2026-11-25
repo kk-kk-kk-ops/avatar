@@ -17,7 +17,7 @@ export type RoomJoinSidebarProps = {
   // AvatarSpace.tsx側でroomListResultから求めて渡す(ここではロジックを
   // 持たない)。カードが見つからない・ownerDisplayNameが無い場合は
   // 従来どおりroom.nameを見出しにする。
-  roomCardKind?: "own" | "member" | "legacyGuest";
+  roomCardKind?: "own" | "member";
   roomOwnerDisplayName?: string | null;
   onlineCount: number | undefined;
   maxPeoplePerRoom: number;

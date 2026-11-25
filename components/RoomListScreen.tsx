@@ -35,7 +35,6 @@ export default function RoomListScreen({
     result.memberCards === "failed" ? [] : result.memberCards;
   const isEmpty =
     result.ownCard === "none" &&
-    result.legacyGuestCard === "none" &&
     result.memberCards !== "failed" &&
     memberCards.length === 0;
 
@@ -78,14 +77,6 @@ export default function RoomListScreen({
               t={t}
             />
           )}
-
-          {result.legacyGuestCard === "failed" && (
-            <FailedCard label={t("roomList.loadFailed")} />
-          )}
-          {result.legacyGuestCard !== "none" &&
-            result.legacyGuestCard !== "failed" && (
-              <RoomCardView card={result.legacyGuestCard} t={t} />
-            )}
 
           {result.memberCards === "failed" ? (
             <FailedCard label={t("roomList.loadFailed")} />

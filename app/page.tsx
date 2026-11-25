@@ -98,17 +98,17 @@ function RoomLoadFailedNotice({ locale }: { locale: Locale }) {
   );
 }
 
-// アカウント所有者(admin)またはゲスト(guest)として、自分の所属する
-// アカウントのルームへのアバター選択・入室画面を描画する。通常のログイン後
-// フロー(招待なし)、および招待URL経由(自分自身の招待URL・ゲスト参加の
-// 両方)から共通で呼ばれる。
+// アカウント所有者(admin)として、自分の所属するアカウントのルームへの
+// アバター選択・入室画面を描画する。通常のログイン後フロー(招待なし)、
+// および招待URL経由(自分自身の招待URL)から共通で呼ばれる(段階Fの後の
+// コード整理で、ゲスト参加側の呼び出しは無くなった)。
 async function renderRoomJoin(
   supabase: SupabaseClient,
   user: User,
-  state: UserRouteState & { type: "admin" | "guest" },
+  state: UserRouteState & { type: "admin" },
   // 段階E-5-1c(2026-11-25)。呼び出し元(renderMemberRoomJoinの!entry
   // ブロック)が本人確認のために既にfetchAccountRoomCardで取得済みの
-  // own/legacyGuestカード。これをそのままroomsに使い、roomsテーブル・
+  // ownカード。これをそのままroomsに使い、roomsテーブル・
   // templatesテーブルの取り直しをやめる(L1)。roomCard.roomIdが
   // nullの場合(自分のアカウントはあるがrooms行が無い)はroomsを
   // 空配列にする(今までの「roomRowsが0行」の場合と同じ扱い)。
@@ -161,37 +161,9 @@ async function renderRoomJoin(
   const account = guestInfoRows?.[0] ?? null;
   const plan = (account?.plan as PlanId) ?? "free";
 
-  // このルームの中では、今いるアカウントの管理者(admin)である場合だけ
-  // 「管理画面へ」「マスター画面へ」を表示する。他人の招待URL経由で
-  // ゲスト参加している場合、たとえ自分自身がマスター権限を持っていても
-  // このルーム内では常にゲストとしてのみ振る舞う(自分の管理画面/
-  // マスター画面には行けないようにする)。
+  // renderRoomJoinはstate.type === "admin"の場合だけ呼ばれる(段階Fの
+  // 後のコード整理で、ゲスト用の呼び出し元を削除したため)。
   const isAccountAdmin = state.type === "admin";
-
-  // ゲストの場合、ログアウト後は管理者用ログイン画面ではなく、この
-  // アカウントの招待URL(ゲスト用ログイン画面)に戻れるようにする。
-  const guestInviteToken =
-    state.type === "guest" ? account?.invite_token ?? null : null;
-
-  // 管理画面ダッシュボードから強制退出させられたゲストは、管理者が
-  // 解除するまでこのアカウントのルームへ再入室できない。
-  if (state.type === "guest") {
-    const { data: banRow } = await supabase
-      .from("banned_participants")
-      .select("user_id")
-      .eq("account_id", state.accountId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (banRow) {
-      return (
-        <BannedNotice
-          logoutRedirectTo={
-            guestInviteToken ? `/?invite=${guestInviteToken}` : "/login"
-          }
-        />
-      );
-    }
-  }
 
   return (
     <AvatarSpaceLoader
@@ -213,7 +185,7 @@ async function renderRoomJoin(
       isMaster={isAccountAdmin && state.isMaster}
       // 段階E-4(2026-11-25)。自分のルームなので、isMasterと同じ値。
       showMasterPanelLink={isAccountAdmin && state.isMaster}
-      guestInviteToken={guestInviteToken}
+      guestInviteToken={null}
       avatarSizePx={appSettings?.avatar_size_px ?? undefined}
       maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
@@ -395,7 +367,7 @@ async function renderMemberRoomJoin(
       const ownCard = await fetchAccountRoomCard(
         supabase,
         routeState.accountId,
-        routeState.type === "admin" ? "own" : "legacyGuest",
+        "own",
       );
       // 段階E-5-1(2026-11-24・修正1、2回目)。fetchAccountRoomCardが
       // エラーで"failed"を返した場合も、redirect("/?error=invalid_invite")
@@ -409,7 +381,7 @@ async function renderMemberRoomJoin(
       }
       if (ownCard.roomId === roomId) {
         // 段階E-5-1c(2026-11-25・L2)。上で取得済みのownCardを渡し、
-        // getRoomListEntriesの中でown/legacyGuestカードを取り直さない。
+        // getRoomListEntriesの中でownカードを取り直さない。
         const roomListResult = await getRoomListEntries(
           supabase,
           user.id,
@@ -642,16 +614,15 @@ export default async function Home({
         // 段階E-5-1(2026-11-24・修正B)。自分の招待URLを開いた場合も
         // /?room=自分のルームIDへ移してアドレス欄から招待トークンを
         // 消す(統合画面〈左の一覧+右の入室パネル〉に合流させる)。
-        // ルームIDの選び方はfetchAccountRoomCardと同じ(持ち主→own、
-        // 古いゲスト→legacyGuest)。取れない場合(ルームが無いなど)は
-        // "/"へ(運営者の/masterの「ルームへ」のリンク先自体
-        // 〈/?invite=〉は変えない、E-4で行う)。
+        // ルームIDの選び方はfetchAccountRoomCardと同じ(持ち主→own)。
+        // 取れない場合(ルームが無いなど)は"/"へ(運営者の/masterの
+        // 「ルームへ」のリンク先自体〈/?invite=〉は変えない、E-4で行う)。
         const state = await resolveUserRouteState(supabase, user.id);
-        if (state.type === "admin" || state.type === "guest") {
+        if (state.type === "admin") {
           const ownCard = await fetchAccountRoomCard(
             supabase,
             state.accountId,
-            state.type === "admin" ? "own" : "legacyGuest",
+            "own",
           );
           if (ownCard !== "failed" && ownCard.roomId) {
             const params = new URLSearchParams({ room: ownCard.roomId });
@@ -698,9 +669,9 @@ export default async function Home({
 
     // 入室の仕組みの作り替え 段階E-5-1(2026-11-24決定・修正C)。「/」
     // (招待・?room=のいずれも無い通常アクセス)では、一覧の先頭の
-    // 「リンクできるカード」(roomIdがあるもの。自分のルーム→古いゲストの
-    // 特例カード→メンバーのルーム〈最終アクセス順〉の順、
-    // pickFirstLinkableRoomId参照)へ/?room=でリダイレクトし、統合画面
+    // 「リンクできるカード」(roomIdがあるもの。自分のルーム→メンバーの
+    // ルーム〈最終アクセス順〉の順、pickFirstLinkableRoomId参照)へ
+    // /?room=でリダイレクトし、統合画面
     // (左にカード一覧・右に入室パネル)を表示する。無効招待・請求結果の
     // 通知(修正A)は移り先へそのまま引き継ぐ(統合画面側
     // 〈components/AvatarSpace.tsx〉が表示後にアドレス欄から消す)。

@@ -136,9 +136,6 @@ export default function RoomListSidebar({
         {result.ownCard === "failed" && (
           <FailedCard label={t("roomList.loadFailed")} />
         )}
-        {result.legacyGuestCard === "failed" && (
-          <FailedCard label={t("roomList.loadFailed")} />
-        )}
         {result.memberCards === "failed" && (
           <FailedCard label={t("roomList.loadFailed")} />
         )}
@@ -153,14 +150,9 @@ export default function RoomListSidebar({
             onlineCount={card.roomId ? onlineCounts[card.roomId] : undefined}
             onSelectRoom={onSelectRoom}
             // 段階E-5-2(2026-11-25)。「一覧から外す」はメンバーのカード
-            // (kind === "member")だけに出す。自分のルーム(own)・古い
-            // ゲストの特例カード(legacyGuest)には出さない。さらに、古い
-            // ゲストが自分の所属ルーム(result.ownAccountId)のメンバーにも
-            // なっている場合は、そのメンバーカードにも出さない(外すと
-            // 特例カードがまた出てきてしまうため、段階Fまでの措置)。
-            canRemove={
-              card.kind === "member" && card.accountId !== result.ownAccountId
-            }
+            // (kind === "member")だけに出す。自分のルーム(own)には
+            // 出さない。
+            canRemove={card.kind === "member"}
             menuOpen={openMenuAccountId === card.accountId}
             onToggleMenu={() =>
               setOpenMenuAccountId((current) =>

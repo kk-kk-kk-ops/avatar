@@ -17,7 +17,6 @@ export default async function PlanPage() {
   const state = await resolveUserRouteState(supabase, user.id);
   if (state.isMaster) redirect("/master");
   if (state.type === "admin") redirect("/");
-  if (state.type === "guest") redirect("/");
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-900 px-4 py-10">
