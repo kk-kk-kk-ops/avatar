@@ -70,12 +70,10 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
         // 画像(丸枠)の下端が一致するようにする(2026-09報告により車も
         // 中心揃えから下端揃えに統一、2026-10報告によりアイコンも同様に
         // 統一)。当たり判定の高さは車表示中のみCAR_HITBOX_HEIGHT
-        // (アイコンモードでは車を表示しないため、carVisibleが立っていても
-        // 無視してAVATAR_HITBOX_HEIGHTを使う)。
-        const hitboxHeight =
-          !isIconMode && player.carVisible
-            ? CAR_HITBOX_HEIGHT
-            : AVATAR_HITBOX_HEIGHT;
+        // (アイコンを選んでいる時も、車表示中はCAR_HITBOX_HEIGHTを使う)。
+        const hitboxHeight = player.carVisible
+          ? CAR_HITBOX_HEIGHT
+          : AVATAR_HITBOX_HEIGHT;
         const top = y + hitboxHeight / 2 - displaySize;
         const transform = `translate(${left}px, ${top}px)`;
         if (rootRef.current) rootRef.current.style.transform = transform;
@@ -178,13 +176,20 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
             中央揃えにより画像の実際の見た目(車体)は枠の上下中央に浮き、
             枠の下端(当たり判定の下端と揃えている位置)との間に余白ができて
             いた。object-bottomで画像の見た目そのものを枠の下端に揃える。 */}
-        {isIconMode ? (
+        {showCar ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={carSrc}
+            alt="車"
+            className="h-full w-full object-contain object-bottom drop-shadow-md"
+          />
+        ) : isIconMode ? (
           // アイコン表示(2026-10追加): アップロード画像を丸枠(object-cover
           // で正方形以外の画像も枠いっぱいに切り抜いて表示)に収める。
           // 画像が未設定(アップロード前・削除直後)の間は、代わりに表示名の
           // 先頭1文字を丸枠の中央に表示する(設定画面のプレビューと同じ
-          // フォールバック)。車表示(shift+x)はアイコンモードでは対象外
-          // (常にアイコンを表示)。
+          // フォールバック)。車表示(shift+x)中は、アイコンを選んでいても
+          // 上のshowCarの分岐で車の画像を優先する。
           <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-700 drop-shadow-md">
             {player.avatarImage ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -199,13 +204,6 @@ const Avatar = forwardRef<AvatarHandle, Props>(function Avatar(
               </span>
             )}
           </div>
-        ) : showCar ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={carSrc}
-            alt="車"
-            className="h-full w-full object-contain object-bottom drop-shadow-md"
-          />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img
