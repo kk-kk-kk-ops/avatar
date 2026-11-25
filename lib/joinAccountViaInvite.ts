@@ -33,8 +33,8 @@ export type JoinInviteResult =
 //   いたが、BAN確認前に書き換えてしまう不具合があったうえ、既に別の
 //   アカウントに所属している人〈古いゲストなど〉の所属を上書きで失わせて
 //   しまう問題もあったため、段階E-3でこの書き換え自体をやめた)。
-//   renderViewOnlyRoomJoinなど古い経路はコードとして残すが、この関数からは
-//   もう呼ばれない(段階Gで削除予定)。
+//   viewOnly向けの古い経路は段階G-1で削除済みで、この関数からは
+//   もう呼ばれない。
 export async function joinAccountViaInvite(
   supabase: SupabaseClient,
   userId: string,

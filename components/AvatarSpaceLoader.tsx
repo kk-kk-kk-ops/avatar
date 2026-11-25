@@ -25,12 +25,9 @@ type Props = {
   // isMasterはメンテナンス中の入室ブロック除外など他の権限判定にも
   // 使われているため、ボタンの表示条件だけをここで分離する(他人の
   // ルームの中でisMasterをtrueにすると運営者としての扱いが効いてしまう
-  // ため、isMaster自体は変えない)。省略時はfalse扱い(段階Gまで残す
-  // renderViewOnlyRoomJoinなど、未対応の古い経路向け)。
+  // ため、isMaster自体は変えない)。省略時はfalse扱い。
   showMasterPanelLink?: boolean;
-  guestInviteToken?: string | null;
   avatarSizePx?: number;
-  viewOnlyInviteToken?: string;
   // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
   isMemberEntry?: boolean;
   maintenanceEnabled?: boolean;
@@ -47,8 +44,7 @@ type Props = {
   initialBillingNotice?: "checkout_success" | "portal_returned";
   // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の左側に
   // 出すルームの一覧(自分のルーム・メンバーのルーム・古いゲストの特例
-  // カード)。未指定(renderViewOnlyRoomJoinなど段階Gまで残す古い経路)の
-  // 場合は一覧を出さない。
+  // カード)。未指定の場合は一覧を出さない。
   roomListResult?: RoomListResult;
 };
 
@@ -64,9 +60,7 @@ export default function AvatarSpaceLoader({
   isAccountAdmin,
   isMaster,
   showMasterPanelLink,
-  guestInviteToken,
   avatarSizePx,
-  viewOnlyInviteToken,
   isMemberEntry,
   maintenanceEnabled,
   maintenanceStartsAt,
@@ -99,9 +93,7 @@ export default function AvatarSpaceLoader({
         isAccountAdmin={isAccountAdmin}
         isMaster={isMaster}
         showMasterPanelLink={showMasterPanelLink}
-        guestInviteToken={guestInviteToken}
         avatarSizePx={avatarSizePx}
-        viewOnlyInviteToken={viewOnlyInviteToken}
         isMemberEntry={isMemberEntry}
         maintenanceEnabled={maintenanceEnabled}
         maintenanceStartsAt={maintenanceStartsAt}

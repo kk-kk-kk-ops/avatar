@@ -113,7 +113,6 @@ import {
 } from "./uploadChatImage";
 import { deleteUserIconClient, uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
-import { checkViewOnlyInviteAccess } from "@/lib/checkViewOnlyInviteAccess";
 import { checkMemberRoomAccess } from "@/lib/checkMemberRoomAccess";
 import { getHasUnreadAnnouncements } from "@/app/admin/actions";
 import { performLogout } from "@/components/auth/LogoutButton";
@@ -815,17 +814,9 @@ type Props = {
   // trueにすると、運営者としての扱い〈メンテナンス中でも入れる等〉が
   // 効いてしまうため、isMasterの意味は変えない)。未指定時はfalse扱い。
   showMasterPanelLink?: boolean;
-  // 他人の招待URL経由で参加しているゲストの場合のみ渡される招待
-  // トークン。ログアウト後、管理者用ログイン画面ではなく元の招待URLの
-  // ゲスト用ログイン画面に戻すために使う。
-  guestInviteToken?: string | null;
   // アバターの表示サイズ(px、正方形)。マスター画面で設定できる
   // app_settings.avatar_size_pxの値。未指定時はAvatar側のデフォルトを使う。
   avatarSizePx?: number;
-  // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の場合
-  // だけ渡される招待トークン。LiveKitのToken発行APIへ、通常のRLSでは
-  // 証明できないルームアクセス権を伝えるために使う。
-  viewOnlyInviteToken?: string;
   // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
   // /?room=ルームID(段階D-3で作る入口)経由で来た場合のみtrueになる。
   // 省略時(false)は、以下の全ての分岐で今までどおりの動き(通常・
@@ -860,9 +851,8 @@ type Props = {
   // 扱う(エラー表示のスタイルを流用しないため)。
   initialBillingNotice?: "checkout_success" | "portal_returned";
   // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。入室前の画面の左側
-  // (スマホでは上側)に出すルームの一覧。未指定(renderViewOnlyRoomJoin
-  // など段階Gまで残す古い経路)の場合は一覧を出さず、従来どおり
-  // roomsの1件だけの表示になる。
+  // (スマホでは上側)に出すルームの一覧。未指定の場合は一覧を出さず、
+  // 従来どおりroomsの1件だけの表示になる。
   roomListResult?: RoomListResult;
 };
 
@@ -878,9 +868,7 @@ export default function AvatarSpace({
   isAccountAdmin,
   isMaster,
   showMasterPanelLink = false,
-  guestInviteToken,
   avatarSizePx,
-  viewOnlyInviteToken,
   isMemberEntry,
   maintenanceEnabled: initialMaintenanceEnabled,
   maintenanceStartsAt: initialMaintenanceStartsAt,
@@ -2059,19 +2047,7 @@ export default function AvatarSpace({
     () => {
       livekitRoomRef.current?.disconnect();
     },
-    // 2026-09追加(手順9の実機確認で判明): guestInviteTokenだけでは
-    // viewOnly(自分自身の別アカウントを持ちながら他人の招待URLを一時
-    // 閲覧中のケース)をカバーできない。viewOnlyの場合、通常のログアウト
-    // 設計ではあえてguestInviteTokenをnullにして管理者用ログイン画面へ
-    // 戻す仕様になっているが(app/page.tsxのrenderViewOnlyRoomJoin参照)、
-    // 強制ログアウトについては「招待URL経由でアクセスしていたセッション
-    // は、種別を問わずその招待URLへ戻す」方が実態に合うため、
-    // viewOnlyInviteTokenもフォールバックとして見る。
-    guestInviteToken
-      ? `/?invite=${guestInviteToken}`
-      : viewOnlyInviteToken
-        ? `/?invite=${viewOnlyInviteToken}`
-        : "/",
+    "/",
   );
   // room.connect()が完了した瞬間を検知するためのstate(refと違いレンダーを
   // 起こせる)。G-2対応: 購読対象(eligiblePeerIds等)の計算はLiveKitの接続
@@ -2294,18 +2270,6 @@ export default function AvatarSpace({
   // が"indigo"の場合にのみ使う。presence・チャット等は引き続き上の
   // channelRef(Supabase)のまま変わらない(moveのみがこちらに切り替わる)。
   const indigoClientRef = useRef<IndigoPositionClient | null>(null);
-  // getIndigoTokenはSupabaseチャンネルのuseEffect(依存配列は[joined,
-  // roomId, maxPeoplePerRoom]のまま)の中で一度だけindigoClient.connect()に
-  // 渡され、以後はトークン更新(25分おき)・AUTH_FAILED時の再接続のたびに
-  // 繰り返し呼ばれる。viewOnlyInviteTokenはpropなので、effect再実行後まで
-  // 更新されない閉じ込め(クロージャ)が起きないよう、refで常に最新値を
-  // 読む(2026-11、レビューで指摘)。roomIdはeffectの依存配列に含まれて
-  // おり、変化時は必ずeffect自体が再実行されてconnect()もやり直される
-  // ため、こちらはrefにする必要はない。
-  const viewOnlyInviteTokenRef = useRef(viewOnlyInviteToken);
-  useEffect(() => {
-    viewOnlyInviteTokenRef.current = viewOnlyInviteToken;
-  }, [viewOnlyInviteToken]);
   // IndigoPro用トークンの取得(app/api/livekit-token/route.tsと同じ入力・
   // 同じ呼び出しパターン)。useCallbackにせず素朴な関数にしているのは、
   // POSITION_TRANSPORT==="supabase"の既定では一度も呼ばれないため。
@@ -2316,7 +2280,6 @@ export default function AvatarSpace({
       body: JSON.stringify({
         roomId,
         identity: selfId.current,
-        inviteToken: viewOnlyInviteTokenRef.current,
       }),
     });
     if (!res.ok) throw new Error("indigo-token取得失敗");
@@ -2527,41 +2490,12 @@ export default function AvatarSpace({
       const selectCols =
         "id, sender_user_id, message, created_at, edited_at, deleted_at, image_path, thumbnail_path, chat_message_reactions(user_id, emoji)";
       const orFilter = `and(sender_user_id.eq.${myUserId},recipient_user_id.eq.${selectedPeerUserId}),and(sender_user_id.eq.${selectedPeerUserId},recipient_user_id.eq.${myUserId})`;
-      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
-      // 場合、通常のRLS(profiles.account_id経由)では対象ルームの
-      // チャットが見えないため、招待トークンを検証するSECURITY DEFINER
-      // 関数経由で取得する(list_rooms_by_invite_tokenと同じ考え方)。
-      // このRPCには前後取得(anchor)の仕組みが無いため、viewOnly経由で
-      // 開いた古いDMメンション通知は直近50件の範囲外だとジャンプできない
-      // (通常ログインでのみ対応する)。
       // rowsは以下いずれの経路でも最終的に「古い→新しい」の昇順で揃える。
       let rows: MessageRow[];
-      const anchor =
-        viewOnlyInviteToken || isMemberEntry
-          ? null
-          : pendingMentionScrollTargetRef.current;
-      if (viewOnlyInviteToken) {
-        const { data, error } = await supabase.rpc(
-          "list_chat_messages_by_invite_token",
-          {
-            token: viewOnlyInviteToken,
-            target_room_id: roomId,
-            peer_user_id: selectedPeerUserId,
-          },
-        );
-        if (cancelled) return;
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error("チャット履歴の取得に失敗しました", error);
-          setDmError(
-            t("chat.historyFetchFailedWithReason", {
-              reason: error.message ?? error.code ?? t("common.unknownError"),
-            }),
-          );
-          return;
-        }
-        rows = (data ?? []) as MessageRow[];
-      } else if (isMemberEntry) {
+      const anchor = isMemberEntry
+        ? null
+        : pendingMentionScrollTargetRef.current;
+      if (isMemberEntry) {
         // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
         const { data, error } = await supabase.rpc(
           "list_chat_messages_as_member",
@@ -2640,38 +2574,11 @@ export default function AvatarSpace({
         }
         rows = ((data ?? []) as MessageRow[]).slice().reverse();
       }
-      // viewOnly(招待URLの一時ゲスト)は通常のRLS経由でchat_message_
-      // reactionsを埋め込みSELECTできない(9f-5のコメント参照)ため、
-      // メッセージ本体の取得後にトークン検証付きの別RPCでまとめて取得し、
-      // メッセージIDをキーに突き合わせる。
       const reactionsByMessageId = new Map<
         string,
         Array<{ user_id: string; emoji: string }>
       >();
-      if (viewOnlyInviteToken) {
-        const messageIds = rows.map((row) => row.id);
-        if (messageIds.length > 0) {
-          const { data: reactionRows, error: reactionError } =
-            await supabase.rpc("list_chat_message_reactions_by_invite_token", {
-              token: viewOnlyInviteToken,
-              p_message_ids: messageIds,
-            });
-          if (reactionError) {
-            // eslint-disable-next-line no-console
-            console.error("リアクションの取得に失敗しました", reactionError);
-          } else {
-            for (const r of (reactionRows ?? []) as Array<{
-              message_id: string;
-              user_id: string;
-              emoji: string;
-            }>) {
-              const list = reactionsByMessageId.get(r.message_id) ?? [];
-              list.push({ user_id: r.user_id, emoji: r.emoji });
-              reactionsByMessageId.set(r.message_id, list);
-            }
-          }
-        }
-      } else if (isMemberEntry) {
+      if (isMemberEntry) {
         // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
         const messageIds = rows.map((row) => row.id);
         if (messageIds.length > 0) {
@@ -2712,7 +2619,7 @@ export default function AvatarSpace({
           imagePath: row.image_path,
           thumbnailPath: row.thumbnail_path,
           reactions: (
-            viewOnlyInviteToken || isMemberEntry
+            isMemberEntry
               ? (reactionsByMessageId.get(row.id) ?? [])
               : (row.chat_message_reactions ?? [])
           ).map((r) => ({ userId: r.user_id, emoji: r.emoji })),
@@ -2766,7 +2673,7 @@ export default function AvatarSpace({
     return () => {
       cancelled = true;
     };
-  }, [joined, roomId, supabase, viewOnlyInviteToken, isMemberEntry, selectedPeerUserId]);
+  }, [joined, roomId, supabase, isMemberEntry, selectedPeerUserId]);
 
   // ---- 通知一覧からのジャンプ(DM版):対象メッセージまでスクロール+
   // 一時強調 ----(2026-09-29追加、DMメンション通知対応。グループの
@@ -2934,7 +2841,7 @@ export default function AvatarSpace({
     return () => {
       cancelled = true;
     };
-  }, [joined, roomId, supabase, viewOnlyInviteToken, selectedGroupId]);
+  }, [joined, roomId, supabase, selectedGroupId]);
 
   // グループチャットのスクロール位置制御。groupForceScrollRefがtrueの
   // 間だけ一番下へスクロールしてフラグを消費する(DMのdmForceScrollRefと
@@ -3020,24 +2927,14 @@ export default function AvatarSpace({
     setChatThreadsLoading(true);
     setChatThreadsError(null);
     (async () => {
-      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)は
-      // profiles.account_idがこのアカウントを指さないため、通常の
-      // list_chat_threadsではDM・グループどちらも常に0件になっていた
-      // (2026-08-30修正)。招待トークンを検証するSECURITY DEFINER関数
-      // 経由で取得する(list_chat_messages_by_invite_tokenと同じ考え方)。
-      const { data, error } = viewOnlyInviteToken
-        ? await supabase.rpc("list_chat_threads_by_invite_token", {
-            token: viewOnlyInviteToken,
+      const { data, error } = isMemberEntry
+        ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+          await supabase.rpc("list_chat_threads_as_member", {
             target_room_id: roomId,
           })
-        : isMemberEntry
-          ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-            await supabase.rpc("list_chat_threads_as_member", {
-              target_room_id: roomId,
-            })
-          : await supabase.rpc("list_chat_threads", {
-              p_room_id: roomId,
-            });
+        : await supabase.rpc("list_chat_threads", {
+            p_room_id: roomId,
+          });
       if (cancelled) return;
       setChatThreadsLoading(false);
       if (error) {
@@ -3079,7 +2976,6 @@ export default function AvatarSpace({
     joined,
     roomId,
     supabase,
-    viewOnlyInviteToken,
     isMemberEntry,
     selectedPeerUserId,
     selectedGroupId,
@@ -3324,51 +3220,32 @@ export default function AvatarSpace({
       setDmError(null);
       setDmSending(true);
       try {
-        // viewOnlyの場合は通常のRLSでINSERTが拒否されるため、招待トークンを
-        // 検証するSECURITY DEFINER関数(send_chat_message_by_invite_token)
-        // 経由で送信する。
-        const { data, error } = viewOnlyInviteToken
+        const { data, error } = isMemberEntry
           ? await (async () => {
-              const res = await supabase.rpc(
-                "send_chat_message_by_invite_token",
-                {
-                  token: viewOnlyInviteToken,
-                  target_room_id: roomId,
-                  recipient_user_id: peerUserId,
-                  sender_name: senderName,
-                  message: text,
-                  p_image_path: imagePath,
-                  p_thumbnail_path: thumbnailPath,
-                },
-              );
+              // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+              const res = await supabase.rpc("send_chat_message_as_member", {
+                target_room_id: roomId,
+                recipient_user_id: peerUserId,
+                sender_name: senderName,
+                message: text,
+                p_image_path: imagePath,
+                p_thumbnail_path: thumbnailPath,
+              });
               return { data: res.data?.[0] ?? null, error: res.error };
             })()
-          : isMemberEntry
-            ? await (async () => {
-                // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-                const res = await supabase.rpc("send_chat_message_as_member", {
-                  target_room_id: roomId,
-                  recipient_user_id: peerUserId,
-                  sender_name: senderName,
-                  message: text,
-                  p_image_path: imagePath,
-                  p_thumbnail_path: thumbnailPath,
-                });
-                return { data: res.data?.[0] ?? null, error: res.error };
-              })()
-            : await supabase
-                .from("chat_messages")
-                .insert({
-                  room_id: roomId,
-                  sender_user_id: myUserId,
-                  recipient_user_id: peerUserId,
-                  sender_name: senderName,
-                  message: text,
-                  image_path: imagePath,
-                  thumbnail_path: thumbnailPath,
-                })
-                .select("id, created_at")
-                .single();
+          : await supabase
+              .from("chat_messages")
+              .insert({
+                room_id: roomId,
+                sender_user_id: myUserId,
+                recipient_user_id: peerUserId,
+                sender_name: senderName,
+                message: text,
+                image_path: imagePath,
+                thumbnail_path: thumbnailPath,
+              })
+              .select("id, created_at")
+              .single();
         if (error || !data || !myUserId) {
           // eslint-disable-next-line no-console
           console.error("チャットメッセージの送信に失敗しました", error);
@@ -3421,22 +3298,16 @@ export default function AvatarSpace({
               ?.threadName ??
             null;
           if (extractDmMention(text, peerName)) {
-            const { error: mentionError } = viewOnlyInviteToken
-              ? await supabase.rpc("create_dm_mention_by_invite_token", {
-                  token: viewOnlyInviteToken,
+            const { error: mentionError } = isMemberEntry
+              ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+                await supabase.rpc("create_dm_mention_as_member", {
                   p_message_id: data.id,
                   p_mentioner_name: senderName,
                 })
-              : isMemberEntry
-                ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-                  await supabase.rpc("create_dm_mention_as_member", {
-                    p_message_id: data.id,
-                    p_mentioner_name: senderName,
-                  })
-                : await supabase.rpc("create_dm_mention", {
-                    p_message_id: data.id,
-                    p_mentioner_name: senderName,
-                  });
+              : await supabase.rpc("create_dm_mention", {
+                  p_message_id: data.id,
+                  p_mentioner_name: senderName,
+                });
             if (mentionError) {
               // eslint-disable-next-line no-console
               console.error("メンション通知の作成に失敗しました", mentionError);
@@ -3473,7 +3344,6 @@ export default function AvatarSpace({
       roomId,
       selectedPeerUserId,
       supabase,
-      viewOnlyInviteToken,
       isMemberEntry,
       players,
       chatThreads,
@@ -3614,35 +3484,23 @@ export default function AvatarSpace({
     setCreateGroupError(null);
     try {
       const memberUserIds = Array.from(createGroupSelectedIds);
-      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)は
-      // profiles.account_idがこのアカウントを指さないため、通常の
-      // create_chat_groupでは「このルームへのアクセス権がありません」に
-      // なる(2026-08-30修正)。招待トークンを検証する別ルート経由にする。
-      // どちらも、自分を含めた選択メンバーの集合が完全一致する既存の
-      // グループがあれば新規作成せずalready_existed:trueで返す
-      // (2026-08-30追加。重複作成防止)。
-      const { data, error } = viewOnlyInviteToken
-        ? await supabase
-            .rpc("create_chat_group_by_invite_token", {
-              token: viewOnlyInviteToken,
+      // 自分を含めた選択メンバーの集合が完全一致する既存のグループが
+      // あれば新規作成せずalready_existed:trueで返す(2026-08-30追加。
+      // 重複作成防止)。
+      const { data, error } = isMemberEntry
+        ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+          await supabase
+            .rpc("create_chat_group_as_member", {
               target_room_id: roomId,
               p_member_user_ids: memberUserIds,
             })
             .single()
-        : isMemberEntry
-          ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-            await supabase
-              .rpc("create_chat_group_as_member", {
-                target_room_id: roomId,
-                p_member_user_ids: memberUserIds,
-              })
-              .single()
-          : await supabase
-              .rpc("create_chat_group", {
-                p_room_id: roomId,
-                p_member_user_ids: memberUserIds,
-              })
-              .single();
+        : await supabase
+            .rpc("create_chat_group", {
+              p_room_id: roomId,
+              p_member_user_ids: memberUserIds,
+            })
+            .single();
       if (error || !data) {
         // eslint-disable-next-line no-console
         console.error("グループチャットの作成に失敗しました", error);
@@ -3681,7 +3539,6 @@ export default function AvatarSpace({
     creatingGroup,
     roomId,
     supabase,
-    viewOnlyInviteToken,
     isMemberEntry,
   ]);
 
@@ -4274,7 +4131,6 @@ export default function AvatarSpace({
             body: JSON.stringify({
               rawPath,
               roomId,
-              inviteToken: viewOnlyInviteToken ?? undefined,
             }),
           });
           const json = await res.json();
@@ -4331,7 +4187,6 @@ export default function AvatarSpace({
     groupImageUploading,
     postGroupMessage,
     roomId,
-    viewOnlyInviteToken,
     cancelAllGroupPendingImages,
   ]);
 
@@ -4387,7 +4242,6 @@ export default function AvatarSpace({
             body: JSON.stringify({
               rawPath,
               roomId,
-              inviteToken: viewOnlyInviteToken ?? undefined,
             }),
           });
           const json = await res.json();
@@ -4442,7 +4296,6 @@ export default function AvatarSpace({
     dmImageUploading,
     postDmMessage,
     roomId,
-    viewOnlyInviteToken,
     cancelAllDmPendingImages,
     cancelDmPendingImage,
   ]);
@@ -4451,8 +4304,7 @@ export default function AvatarSpace({
   // 付きの署名付きURLをその場で発行し直す(表示用URLとは別発行にすることで、
   // 通常表示時にダウンロードダイアログが出てしまうのを避ける)。
   // DM・グループどちらのライトボックスからも使う(グループ画像はアカウント
-  // 所属を問わないRLSのため、roomId/peerUserId/inviteTokenの付与は
-  // DM+viewOnlyの場合のみでよい)。
+  // 所属を問わないRLSのため、roomId/peerUserIdの付与はDMの場合のみでよい)。
   const downloadDmLightboxImage = useCallback(async () => {
     if (!dmLightbox?.messageId || (!selectedPeerUserId && !selectedGroupId)) {
       return;
@@ -4463,11 +4315,7 @@ export default function AvatarSpace({
         messageId: dmLightbox.messageId,
         download: "1",
       });
-      if (viewOnlyInviteToken && selectedPeerUserId) {
-        params.set("roomId", roomId);
-        params.set("peerUserId", selectedPeerUserId);
-        params.set("inviteToken", viewOnlyInviteToken);
-      } else if (isMemberEntry && selectedPeerUserId) {
+      if (isMemberEntry && selectedPeerUserId) {
         // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
         params.set("roomId", roomId);
         params.set("peerUserId", selectedPeerUserId);
@@ -4488,7 +4336,6 @@ export default function AvatarSpace({
     roomId,
     selectedPeerUserId,
     selectedGroupId,
-    viewOnlyInviteToken,
     isMemberEntry,
   ]);
 
@@ -4503,11 +4350,7 @@ export default function AvatarSpace({
       setDmLightbox({ messageId, url: thumbnailUrl, loadingFull: true });
       try {
         const params = new URLSearchParams({ messageId, variant: "full" });
-        if (viewOnlyInviteToken && selectedPeerUserId) {
-          params.set("roomId", roomId);
-          params.set("peerUserId", selectedPeerUserId);
-          params.set("inviteToken", viewOnlyInviteToken);
-        } else if (isMemberEntry && selectedPeerUserId) {
+        if (isMemberEntry && selectedPeerUserId) {
           // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
           params.set("roomId", roomId);
           params.set("peerUserId", selectedPeerUserId);
@@ -4532,7 +4375,7 @@ export default function AvatarSpace({
         );
       }
     },
-    [roomId, selectedPeerUserId, viewOnlyInviteToken, isMemberEntry],
+    [roomId, selectedPeerUserId, isMemberEntry],
   );
 
   // 添付画像の署名付きURLを取得する(未取得・未失敗のもののみ)。
@@ -4556,11 +4399,7 @@ export default function AvatarSpace({
             messageId: m.id,
             variant: "thumbnail",
           });
-          if (viewOnlyInviteToken) {
-            params.set("roomId", roomId);
-            params.set("peerUserId", selectedPeerUserId);
-            params.set("inviteToken", viewOnlyInviteToken);
-          } else if (isMemberEntry) {
+          if (isMemberEntry) {
             // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
             params.set("roomId", roomId);
             params.set("peerUserId", selectedPeerUserId);
@@ -4613,7 +4452,6 @@ export default function AvatarSpace({
     dmImageUrls,
     dmImageLoadFailed,
     roomId,
-    viewOnlyInviteToken,
     isMemberEntry,
   ]);
 
@@ -4728,25 +4566,18 @@ export default function AvatarSpace({
     setDmSending(true);
     try {
       const editedAt = new Date().toISOString();
-      const { error } = viewOnlyInviteToken
-        ? await supabase.rpc("edit_chat_message_by_invite_token", {
-            token: viewOnlyInviteToken,
+      const { error } = isMemberEntry
+        ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+          await supabase.rpc("edit_chat_message_as_member", {
             p_message_id: messageId,
             p_new_message: trimmed,
             p_edited_at: editedAt,
           })
-        : isMemberEntry
-          ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-            await supabase.rpc("edit_chat_message_as_member", {
-              p_message_id: messageId,
-              p_new_message: trimmed,
-              p_edited_at: editedAt,
-            })
-          : await supabase
-              .from("chat_messages")
-              .update({ message: trimmed, edited_at: editedAt })
-              .eq("id", messageId)
-              .eq("sender_user_id", myUserId);
+        : await supabase
+            .from("chat_messages")
+            .update({ message: trimmed, edited_at: editedAt })
+            .eq("id", messageId)
+            .eq("sender_user_id", myUserId);
       if (error) {
         // eslint-disable-next-line no-console
         console.error("メッセージの編集に失敗しました", error);
@@ -4778,7 +4609,6 @@ export default function AvatarSpace({
     dmSending,
     selectedPeerUserId,
     supabase,
-    viewOnlyInviteToken,
     isMemberEntry,
   ]);
 
@@ -4790,23 +4620,17 @@ export default function AvatarSpace({
       const myUserId = authUserIdRef.current;
       if (!peerUserId || !myUserId) return;
       const deletedAt = new Date().toISOString();
-      const { error } = viewOnlyInviteToken
-        ? await supabase.rpc("delete_chat_message_by_invite_token", {
-            token: viewOnlyInviteToken,
+      const { error } = isMemberEntry
+        ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+          await supabase.rpc("delete_chat_message_as_member", {
             p_message_id: m.id,
             p_deleted_at: deletedAt,
           })
-        : isMemberEntry
-          ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-            await supabase.rpc("delete_chat_message_as_member", {
-              p_message_id: m.id,
-              p_deleted_at: deletedAt,
-            })
-          : await supabase
-              .from("chat_messages")
-              .update({ message: "", deleted_at: deletedAt })
-              .eq("id", m.id)
-              .eq("sender_user_id", myUserId);
+        : await supabase
+            .from("chat_messages")
+            .update({ message: "", deleted_at: deletedAt })
+            .eq("id", m.id)
+            .eq("sender_user_id", myUserId);
       if (error) {
         // eslint-disable-next-line no-console
         console.error("メッセージの削除に失敗しました", error);
@@ -4848,13 +4672,7 @@ export default function AvatarSpace({
         setDmInput("");
       }
     },
-    [
-      selectedPeerUserId,
-      supabase,
-      viewOnlyInviteToken,
-      isMemberEntry,
-      dmEditingMessageId,
-    ],
+    [selectedPeerUserId, supabase, isMemberEntry, dmEditingMessageId],
   );
 
   // DMメッセージへの絵文字リアクション選択(ホバーバー/長押しメニュー
@@ -4892,39 +4710,28 @@ export default function AvatarSpace({
       applyLocally(nextEmoji);
       setDmContextMenu(null);
 
-      const { error } = viewOnlyInviteToken
-        ? removing
-          ? await supabase.rpc(
-              "remove_chat_message_reaction_by_invite_token",
-              { token: viewOnlyInviteToken, p_message_id: m.id },
-            )
-          : await supabase.rpc("set_chat_message_reaction_by_invite_token", {
-              token: viewOnlyInviteToken,
+      const { error } = isMemberEntry
+        ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+          removing
+          ? await supabase.rpc("remove_chat_message_reaction_as_member", {
+              p_message_id: m.id,
+            })
+          : await supabase.rpc("set_chat_message_reaction_as_member", {
               p_message_id: m.id,
               p_emoji: emoji,
             })
-        : isMemberEntry
-          ? // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-            removing
-            ? await supabase.rpc("remove_chat_message_reaction_as_member", {
-                p_message_id: m.id,
-              })
-            : await supabase.rpc("set_chat_message_reaction_as_member", {
-                p_message_id: m.id,
-                p_emoji: emoji,
-              })
-          : removing
-            ? await supabase
-                .from("chat_message_reactions")
-                .delete()
-                .eq("message_id", m.id)
-                .eq("user_id", myUserId)
-            : await supabase
-                .from("chat_message_reactions")
-                .upsert(
-                  { message_id: m.id, user_id: myUserId, emoji },
-                  { onConflict: "message_id,user_id" },
-                );
+        : removing
+          ? await supabase
+              .from("chat_message_reactions")
+              .delete()
+              .eq("message_id", m.id)
+              .eq("user_id", myUserId)
+          : await supabase
+              .from("chat_message_reactions")
+              .upsert(
+                { message_id: m.id, user_id: myUserId, emoji },
+                { onConflict: "message_id,user_id" },
+              );
 
       if (error) {
         // eslint-disable-next-line no-console
@@ -4942,7 +4749,7 @@ export default function AvatarSpace({
         emoji: nextEmoji,
       });
     },
-    [selectedPeerUserId, supabase, viewOnlyInviteToken, isMemberEntry],
+    [selectedPeerUserId, supabase, isMemberEntry],
   );
 
   // 指定テキストをクリップボードへコピーする。コピー後は選択範囲の
@@ -5444,7 +5251,6 @@ export default function AvatarSpace({
           body: JSON.stringify({
             roomId,
             identity: selfId.current,
-            inviteToken: viewOnlyInviteToken,
           }),
         });
         if (!res.ok) throw new Error("token取得失敗");
@@ -5515,7 +5321,7 @@ export default function AvatarSpace({
       setScreenPreviewImages({});
       setLivekitConnected(false);
     };
-  }, [joined, roomId, viewOnlyInviteToken]);
+  }, [joined, roomId]);
 
   // ---- 画面共有の選択視聴:選んだ相手のpublicationだけを購読する ----
   // 同時に複数を視聴することはできないため、選択が変わるたびに「選ばれて
@@ -5686,36 +5492,18 @@ export default function AvatarSpace({
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      const base = guestInviteToken
-        ? `/?invite=${guestInviteToken}`
-        : viewOnlyInviteToken
-          ? `/?invite=${viewOnlyInviteToken}`
-          : "/";
+      const base = "/";
       const separator = base.includes("?") ? "&" : "?";
       window.location.href = `${base}${separator}error=session_expired`;
       return;
     }
 
-    // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)の
-    // 場合、入室の直前にもう一度サーバー側で招待トークンの有効性・BAN
-    // 状態を確かめる(2026-11追加)。handleLeaveRoom/handleJoinはページを
-    // 再読み込みしないため、入室中に管理者が招待URLを再発行しても
-    // viewOnlyInviteToken(入室時のpropsのまま)は古い値が残り続け、
-    // 確認しないまま会議室の画面まで進めてしまっていた(灰色の画面・
-    // 音声サーバー接続失敗の原因)。確認中はisJoiningをtrueのままにし、
-    // 既存の「入室処理中」の表示を続ける。
-    if (viewOnlyInviteToken) {
-      const allowed = await checkViewOnlyInviteAccess(
-        roomId,
-        viewOnlyInviteToken,
-      );
-      if (!allowed) {
-        setIsJoining(false);
-        window.location.href = `/?invite=${encodeURIComponent(viewOnlyInviteToken)}`;
-        return;
-      }
-    } else if (isMemberEntry) {
+    if (isMemberEntry) {
       // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+      // 入室の直前にもう一度サーバー側でメンバーかどうかを確かめる
+      // (2026-11追加。handleLeaveRoom/handleJoinはページを再読み込み
+      // しないため、入室中に一覧から外されても古い状態のまま会議室の
+      // 画面まで進んでしまうのを防ぐ)。
       const allowed = await checkMemberRoomAccess(roomId);
       if (!allowed) {
         setIsJoining(false);
@@ -5776,8 +5564,6 @@ export default function AvatarSpace({
     obstacles,
     saveDisplayName,
     supabase,
-    guestInviteToken,
-    viewOnlyInviteToken,
     isMemberEntry,
     roomId,
   ]);
@@ -5874,37 +5660,24 @@ export default function AvatarSpace({
         // 見えるのに、実際には同じLiveKitルーム(roomIdは変わらないため)
         // に接続され、音声・映像・画面共有がそのまま繋がってしまっていた。
         // 入室する瞬間に必ずDBからtemplate_idを取り直すことで解消する。
-        const { data: roomRow } = viewOnlyInviteToken
+        const { data: roomRow } = isMemberEntry
           ? await (async () => {
-              const res = await supabase.rpc("list_rooms_by_invite_token", {
-                token: viewOnlyInviteToken,
+              // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+              const res = await supabase.rpc("get_member_room_entry", {
+                p_room_id: roomId,
               });
               const matched = (
-                res.data as Array<{
-                  id: string;
-                  template_id: string | null;
-                }> | null
-              )?.find((r) => r.id === roomId);
-              return { data: matched ? { template_id: matched.template_id } : null };
+                res.data as Array<{ template_id: string | null }> | null
+              )?.[0];
+              return {
+                data: matched ? { template_id: matched.template_id } : null,
+              };
             })()
-          : isMemberEntry
-            ? await (async () => {
-                // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-                const res = await supabase.rpc("get_member_room_entry", {
-                  p_room_id: roomId,
-                });
-                const matched = (
-                  res.data as Array<{ template_id: string | null }> | null
-                )?.[0];
-                return {
-                  data: matched ? { template_id: matched.template_id } : null,
-                };
-              })()
-            : await supabase
-                .from("rooms")
-                .select("template_id")
-                .eq("id", roomId)
-                .maybeSingle();
+          : await supabase
+              .from("rooms")
+              .select("template_id")
+              .eq("id", roomId)
+              .maybeSingle();
         if (cancelled || !roomRow?.template_id) return;
         const templateId = roomRow.template_id;
 
@@ -6041,7 +5814,7 @@ export default function AvatarSpace({
     return () => {
       cancelled = true;
     };
-  }, [joined, roomId, viewOnlyInviteToken, isMemberEntry, supabase]);
+  }, [joined, roomId, isMemberEntry, supabase]);
 
   // 作業エリア(kind: "work")内にいる間は音声通話・ビデオ通話・画面共有を
   // 一切ONにできない(既にONの場合は入室時点でoffMeetingZone側で強制OFF
@@ -7299,12 +7072,10 @@ export default function AvatarSpace({
     };
     // applyIncomingPosition/handleIndigoMove/getIndigoTokenはあえて依存配列
     // に含めない(2026-11)。いずれも内部でrefを読むだけで値をクロージャに
-    // 閉じ込めておらず(getIndigoTokenのみroomId/viewOnlyInviteTokenに依存
-    // するが、roomIdは既にこの配列にある)、含めるとviewOnlyInviteToken
-    // 変化のたびにこのeffect全体(Supabaseチャンネルの再接続を含む)が
-    // 走ってしまい、POSITION_TRANSPORT==="supabase"の既定時にも再接続
-    // 頻度が変わってしまう(今回の変更前には存在しなかった再トリガー)。
-    // 「切替フラグ未設定なら現状と完全に同じ動作」を保つための意図的な除外。
+    // 閉じ込めておらず(getIndigoTokenのみroomIdに依存するが、roomIdは
+    // 既にこの配列にある)、含めてもこのeffect自体の再トリガーは増えない
+    // ため、「切替フラグ未設定なら現状と完全に同じ動作」を保つための
+    // 意図的な除外のまま変えていない。
     // requestPresenceTrack/resetPresenceTrackLimiterは依存配列に含めても
     // 実害が無い(どちらもuseCallback(..., [])で参照が不変なため、含めても
     // 再トリガーは発生しない)。
@@ -11342,51 +11113,36 @@ export default function AvatarSpace({
     if (!room) return;
     let cancelled = false;
     (async () => {
-      const { data } = viewOnlyInviteToken
+      const { data } = isMemberEntry
         ? await (async () => {
-            const res = await supabase.rpc("list_rooms_by_invite_token", {
-              token: viewOnlyInviteToken,
+            // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
+            const res = await supabase.rpc("get_member_room_entry", {
+              p_room_id: room.id,
             });
             const matched = (
-              res.data as Array<{
-                id: string;
-                template_id: string | null;
-                name: string;
-                preview_image: string;
-              }> | null
-            )?.find((r) => r.id === room.id);
-            return { data: matched ?? null };
+              res.data as
+                | Array<{
+                    template_id: string | null;
+                    room_name: string;
+                    preview_image: string;
+                  }>
+                | null
+            )?.[0];
+            return {
+              data: matched
+                ? {
+                    template_id: matched.template_id,
+                    name: matched.room_name,
+                    preview_image: matched.preview_image,
+                  }
+                : null,
+            };
           })()
-        : isMemberEntry
-          ? await (async () => {
-              // 入室の仕組みの作り替え 段階D-2。メンバーとして入った人の経路。
-              const res = await supabase.rpc("get_member_room_entry", {
-                p_room_id: room.id,
-              });
-              const matched = (
-                res.data as
-                  | Array<{
-                      template_id: string | null;
-                      room_name: string;
-                      preview_image: string;
-                    }>
-                  | null
-              )?.[0];
-              return {
-                data: matched
-                  ? {
-                      template_id: matched.template_id,
-                      name: matched.room_name,
-                      preview_image: matched.preview_image,
-                    }
-                  : null,
-              };
-            })()
-          : await supabase
-              .from("rooms")
-              .select("template_id, name, preview_image")
-              .eq("id", room.id)
-              .maybeSingle();
+        : await supabase
+            .from("rooms")
+            .select("template_id, name, preview_image")
+            .eq("id", room.id)
+            .maybeSingle();
       if (cancelled || !data) return;
       // ルーム名・プレビュー画像は、ルーム自体のname/preview_image列
       // (テンプレート機能導入前の名残/紐付け時点のスナップショット)では
@@ -11415,7 +11171,7 @@ export default function AvatarSpace({
     return () => {
       cancelled = true;
     };
-  }, [joined, rooms, viewOnlyInviteToken, isMemberEntry, supabase]);
+  }, [joined, rooms, isMemberEntry, supabase]);
 
   // ---- 入室前:ルームプレビュー(選択不可)・アバター選択・名前入力 ----
   // F-2でルーム選択画面を廃止し、ログイン後は直接この画面へ来る。
@@ -11455,8 +11211,8 @@ export default function AvatarSpace({
               アバター/アイコン・名前・入室ボタン・マスターへ・ログアウト)
               はすべてこの中に移した(見た目だけの変更。状態・ロジックは
               AvatarSpace本体のまま、propsで渡すだけ)。roomListResult
-              未指定の古い経路(段階Gまで残すrenderViewOnlyRoomJoin等)でも、
-              このサイドバー自体は従来の右パネルと同じ役割のため常に出す。 */}
+              未指定の場合でも、このサイドバー自体は従来の右パネルと
+              同じ役割のため常に出す。 */}
           <RoomJoinSidebar
             room={room}
             roomCardKind={matchedRoomCard?.kind}

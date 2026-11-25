@@ -185,7 +185,6 @@ async function renderRoomJoin(
       isMaster={isAccountAdmin && state.isMaster}
       // 段階E-4(2026-11-25)。自分のルームなので、isMasterと同じ値。
       showMasterPanelLink={isAccountAdmin && state.isMaster}
-      guestInviteToken={null}
       avatarSizePx={appSettings?.avatar_size_px ?? undefined}
       maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
@@ -196,114 +195,6 @@ async function renderRoomJoin(
       initialRoomJoinError={initialRoomJoinError ?? undefined}
       initialBillingNotice={initialBillingNotice ?? undefined}
       roomListResult={roomListResult}
-    />
-  );
-}
-
-// 既に自分自身の別アカウントを持っている人(admin/masterなど)が、他人の
-// 招待URLを一時的に閲覧しているケース(viewOnly)。プロフィールは一切
-// 書き換えていないため、URLのトークンから毎回対象アカウントを解決する。
-// 段階E-3(2026-11-24)以降、招待URLの処理(joinAccountViaInvite)からは
-// 呼ばれなくなった(この場合もaccount_membersに載せてカード一覧に出す
-// 方式へ変更したため)。コードは段階Gまで残す。
-async function renderViewOnlyRoomJoin(
-  supabase: SupabaseClient,
-  user: User,
-  inviteToken: string,
-) {
-  const { data: viewAccountRows } = await supabase.rpc(
-    "lookup_account_by_invite_token",
-    { token: inviteToken },
-  );
-  const viewAccount = viewAccountRows?.[0];
-  if (!viewAccount) return null; // トークンが無効 → 呼び出し元でフォールバック
-
-  const { data: banRow } = await supabase
-    .from("banned_participants")
-    .select("user_id")
-    .eq("account_id", viewAccount.id)
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (banRow) {
-    return (
-      <BannedNotice
-        logoutRedirectTo={`/?invite=${encodeURIComponent(inviteToken)}`}
-      />
-    );
-  }
-
-  // rooms/accountsともに「自分自身が所属するアカウントのみ閲覧可」という
-  // RLSがかかっているため、素のテーブルSELECTでは対象アカウント(自分の
-  // 所属先とは別のアカウント)のルームが常に0件になってしまう。トークンの
-  // 一致を検証したうえでRLSを迂回するSECURITY DEFINER関数からルーム一覧を
-  // 取得する。
-  const [{ data: profile }, { data: roomRows }, { data: appSettings }] =
-    await Promise.all([
-      supabase
-        .from("profiles")
-        .select("display_name, locale, avatar_mode, avatar_icon_url")
-        .eq("user_id", user.id)
-        .maybeSingle(),
-      supabase
-        .rpc("list_rooms_by_invite_token", { token: inviteToken })
-        .limit(1),
-      supabase
-        .from("app_settings")
-        .select(
-          "avatar_size_px, maintenance_enabled, maintenance_starts_at, maintenance_ends_at",
-        )
-        .eq("id", "default")
-        .maybeSingle(),
-    ]);
-
-  const rooms: Room[] = await applyTemplateNameToRooms(
-    supabase,
-    (roomRows ?? []).map(
-      (r: {
-        id: string;
-        account_id: string;
-        template_id: string | null;
-        name: string;
-        preview_image: string;
-      }) => ({
-        id: r.id,
-        accountId: r.account_id,
-        templateId: r.template_id,
-        name: r.name,
-        previewImage: r.preview_image,
-      }),
-    ),
-  );
-
-  const plan = (viewAccount.plan as PlanId) ?? "free";
-
-  return (
-    <AvatarSpaceLoader
-      initialName={profile?.display_name ?? undefined}
-      rooms={rooms}
-      maxPeoplePerRoom={PLANS[plan].maxPeoplePerRoom}
-      screenShareDailyMinutes={PLANS[plan].screenShareDailyMinutes}
-      videoCallDailyMinutes={PLANS[plan].videoCallDailyMinutes}
-      voiceCallDailyMinutes={PLANS[plan].voiceCallDailyMinutes}
-      recordingEnabled={PLANS[plan].recordingEnabled}
-      dailyImageBytesLimit={PLANS[plan].dailyImageBytesLimit}
-      isAccountAdmin={false}
-      isMaster={false}
-      // 自分自身は管理者用アカウントを持っているので、ログアウト後は
-      // ゲスト用ログインではなく管理者用ログイン(TOPページ)に戻す。
-      guestInviteToken={null}
-      avatarSizePx={appSettings?.avatar_size_px ?? undefined}
-      maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
-      maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}
-      maintenanceEndsAt={appSettings?.maintenance_ends_at ?? null}
-      // viewOnly(自分のアカウントを持つ人が他人の招待URLを一時閲覧中)
-      // であることをLiveKitのToken発行APIに伝えるためのトークン。
-      // profiles.account_idを書き換えていないため、通常のRLS経由では
-      // ルームアクセスを証明できず、これが無いと音声/映像に参加できない。
-      viewOnlyInviteToken={inviteToken}
-      initialProfileLocale={(profile?.locale as Locale) ?? undefined}
-      initialAvatarMode={(profile?.avatar_mode as AvatarMode) ?? undefined}
-      initialAvatarIconUrl={profile?.avatar_icon_url ?? undefined}
     />
   );
 }
@@ -456,7 +347,6 @@ async function renderMemberRoomJoin(
       // 「マスター画面へ」ボタンを出すためだけの目印は、上のconst
       // routeStateのisMasterをそのまま渡す。
       showMasterPanelLink={routeState.isMaster}
-      guestInviteToken={null}
       avatarSizePx={appSettings?.avatar_size_px ?? undefined}
       maintenanceEnabled={appSettings?.maintenance_enabled ?? false}
       maintenanceStartsAt={appSettings?.maintenance_starts_at ?? null}

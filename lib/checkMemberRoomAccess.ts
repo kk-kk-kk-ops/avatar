@@ -6,9 +6,8 @@ import { createClient } from "@/lib/supabase/server";
 //
 // メンバー(account_membersに載っているルーム)の「入室」ボタンを
 // 押した時に、その場でもう一度アクセス権を確かめるための専用チェック。
-// lib/checkViewOnlyInviteAccess.tsと同じ理由(入室中に一覧から外される
-// 等でaccount_membersの行が変わっても、入室時のpropsのままの判定に
-// 頼らないようにするため)で、入室の直前にサーバー側で再確認する。
+// 入室中に一覧から外される等でaccount_membersの行が変わっても、入室時の
+// propsのままの判定に頼らないよう、入室の直前にサーバー側で再確認する。
 //
 // 既存のget_own_or_member_room RPC(account_members・持ち主のいずれかで、
 // かつBANされていないかを1回の呼び出しで判定する)を使うため、新しいDB
