@@ -12,9 +12,9 @@ const SIGNED_URL_EXPIRES_IN = 300; // 5分
 // 認可は既存の2ルートをそのまま踏襲する:
 //   - 通常: chat_messagesのRLS("chat_messages: select own dm")がそのまま
 //     sender/recipient本人かを判定してくれるため、素のSELECTで十分。
-//   - viewOnly: list_chat_messages_by_invite_tokenと同じ引数
-//     (roomId, peerUserId, inviteToken)を使い、同じSECURITY DEFINER関数で
-//     取得したスレッドの中から対象メッセージを探す。
+//   - メンバーの一覧表(roomId, peerUserId): 通常のRLSで0件だった場合に
+//     list_chat_messages_as_memberで取得したスレッドの中から対象メッセージを
+//     探す。
 //
 // variant=thumbnail のときは、吹き出し表示用の小さいサムネイルを返す。
 // thumbnail_pathが無いメッセージ(サムネイル方式の導入前に送られた
@@ -26,7 +26,6 @@ export async function GET(request: NextRequest) {
   const messageId = searchParams.get("messageId");
   const roomId = searchParams.get("roomId");
   const peerUserId = searchParams.get("peerUserId");
-  const inviteToken = searchParams.get("inviteToken");
   const download = searchParams.get("download") === "1";
   const variant = searchParams.get("variant") === "thumbnail" ? "thumbnail" : "full";
 
@@ -45,50 +44,34 @@ export async function GET(request: NextRequest) {
   let imagePath: string | null = null;
   let thumbnailPath: string | null = null;
 
-  if (inviteToken && roomId && peerUserId) {
-    const { data } = await supabase.rpc("list_chat_messages_by_invite_token", {
-      token: inviteToken,
-      target_room_id: roomId,
-      peer_user_id: peerUserId,
-    });
-    const row = (
-      data as
-        | Array<{ id: string; image_path: string | null; thumbnail_path: string | null }>
-        | null
-    )?.find((m) => m.id === messageId);
-    imagePath = row?.image_path ?? null;
-    thumbnailPath = row?.thumbnail_path ?? null;
-  } else {
-    const { data } = await supabase
-      .from("chat_messages")
-      .select("image_path, thumbnail_path")
-      .eq("id", messageId)
-      .maybeSingle();
-    const row = data as
-      | { image_path: string | null; thumbnail_path: string | null }
-      | null;
-    imagePath = row?.image_path ?? null;
-    thumbnailPath = row?.thumbnail_path ?? null;
+  const { data } = await supabase
+    .from("chat_messages")
+    .select("image_path, thumbnail_path")
+    .eq("id", messageId)
+    .maybeSingle();
+  const row = data as
+    | { image_path: string | null; thumbnail_path: string | null }
+    | null;
+  imagePath = row?.image_path ?? null;
+  thumbnailPath = row?.thumbnail_path ?? null;
 
-    // 入室の仕組みの作り替え 段階C。メンバーの一覧表で通す経路。
-    // 段階Gで招待トークンの経路を削除予定。
-    if (!imagePath && !thumbnailPath && roomId && peerUserId) {
-      const { data: memberData, error: memberError } = await supabase.rpc(
-        "list_chat_messages_as_member",
-        { target_room_id: roomId, peer_user_id: peerUserId },
-      );
-      if (memberError) {
-        // eslint-disable-next-line no-console
-        console.error("メンバーの一覧表による画像パスの取得に失敗しました", memberError);
-      } else {
-        const memberRow = (
-          memberData as
-            | Array<{ id: string; image_path: string | null; thumbnail_path: string | null }>
-            | null
-        )?.find((m) => m.id === messageId);
-        imagePath = memberRow?.image_path ?? null;
-        thumbnailPath = memberRow?.thumbnail_path ?? null;
-      }
+  // 入室の仕組みの作り替え 段階C。メンバーの一覧表で通す経路。
+  if (!imagePath && !thumbnailPath && roomId && peerUserId) {
+    const { data: memberData, error: memberError } = await supabase.rpc(
+      "list_chat_messages_as_member",
+      { target_room_id: roomId, peer_user_id: peerUserId },
+    );
+    if (memberError) {
+      // eslint-disable-next-line no-console
+      console.error("メンバーの一覧表による画像パスの取得に失敗しました", memberError);
+    } else {
+      const memberRow = (
+        memberData as
+          | Array<{ id: string; image_path: string | null; thumbnail_path: string | null }>
+          | null
+      )?.find((m) => m.id === messageId);
+      imagePath = memberRow?.image_path ?? null;
+      thumbnailPath = memberRow?.thumbnail_path ?? null;
     }
   }
 

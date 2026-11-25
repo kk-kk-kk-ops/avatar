@@ -26,7 +26,6 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const roomId = body?.roomId as string | undefined;
   const identity = body?.identity as string | undefined;
-  const inviteToken = body?.inviteToken as string | undefined;
 
   if (!roomId || !identity) {
     return NextResponse.json(
@@ -62,7 +61,6 @@ export async function POST(request: Request) {
   let templateId: string | null | undefined = ownRoom?.template_id;
 
   // 入室の仕組みの作り替え 段階C。メンバーの一覧表で通す経路。
-  // 段階Gで招待トークンの経路を削除予定。
   if (!accountId) {
     const { data: memberRoom, error: memberRoomError } = await supabase.rpc(
       "get_own_or_member_room",
@@ -80,25 +78,6 @@ export async function POST(request: Request) {
       accountId = matchedMember?.account_id;
       templateId = matchedMember?.template_id;
     }
-  }
-
-  // viewOnlyルート: app/api/livekit-token/route.tsと同じ考え方(招待URLの
-  // 一時閲覧者はprofiles.account_idが書き換わっていないためRLS経由の
-  // SELECTでは見えない。招待トークンの一致をSECURITY DEFINER関数で検証する)。
-  if (!accountId && inviteToken) {
-    const { data: viewRooms } = await supabase.rpc(
-      "list_rooms_by_invite_token",
-      { token: inviteToken },
-    );
-    const matched = (
-      viewRooms as Array<{
-        id: string;
-        account_id: string;
-        template_id: string | null;
-      }> | null
-    )?.find((r) => r.id === roomId);
-    accountId = matched?.account_id;
-    templateId = matched?.template_id;
   }
 
   if (!accountId) {

@@ -31,7 +31,6 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const rawPath = body?.rawPath as string | undefined;
   const roomId = body?.roomId as string | undefined;
-  const inviteToken = body?.inviteToken as string | undefined;
 
   if (!rawPath || !roomId) {
     return NextResponse.json({ error: "rawPathとroomIdが必要です" }, { status: 400 });
@@ -57,7 +56,6 @@ export async function POST(request: Request) {
   let authorized = !!ownRoom;
 
   // 入室の仕組みの作り替え 段階C-2。メンバーの一覧表で通す経路。
-  // 段階Gで招待トークンの経路を削除予定。
   if (!authorized) {
     const { data: memberRoom, error: memberRoomError } = await supabase.rpc(
       "get_own_or_member_room",
@@ -76,12 +74,6 @@ export async function POST(request: Request) {
     }
   }
 
-  if (!authorized && inviteToken) {
-    const { data: viewRooms } = await supabase.rpc("list_rooms_by_invite_token", {
-      token: inviteToken,
-    });
-    authorized = !!(viewRooms as Array<{ id: string }> | null)?.some((r) => r.id === roomId);
-  }
   if (!authorized) {
     return NextResponse.json(
       { error: "このルームへのアクセス権がありません" },

@@ -10,7 +10,6 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const roomId = body?.roomId as string | undefined;
   const identity = body?.identity as string | undefined;
-  const inviteToken = body?.inviteToken as string | undefined;
 
   if (!roomId || !identity) {
     return NextResponse.json(
@@ -37,7 +36,6 @@ export async function POST(request: Request) {
   let accountId: string | undefined = ownRoom?.account_id;
 
   // 入室の仕組みの作り替え 段階C。メンバーの一覧表で通す経路。
-  // 段階Gで招待トークンの経路を削除予定。
   if (!accountId) {
     const { data: memberRoom, error: memberRoomError } = await supabase.rpc(
       "get_own_or_member_room",
@@ -54,21 +52,6 @@ export async function POST(request: Request) {
       )?.[0];
       accountId = matchedMember?.account_id;
     }
-  }
-
-  // viewOnlyルート: 既に自分のアカウントを持つ人が他人の招待URLを一時閲覧している
-  // 場合、profiles.account_idは書き換えていないためRLS経由のSELECTでは見えない。
-  // 招待トークンの一致をSECURITY DEFINER関数で検証する(/?invite=のviewOnly
-  // 判定と同じ考え方)。
-  if (!accountId && inviteToken) {
-    const { data: viewRooms } = await supabase.rpc(
-      "list_rooms_by_invite_token",
-      { token: inviteToken },
-    );
-    const matched = (
-      viewRooms as Array<{ id: string; account_id: string }> | null
-    )?.find((r) => r.id === roomId);
-    accountId = matched?.account_id;
   }
 
   if (!accountId) {
@@ -108,12 +91,12 @@ export async function POST(request: Request) {
   // このルームが属するアカウントに固定で割り当てられたLiveKitサーバーを使う
   // (単一送信元からの同時接続50人規模でWebARENA Indigo側の遮断が発生する
   // ことが判明したため、契約時点でサーバーを固定する方式にした。
-  // lib/livekitServers.ts参照)。accountIdは上の通常ルート/viewOnlyルートの
-  // いずれでも、既にサーバー側で検証済みの値(本人のルームの所有アカウント、
-  // またはinviteTokenの一致が確認できたアカウント)のため、ここはRLSクライアント
-  // ではなくservice_roleで読む(2026-11-15、段階4。accounts: select ownを
-  // 将来owner_user_idのみに絞った場合でも、ゲスト/viewOnlyの利用者が
-  // ここで0行になって通話できなくなることを避けるため)。
+  // lib/livekitServers.ts参照)。accountIdは上の通常ルート/メンバーの
+  // 一覧表のいずれでも、既にサーバー側で検証済みの値(本人のルームの
+  // 所有アカウント、またはメンバーとして載っているアカウント)のため、
+  // ここはRLSクライアントではなくservice_roleで読む(2026-11-15、段階4。
+  // accounts: select ownを将来owner_user_idのみに絞った場合でも、ここで
+  // 0行になって通話できなくなることを避けるため)。
   const { data: account } = await createServiceRoleClient()
     .from("accounts")
     .select("livekit_server_id")
