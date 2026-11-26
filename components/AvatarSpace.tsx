@@ -11389,14 +11389,16 @@ export default function AvatarSpace({
     const maintenancePublished =
       isMaintenanceScheduled(maintenance) || isMaintenanceActive(maintenance);
     const maintenanceBlocking = isMaintenanceActive(maintenance) && !isMaster;
-    // ②-2(2026-11追加)。ロビーの「ロゴ」のまとまりを出す条件:自分の
-    // ルームであること・standard/proであること・テンプレートに区画が
-    // 1つ以上あること、の3つがそろった時だけ。
+    // ②-2(2026-11追加、2026-11-26見直し)。ロビーの「ルーム内ロゴ」の
+    // まとまりを出す条件:自分のルームであること・テンプレートに区画が
+    // 1つ以上あること、の2つがそろった時だけ(プランは条件から外した)。
+    // 差し替えができるかどうか(standard・pro)は別にroomLogoCanEditで
+    // 持ち、free・light(プランが読めなかった場合も含む)では枠は出すが
+    // 押せない表示にする。
     const roomLogoSectionEnabled =
-      matchedRoomCard?.kind === "own" &&
-      !!lobbyRoomPlan &&
-      !!PLANS[lobbyRoomPlan]?.roomLogoEnabled &&
-      lobbyLogoZonesCount > 0;
+      matchedRoomCard?.kind === "own" && lobbyLogoZonesCount > 0;
+    const roomLogoCanEdit =
+      !!lobbyRoomPlan && !!PLANS[lobbyRoomPlan]?.roomLogoEnabled;
     return (
       <div className="flex h-full w-full flex-col overflow-hidden bg-slate-900">
         {/* 段階E-5-1b(2026-11-25)。ヘッダーの帯は画面の端から端まで
@@ -11445,10 +11447,13 @@ export default function AvatarSpace({
             onLogout={handleLogoutButtonClick}
             isLoggingOut={isLoggingOut}
             roomLogoEnabled={roomLogoSectionEnabled}
+            roomLogoCanEdit={roomLogoCanEdit}
             roomLogoPreviewUrl={
-              lobbyRoomLogoImageUrl ?? lobbyDefaultLogoImageUrl
+              roomLogoCanEdit
+                ? lobbyRoomLogoImageUrl ?? lobbyDefaultLogoImageUrl
+                : lobbyDefaultLogoImageUrl
             }
-            hasOwnRoomLogo={!!lobbyRoomLogoImageUrl}
+            hasOwnRoomLogo={roomLogoCanEdit && !!lobbyRoomLogoImageUrl}
             roomLogoUploading={roomLogoUploading}
             roomLogoError={roomLogoError}
             onRoomLogoFileChange={handleRoomLogoFileChange}

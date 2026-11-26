@@ -50,10 +50,15 @@ export type RoomJoinSidebarProps = {
   onLogout: () => void;
   isLoggingOut: boolean;
   // ②-2(2026-11追加)。ロビーでのルームロゴ差し替え。アバター選択の上に
-  // 出す「ロゴ」のまとまり。roomLogoEnabledがtrueの時だけ表示する
-  // (roomCardKind==="own"・standard/pro・テンプレートに区画が1つ以上、の
-  // 3つがそろった時にのみtrueになる。判定はAvatarSpace.tsx側で行う)。
+  // 出す「ルーム内ロゴ」のまとまり。roomLogoEnabledがtrueの時だけ表示する
+  // (roomCardKind==="own"・テンプレートに区画が1つ以上、の2つがそろった
+  // 時にtrueになる。プランは条件から外した。判定はAvatarSpace.tsx側で
+  // 行う)。roomLogoCanEditはそのプランでロゴの差し替えができるか
+  // (standard・pro)。falseの時(free・light、プランが読めなかった時も
+  // 含む)は、プレビューを会議室に実際に出るロゴ(テンプレートのロゴ)に
+  // 固定し、「変更」ボタンは押せなくし、「デフォルトに戻す」は出さない。
   roomLogoEnabled: boolean;
+  roomLogoCanEdit: boolean;
   roomLogoPreviewUrl: string | null;
   hasOwnRoomLogo: boolean;
   roomLogoUploading: boolean;
@@ -95,6 +100,7 @@ export default function RoomJoinSidebar({
   onLogout,
   isLoggingOut,
   roomLogoEnabled,
+  roomLogoCanEdit,
   roomLogoPreviewUrl,
   hasOwnRoomLogo,
   roomLogoUploading,
@@ -169,8 +175,10 @@ export default function RoomJoinSidebar({
         </p>
       )}
 
-      {/* ②-2(2026-11追加)。standard・proの持ち主が自分のルームを見ている
-          時だけ、アバター選択の上に出す。 */}
+      {/* ②-2(2026-11追加)。自分のルームでテンプレートに区画が1つ以上
+          あれば、プランに関係なくこのまとまり自体は出す(2026-11-26
+          指摘)。差し替えができるのはstandard・pro(roomLogoCanEdit)
+          だけで、それ以外は押せないボタン+プラン限定の注記にする。 */}
       {roomLogoEnabled && (
         <div className="mb-4">
           <p className="mb-2 text-xs font-semibold text-slate-400">
@@ -191,7 +199,13 @@ export default function RoomJoinSidebar({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <label className="cursor-pointer rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+            <label
+              className={`rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 ${
+                roomLogoCanEdit
+                  ? "cursor-pointer hover:bg-slate-800"
+                  : "cursor-not-allowed opacity-50"
+              }`}
+            >
               {roomLogoUploading
                 ? t("lobby.logoUploading")
                 : t("lobby.logoUploadButton")}
@@ -199,11 +213,11 @@ export default function RoomJoinSidebar({
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
                 className="hidden"
-                disabled={roomLogoUploading}
+                disabled={roomLogoUploading || !roomLogoCanEdit}
                 onChange={onRoomLogoFileChange}
               />
             </label>
-            {hasOwnRoomLogo && (
+            {roomLogoCanEdit && hasOwnRoomLogo && (
               <button
                 type="button"
                 onClick={onRequestResetRoomLogo}
@@ -215,9 +229,11 @@ export default function RoomJoinSidebar({
             )}
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
-            {t("lobby.logoChangeNotice")}
+            {roomLogoCanEdit
+              ? t("lobby.logoChangeNotice")
+              : t("lobby.logoPlanRestricted")}
           </p>
-          {roomLogoError && (
+          {roomLogoCanEdit && roomLogoError && (
             <p className="mt-1 text-[10px] text-red-400">{roomLogoError}</p>
           )}
         </div>
