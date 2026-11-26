@@ -811,31 +811,6 @@ grant execute on function public.lookup_account_by_invite_token(text) to anon;
 --     一致を条件にSECURITY DEFINERでRLSを迂回して返す。
 drop function if exists public.list_rooms_by_invite_token(text);
 
-create function public.list_rooms_by_invite_token(token text)
-returns table (
-  id uuid,
-  account_id uuid,
-  template_id uuid,
-  name text,
-  preview_image text
-)
-language sql
-security definer
-set search_path = public
-as $$
-  -- BANされている場合は一覧から除く(2026-11追加)。
-  select r.id, r.account_id, r.template_id, r.name, r.preview_image
-  from public.rooms r
-  join public.accounts a on a.id = r.account_id
-  where a.invite_token = token
-    and not public.is_banned_for_account(a.id)
-  order by r.created_at asc;
-$$;
-
-revoke all on function public.list_rooms_by_invite_token(text) from public;
-revoke all on function public.list_rooms_by_invite_token(text) from anon;
-grant execute on function public.list_rooms_by_invite_token(text) to authenticated;
-
 
 -- ------------------------------------------------------------
 -- 9c. app_settings: アプリ全体で共有する設定(現状はアバターの表示
@@ -1521,46 +1496,6 @@ create trigger chat_messages_force_sender_name
 drop function if exists public.list_chat_messages_by_invite_token(text, uuid);
 drop function if exists public.list_chat_messages_by_invite_token(text, uuid, uuid);
 
-create function public.list_chat_messages_by_invite_token(
-  token text,
-  target_room_id uuid,
-  peer_user_id uuid
-)
-returns table (
-  id uuid,
-  sender_user_id uuid,
-  sender_name text,
-  message text,
-  created_at timestamptz,
-  edited_at timestamptz,
-  deleted_at timestamptz,
-  image_path text,
-  thumbnail_path text
-)
-language sql
-security definer
-set search_path = public
-as $$
-  -- BANされている場合は一切見えない(2026-11追加)。
-  select m.id, m.sender_user_id, m.sender_name, m.message, m.created_at,
-    m.edited_at, m.deleted_at, m.image_path, m.thumbnail_path
-  from public.chat_messages m
-  join public.rooms r on r.id = m.room_id
-  join public.accounts a on a.id = r.account_id
-  where a.invite_token = token
-    and r.id = target_room_id
-    and not public.is_banned_for_account(a.id)
-    and (
-      (m.sender_user_id = auth.uid() and m.recipient_user_id = peer_user_id)
-      or (m.sender_user_id = peer_user_id and m.recipient_user_id = auth.uid())
-    )
-  order by m.created_at asc
-  limit 50;
-$$;
-
-revoke all on function public.list_chat_messages_by_invite_token(text, uuid, uuid) from public;
-revoke all on function public.list_chat_messages_by_invite_token(text, uuid, uuid) from anon;
-grant execute on function public.list_chat_messages_by_invite_token(text, uuid, uuid) to authenticated;
 
 -- 引数を追加(p_image_path・p_thumbnail_path)して関数シグネチャが変わった
 -- ため、旧シグネチャ・新シグネチャの両方をdropしてから作り直す。
@@ -1569,73 +1504,6 @@ drop function if exists public.send_chat_message_by_invite_token(text, uuid, uui
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text);
 drop function if exists public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text);
 
-create function public.send_chat_message_by_invite_token(
-  token text,
-  target_room_id uuid,
-  recipient_user_id uuid,
-  sender_name text,
-  message text,
-  p_image_path text default null,
-  p_thumbnail_path text default null
-)
-returns table (id uuid, created_at timestamptz)
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_room_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-  if recipient_user_id = auth.uid() then
-    raise exception '自分自身には送信できません';
-  end if;
-  if char_length(message) > 500 then
-    raise exception 'メッセージの長さが不正です';
-  end if;
-  if char_length(message) = 0 and p_image_path is null then
-    raise exception 'メッセージの長さが不正です';
-  end if;
-
-  select r.id into v_room_id
-  from public.rooms r
-  join public.accounts a on a.id = r.account_id
-  where a.invite_token = token
-    and r.id = target_room_id;
-
-  if v_room_id is null then
-    raise exception 'このルームへのアクセス権がありません';
-  end if;
-
-  -- BAN済みユーザーへの対策(2026-11追加)。
-  if public.is_banned_for_room(v_room_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  -- 画像・サムネイル添付時のなりすまし防止(通常ルートのRLSと同じ検証)。
-  if p_image_path is not null
-     and p_image_path not like (v_room_id::text || '/' || auth.uid()::text || '/%') then
-    raise exception '不正な画像パスです';
-  end if;
-
-  if p_thumbnail_path is not null
-     and p_thumbnail_path not like (v_room_id::text || '/' || auth.uid()::text || '/%') then
-    raise exception '不正なサムネイルパスです';
-  end if;
-
-  return query
-    insert into public.chat_messages
-      (room_id, sender_user_id, recipient_user_id, sender_name, message, image_path, thumbnail_path)
-    values (v_room_id, auth.uid(), recipient_user_id, sender_name, message, p_image_path, p_thumbnail_path)
-    returning chat_messages.id, chat_messages.created_at;
-end;
-$$;
-
-revoke all on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text) from public;
-revoke all on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text) from anon;
-grant execute on function public.send_chat_message_by_invite_token(text, uuid, uuid, text, text, text, text) to authenticated;
 
 -- viewOnly向けのメッセージ編集。通常ルートは上のRLS
 -- ("chat_messages: update own dm")で直接UPDATEできるが、viewOnlyは
@@ -1645,101 +1513,8 @@ grant execute on function public.send_chat_message_by_invite_token(text, uuid, u
 -- (increment_daily_usage_secondsと同じ理由)。
 drop function if exists public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz);
 
-create function public.edit_chat_message_by_invite_token(
-  token text,
-  p_message_id uuid,
-  p_new_message text,
-  p_edited_at timestamptz
-)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_room_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-  if char_length(p_new_message) = 0 or char_length(p_new_message) > 500 then
-    raise exception 'メッセージの長さが不正です';
-  end if;
-
-  select r.id into v_room_id
-  from public.chat_messages m
-  join public.rooms r on r.id = m.room_id
-  join public.accounts a on a.id = r.account_id
-  where a.invite_token = token
-    and m.id = p_message_id
-    and m.sender_user_id = auth.uid()
-    and m.deleted_at is null;
-
-  if v_room_id is null then
-    raise exception 'このメッセージは編集できません';
-  end if;
-
-  -- BAN済みユーザーへの対策(2026-11追加)。
-  if public.is_banned_for_room(v_room_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  update public.chat_messages
-  set message = p_new_message, edited_at = p_edited_at
-  where id = p_message_id;
-end;
-$$;
-
-revoke all on function public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz) from public;
-revoke all on function public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz) from anon;
-grant execute on function public.edit_chat_message_by_invite_token(text, uuid, text, timestamptz) to authenticated;
-
 -- viewOnly向けのメッセージ削除(論理削除)。上のedit関数と同じ考え方。
 drop function if exists public.delete_chat_message_by_invite_token(text, uuid, timestamptz);
-
-create function public.delete_chat_message_by_invite_token(
-  token text,
-  p_message_id uuid,
-  p_deleted_at timestamptz
-)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_room_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-
-  select r.id into v_room_id
-  from public.chat_messages m
-  join public.rooms r on r.id = m.room_id
-  join public.accounts a on a.id = r.account_id
-  where a.invite_token = token
-    and m.id = p_message_id
-    and m.sender_user_id = auth.uid();
-
-  if v_room_id is null then
-    raise exception 'このメッセージは削除できません';
-  end if;
-
-  -- BAN済みユーザーへの対策(2026-11追加)。
-  if public.is_banned_for_room(v_room_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  update public.chat_messages
-  set message = '', deleted_at = p_deleted_at
-  where id = p_message_id;
-end;
-$$;
-
-revoke all on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) from public;
-revoke all on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) from anon;
-grant execute on function public.delete_chat_message_by_invite_token(text, uuid, timestamptz) to authenticated;
 
 -- 9f-3. チャット履歴の削除ポリシー。
 --   ・保管期間はプラン別(free:7日/light,standard:1ヶ月/pro:3ヶ月)。
@@ -2124,82 +1899,6 @@ grant execute on function public.create_chat_group(uuid, uuid[]) to authenticate
 -- アクセス権がありません」で失敗していた。招待トークンの一致で認可する
 -- 点以外はcreate_chat_group()と同じ。
 drop function if exists public.create_chat_group_by_invite_token(text, uuid, uuid[]);
-create function public.create_chat_group_by_invite_token(
-  token text,
-  target_room_id uuid,
-  p_member_user_ids uuid[]
-)
-returns table (group_id uuid, already_existed boolean)
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_group_id uuid;
-  v_member uuid;
-  v_target_members uuid[];
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-  if p_member_user_ids is null or array_length(p_member_user_ids, 1) is null then
-    raise exception '参加者を1人以上選択してください';
-  end if;
-  if not exists (
-    select 1 from public.rooms r
-    join public.accounts a on a.id = r.account_id
-    where r.id = target_room_id and a.invite_token = token
-  ) then
-    raise exception 'このルームへのアクセス権がありません';
-  end if;
-
-  -- BAN済みユーザーへの対策(2026-11追加)。
-  if public.is_banned_for_room(target_room_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  -- 重複作成防止(2026-08-30追加。create_chat_group()と同じロジック)。
-  select array_agg(distinct m order by m) into v_target_members
-  from unnest(array_append(p_member_user_ids, auth.uid())) as m;
-
-  select g.id into v_group_id
-  from public.chat_groups g
-  where g.room_id = target_room_id
-    and (
-      select array_agg(gm.user_id order by gm.user_id)
-      from public.chat_group_members gm
-      where gm.group_id = g.id
-    ) = v_target_members
-  limit 1;
-
-  if v_group_id is not null then
-    return query select v_group_id, true;
-    return;
-  end if;
-
-  insert into public.chat_groups (room_id, created_by)
-  values (target_room_id, auth.uid())
-  returning id into v_group_id;
-
-  insert into public.chat_group_members (group_id, user_id)
-  values (v_group_id, auth.uid())
-  on conflict do nothing;
-
-  foreach v_member in array p_member_user_ids loop
-    if v_member <> auth.uid() then
-      insert into public.chat_group_members (group_id, user_id)
-      values (v_group_id, v_member)
-      on conflict do nothing;
-    end if;
-  end loop;
-
-  return query select v_group_id, false;
-end;
-$$;
-
-revoke all on function public.create_chat_group_by_invite_token(text, uuid, uuid[]) from public;
-revoke all on function public.create_chat_group_by_invite_token(text, uuid, uuid[]) from anon;
-grant execute on function public.create_chat_group_by_invite_token(text, uuid, uuid[]) to authenticated;
 
 -- スレッドを開いた際に既読位置を更新する(グループ)。
 drop function if exists public.mark_chat_group_read(uuid);
@@ -2532,140 +2231,6 @@ grant execute on function public.list_chat_threads(uuid) to authenticated;
 -- 判定はもともとchat_group_members.user_id=auth.uid()のみで行っており、
 -- プロフィールのアカウント所属を問わないため、この部分は変更していない)。
 drop function if exists public.list_chat_threads_by_invite_token(text, uuid);
-create function public.list_chat_threads_by_invite_token(
-  token text,
-  target_room_id uuid
-)
-returns table (
-  thread_id uuid,
-  is_group boolean,
-  thread_name text,
-  last_message text,
-  last_message_at timestamptz,
-  unread_count bigint
-)
-language sql
-security definer
-set search_path = public
-stable
-as $$
-  -- BANされている場合は一切見えない(2026-11追加)。allowedはDM側
-  -- (peers経由)で元々参照していたが、グループ側(group_rows)は参照して
-  -- いなかったため、末尾のunionの両方をallowedでゲートするよう変更する。
-  with allowed as (
-    select 1
-    from public.rooms r
-    join public.accounts a on a.id = r.account_id
-    where r.id = target_room_id
-      and a.invite_token = token
-      and not public.is_banned_for_account(a.id)
-  ),
-  peers as (
-    select distinct
-      case when m.sender_user_id = auth.uid() then m.recipient_user_id else m.sender_user_id end as peer_id
-    from public.chat_messages m
-    where m.room_id = target_room_id
-      and m.recipient_user_id is not null
-      and (m.sender_user_id = auth.uid() or m.recipient_user_id = auth.uid())
-      and exists (select 1 from allowed)
-  ),
-  dm_last as (
-    select distinct on (pe.peer_id)
-      pe.peer_id,
-      m.message,
-      m.sender_name,
-      m.deleted_at,
-      m.created_at
-    from peers pe
-    join public.chat_messages m
-      on m.room_id = target_room_id
-      and (
-        (m.sender_user_id = auth.uid() and m.recipient_user_id = pe.peer_id)
-        or (m.recipient_user_id = auth.uid() and m.sender_user_id = pe.peer_id)
-      )
-    order by pe.peer_id, m.created_at desc
-  ),
-  dm_unread as (
-    select
-      m.sender_user_id as peer_id,
-      count(*) as cnt
-    from public.chat_messages m
-    left join public.chat_read_state rs
-      on rs.room_id = target_room_id and rs.user_id = auth.uid() and rs.peer_user_id = m.sender_user_id
-    where m.room_id = target_room_id
-      and m.recipient_user_id = auth.uid()
-      and m.deleted_at is null
-      and m.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
-    group by m.sender_user_id
-  ),
-  dm_rows as (
-    select
-      lm.peer_id as thread_id,
-      false as is_group,
-      coalesce(pr.display_name, lm.sender_name) as thread_name,
-      case when lm.deleted_at is not null then '' else lm.message end as last_message,
-      lm.created_at as last_message_at,
-      coalesce(u.cnt, 0) as unread_count
-    from dm_last lm
-    left join public.profiles pr on pr.user_id = lm.peer_id
-    left join dm_unread u on u.peer_id = lm.peer_id
-  ),
-  my_groups as (
-    select g.id as group_id, g.created_at, g.name as custom_name
-    from public.chat_groups g
-    join public.chat_group_members gm on gm.group_id = g.id and gm.user_id = auth.uid()
-    where g.room_id = target_room_id
-  ),
-  group_names as (
-    select
-      gm.group_id,
-      string_agg(coalesce(pr.display_name, 'メンバー'), '、' order by pr.display_name) as name
-    from public.chat_group_members gm
-    left join public.profiles pr on pr.user_id = gm.user_id
-    where gm.group_id in (select group_id from my_groups)
-      and gm.user_id <> auth.uid()
-    group by gm.group_id
-  ),
-  group_last as (
-    select distinct on (m.group_id)
-      m.group_id, m.message, m.deleted_at, m.created_at
-    from public.chat_messages m
-    where m.group_id in (select group_id from my_groups)
-    order by m.group_id, m.created_at desc
-  ),
-  group_unread as (
-    select m.group_id, count(*) as cnt
-    from public.chat_messages m
-    left join public.chat_group_read_state rs
-      on rs.group_id = m.group_id and rs.user_id = auth.uid()
-    where m.group_id in (select group_id from my_groups)
-      and m.sender_user_id <> auth.uid()
-      and m.deleted_at is null
-      and m.created_at > coalesce(rs.last_read_at, 'epoch'::timestamptz)
-    group by m.group_id
-  ),
-  group_rows as (
-    select
-      mg.group_id as thread_id,
-      true as is_group,
-      coalesce(mg.custom_name, gn.name, 'グループ') as thread_name,
-      case when gl.deleted_at is not null then '' else coalesce(gl.message, '') end as last_message,
-      coalesce(gl.created_at, mg.created_at) as last_message_at,
-      coalesce(gu.cnt, 0) as unread_count
-    from my_groups mg
-    left join group_names gn on gn.group_id = mg.group_id
-    left join group_last gl on gl.group_id = mg.group_id
-    left join group_unread gu on gu.group_id = mg.group_id
-  )
-  select * from dm_rows where exists (select 1 from allowed)
-  union all
-  select * from group_rows where exists (select 1 from allowed)
-  order by last_message_at desc;
-$$;
-
-revoke all on function public.list_chat_threads_by_invite_token(text, uuid) from public;
-revoke all on function public.list_chat_threads_by_invite_token(text, uuid) from anon;
-grant execute on function public.list_chat_threads_by_invite_token(text, uuid) to authenticated;
 
 
 -- ------------------------------------------------------------
@@ -2862,52 +2427,6 @@ grant execute on function public.create_dm_mention(uuid, text) to authenticated;
 -- と同じ考え方で、招待トークンがそのメッセージの所属ルームと一致することを
 -- 検証する。
 drop function if exists public.create_dm_mention_by_invite_token(text, uuid, text);
-create function public.create_dm_mention_by_invite_token(
-  token text,
-  p_message_id uuid,
-  p_mentioner_name text
-)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_recipient uuid;
-  v_room_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-
-  select m.recipient_user_id, r.id into v_recipient, v_room_id
-  from public.chat_messages m
-  join public.rooms r on r.id = m.room_id
-  join public.accounts a on a.id = r.account_id
-  where a.invite_token = token
-    and m.id = p_message_id
-    and m.sender_user_id = auth.uid()
-    and m.recipient_user_id is not null;
-
-  if v_recipient is null then
-    raise exception 'このメッセージにはメンション通知を作成できません';
-  end if;
-
-  -- BAN済みユーザーへの対策(2026-11追加)。
-  if public.is_banned_for_room(v_room_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  insert into public.chat_mentions
-    (message_id, group_id, recipient_user_id, mentioned_user_id, mentioner_user_id, mentioner_name, is_everyone)
-  values
-    (p_message_id, null, v_recipient, v_recipient, auth.uid(), p_mentioner_name, false);
-end;
-$$;
-
-revoke all on function public.create_dm_mention_by_invite_token(text, uuid, text) from public;
-revoke all on function public.create_dm_mention_by_invite_token(text, uuid, text) from anon;
-grant execute on function public.create_dm_mention_by_invite_token(text, uuid, text) to authenticated;
 
 -- 通知一覧の「〇〇さんからメンションされました」の表示名を、送信時点の
 -- スナップショット(chat_mentions.mentioner_name)ではなく最新のDB値から
@@ -3065,136 +2584,13 @@ create policy "chat_message_reactions: delete own"
 -- (グループチャットはchat_group_membersに実際のメンバー行が入るため
 -- 通常のRLSで済み、この関数を経由する必要はない。)
 drop function if exists public.set_chat_message_reaction_by_invite_token(text, uuid, text);
-create function public.set_chat_message_reaction_by_invite_token(
-  token text,
-  p_message_id uuid,
-  p_emoji text
-)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_room_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-  if p_emoji not in ('👍', '❤️', '😂', '😮', '👏') then
-    raise exception '不正な絵文字です';
-  end if;
-
-  select r.id into v_room_id
-  from public.chat_messages m
-  join public.rooms r on r.id = m.room_id
-  join public.accounts a on a.id = r.account_id
-  where a.invite_token = token
-    and m.id = p_message_id;
-
-  if v_room_id is null then
-    raise exception 'このメッセージにはリアクションできません';
-  end if;
-
-  -- BAN済みユーザーへの対策(2026-11追加)。
-  if public.is_banned_for_room(v_room_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  insert into public.chat_message_reactions (message_id, user_id, emoji)
-  values (p_message_id, auth.uid(), p_emoji)
-  on conflict (message_id, user_id)
-  do update set emoji = excluded.emoji, created_at = now();
-end;
-$$;
-
-revoke all on function public.set_chat_message_reaction_by_invite_token(text, uuid, text) from public;
-revoke all on function public.set_chat_message_reaction_by_invite_token(text, uuid, text) from anon;
-grant execute on function public.set_chat_message_reaction_by_invite_token(text, uuid, text) to authenticated;
 
 drop function if exists public.remove_chat_message_reaction_by_invite_token(text, uuid);
-create function public.remove_chat_message_reaction_by_invite_token(
-  token text,
-  p_message_id uuid
-)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_room_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-
-  -- BAN済みユーザーへの対策(2026-11追加)。削除対象が見つからない場合は
-  -- このチェックをスキップし、下のDELETE文(0件になるだけ)に委ねる。
-  select rm.id into v_room_id
-  from public.chat_message_reactions r
-  join public.chat_messages m on m.id = r.message_id
-  join public.rooms rm on rm.id = m.room_id
-  join public.accounts a on a.id = rm.account_id
-  where a.invite_token = token
-    and r.message_id = p_message_id
-    and r.user_id = auth.uid();
-
-  if v_room_id is not null and public.is_banned_for_room(v_room_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  delete from public.chat_message_reactions r
-  using public.chat_messages m,
-        public.rooms rm,
-        public.accounts a
-  where r.message_id = m.id
-    and rm.id = m.room_id
-    and a.id = rm.account_id
-    and a.invite_token = token
-    and r.message_id = p_message_id
-    and r.user_id = auth.uid();
-end;
-$$;
-
-revoke all on function public.remove_chat_message_reaction_by_invite_token(text, uuid) from public;
-revoke all on function public.remove_chat_message_reaction_by_invite_token(text, uuid) from anon;
-grant execute on function public.remove_chat_message_reaction_by_invite_token(text, uuid) to authenticated;
 
 -- viewOnly向けのリアクション一覧取得。1対1DMのメッセージ一覧
 -- (list_chat_messages_by_invite_token)取得後、そのメッセージID群を渡して
 -- 呼ぶ想定(既存関数の戻り値形状を変えたくないため、別関数として分離)。
 drop function if exists public.list_chat_message_reactions_by_invite_token(text, uuid[]);
-create function public.list_chat_message_reactions_by_invite_token(
-  token text,
-  p_message_ids uuid[]
-)
-returns table (message_id uuid, user_id uuid, emoji text)
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-
-  -- BANされている場合は一切見えない(2026-11追加)。
-  return query
-    select r.message_id, r.user_id, r.emoji
-    from public.chat_message_reactions r
-    join public.chat_messages m on m.id = r.message_id
-    join public.rooms rm on rm.id = m.room_id
-    join public.accounts a on a.id = rm.account_id
-    where a.invite_token = token
-      and r.message_id = any(p_message_ids)
-      and not public.is_banned_for_account(a.id);
-end;
-$$;
-
-revoke all on function public.list_chat_message_reactions_by_invite_token(text, uuid[]) from public;
-revoke all on function public.list_chat_message_reactions_by_invite_token(text, uuid[]) from anon;
-grant execute on function public.list_chat_message_reactions_by_invite_token(text, uuid[]) to authenticated;
 
 
 -- ------------------------------------------------------------
@@ -3695,51 +3091,9 @@ create policy "bug_reports: update master"
 --     なっている(language plpgsqlでトピックの形の確認とuuid変換を別の
 --     文に分ける。can_message_user_channel_topic()を新設)。
 -- ------------------------------------------------------------
-create table if not exists public.realtime_view_grants (
-  user_id uuid not null references auth.users(id) on delete cascade,
-  account_id uuid not null references public.accounts(id) on delete cascade,
-  expires_at timestamptz not null,
-  primary key (user_id, account_id)
-);
-alter table public.realtime_view_grants enable row level security;
-drop policy if exists "realtime_view_grants: select own" on public.realtime_view_grants;
-create policy "realtime_view_grants: select own"
-  on public.realtime_view_grants for select
-  using (user_id = auth.uid());
+drop table if exists public.realtime_view_grants;
 
-create or replace function public.grant_realtime_view_access(token text)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_account_id uuid;
-begin
-  if auth.uid() is null then
-    raise exception 'ログインが必要です';
-  end if;
-  select a.id into v_account_id
-  from public.accounts a
-  where a.invite_token = token;
-  if v_account_id is null then
-    raise exception '無効な招待リンクです';
-  end if;
-
-  -- BANされている場合は許可証を発行しない。
-  if public.is_banned_for_account(v_account_id) then
-    raise exception 'このルームへのアクセスが制限されています';
-  end if;
-
-  insert into public.realtime_view_grants (user_id, account_id, expires_at)
-  values (auth.uid(), v_account_id, now() + interval '30 minutes')
-  on conflict (user_id, account_id) do update set expires_at = excluded.expires_at;
-end;
-$$;
-
-revoke all on function public.grant_realtime_view_access(text) from public;
-revoke all on function public.grant_realtime_view_access(text) from anon;
-grant execute on function public.grant_realtime_view_access(text) to authenticated;
+drop function if exists public.grant_realtime_view_access(text);
 
 -- 段階3適用後の本番テストで判明: language sql の CASE式(トピックの形を
 -- 確認してから別の分岐でuuidへキャストする書き方)では、avatar-room-{UUID}
@@ -3777,12 +3131,6 @@ begin
           select 1 from public.profiles p
           where p.user_id = auth.uid() and p.account_id = r.account_id
         )
-        or exists (
-          select 1 from public.realtime_view_grants g
-          where g.user_id = auth.uid()
-            and g.account_id = r.account_id
-            and g.expires_at > now()
-        )
       )
       and not public.is_banned_for_account(r.account_id)
   );
@@ -3811,15 +3159,9 @@ as $$
     select 1
     from (
       select account_id from public.profiles where user_id = auth.uid()
-      union
-      select account_id from public.realtime_view_grants
-      where user_id = auth.uid() and expires_at > now()
     ) as mine(account_id)
     where mine.account_id in (
       select account_id from public.profiles where user_id = p_recipient_user_id
-      union
-      select account_id from public.realtime_view_grants
-      where user_id = p_recipient_user_id and expires_at > now()
     )
     and not public.is_banned_for_account(mine.account_id)
   );
@@ -4803,7 +4145,7 @@ grant execute on function public.list_chat_message_reactions_as_member(uuid[]) t
 -- ============================================================
 
 -- 段階Bでaccount_membersの判定を足した。realtime_view_grantsの判定は
--- 段階Gで削除予定。
+-- 段階G-2(2026-11-26)で削除済み。
 create or replace function public.can_access_avatar_room_topic()
 returns boolean
 language plpgsql
@@ -4832,12 +4174,6 @@ begin
           where p.user_id = auth.uid() and p.account_id = r.account_id
         )
         or exists (
-          select 1 from public.realtime_view_grants g
-          where g.user_id = auth.uid()
-            and g.account_id = r.account_id
-            and g.expires_at > now()
-        )
-        or exists (
           select 1 from public.account_members am
           where am.user_id = auth.uid()
             and am.account_id = r.account_id
@@ -4853,7 +4189,7 @@ revoke all on function public.can_access_avatar_room_topic() from anon;
 grant execute on function public.can_access_avatar_room_topic() to authenticated;
 
 -- 段階Bでaccount_membersの判定を足した。realtime_view_grantsの判定は
--- 段階Gで削除予定。
+-- 段階G-2(2026-11-26)で削除済み。
 create or replace function public.can_message_user_channel(p_recipient_user_id uuid)
 returns boolean
 language sql
@@ -4866,16 +4202,10 @@ as $$
     from (
       select account_id from public.profiles where user_id = auth.uid()
       union
-      select account_id from public.realtime_view_grants
-      where user_id = auth.uid() and expires_at > now()
-      union
       select account_id from public.account_members where user_id = auth.uid()
     ) as mine(account_id)
     where mine.account_id in (
       select account_id from public.profiles where user_id = p_recipient_user_id
-      union
-      select account_id from public.realtime_view_grants
-      where user_id = p_recipient_user_id and expires_at > now()
       union
       select account_id from public.account_members where user_id = p_recipient_user_id
     )
@@ -4927,6 +4257,152 @@ $$;
 revoke all on function public.get_member_room_entry(uuid) from public;
 revoke all on function public.get_member_room_entry(uuid) from anon;
 grant execute on function public.get_member_room_entry(uuid) to authenticated;
+
+
+-- ============================================================
+-- 27. ロゴ区画(②-1、supabase/migrations/2026-11-26_template_logo_zones.sql、
+--     本番適用済み)
+-- ============================================================
+
+alter table public.templates
+  add column if not exists logo_zones jsonb not null default '[]'::jsonb;
+alter table public.templates
+  add column if not exists default_logo_image_url text;
+
+
+-- ============================================================
+-- 28. ロビーでのロゴ差し替え(②-2、supabase/migrations/2026-11-26_room_logo.sql、
+--     本番適用済み)
+-- ============================================================
+
+-- (1) roomsにlogo_image_url列を足す(null可。未設定ならテンプレートの
+--     ロゴを使う、という優先順位は画面側で解決する)。
+alter table public.rooms
+  add column if not exists logo_image_url text;
+
+-- (2) logo_image_urlの直接の自己書き換えを防ぐ。既存のprevent_privileged_
+--     column_self_write()(profiles・accounts用)には触らず、rooms専用の
+--     新しい関数・トリガーを作る。通してよい条件は既存の関数と同じ
+--     (service_role・is_superuser・auth.role() is nullのいずれか)。
+create or replace function public.prevent_room_logo_self_write()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if auth.role() = 'service_role'
+     or current_setting('is_superuser', true) = 'on'
+     or auth.role() is null then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    if new.logo_image_url is not null then
+      raise exception 'logo_image_urlはこの経路からは設定できません';
+    end if;
+  elsif tg_op = 'UPDATE' then
+    if new.logo_image_url is distinct from old.logo_image_url then
+      raise exception 'logo_image_urlはこの経路からは変更できません';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists rooms_prevent_logo_self_write on public.rooms;
+create trigger rooms_prevent_logo_self_write
+  before insert or update on public.rooms
+  for each row
+  execute function public.prevent_room_logo_self_write();
+
+-- (3) 呼んだ人がそのルームの持ち主(accounts.owner_user_id)かどうかを
+--     返す関数。Storageのポリシー・Server Actionの両方から使う。
+create or replace function public.is_room_owner(p_room_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.rooms r
+    join public.accounts a on a.id = r.account_id
+    where r.id = p_room_id
+      and a.owner_user_id = auth.uid()
+  );
+$$;
+
+revoke all on function public.is_room_owner(uuid) from public;
+revoke all on function public.is_room_owner(uuid) from anon;
+grant execute on function public.is_room_owner(uuid) to authenticated;
+
+-- (4) ロゴ情報(rooms.logo_image_url・そのアカウントのaccounts.plan)を
+--     読む関数。呼んだ人を入れる条件はget_own_or_member_room(p_room_id)の
+--     最新の定義(持ち主・メンバー・BANの扱い)と全く同じにする。
+--     get_member_room_entryには触らない(別の関数として新設する)。
+create or replace function public.get_room_logo_info(p_room_id uuid)
+returns table (logo_image_url text, plan text)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    r.logo_image_url,
+    (select a2.plan from public.accounts a2 where a2.id = r.account_id)
+  from public.rooms r
+  where r.id = p_room_id
+    and (
+      exists (
+        select 1 from public.accounts a
+        where a.id = r.account_id and a.owner_user_id = auth.uid()
+      )
+      or exists (
+        select 1 from public.account_members m
+        where m.user_id = auth.uid() and m.account_id = r.account_id
+      )
+    )
+    and not public.is_banned_for_account(r.account_id);
+$$;
+
+revoke all on function public.get_room_logo_info(uuid) from public;
+revoke all on function public.get_room_logo_info(uuid) from anon;
+grant execute on function public.get_room_logo_info(uuid) to authenticated;
+
+-- (5) ロゴ画像の保存先バケット。元画像は{room_id}/raw/ランダム.拡張子へ
+--     持ち主自身のセッションから直接アップロードし、変換後の画像は
+--     {room_id}/ランダム.webpへサーバー(Service Role)が保存する。
+--     update・delete用のポリシーは作らない(変換・削除はサーバーが
+--     Service Role経由で行うため、持ち主のセッションから直接の上書き・
+--     削除はできない)。
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'room-logos', 'room-logos', true,
+  10485760,
+  array['image/png', 'image/jpeg', 'image/webp']
+)
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "room-logos: public read" on storage.objects;
+create policy "room-logos: public read"
+  on storage.objects for select
+  using (bucket_id = 'room-logos');
+
+-- フォルダ名(1階層目)がuuidの形でない場合、先に正規表現で確かめてから
+-- is_room_ownerへキャストする(形が違う名前でキャストエラーにしない)。
+drop policy if exists "room-logos: owner insert raw" on storage.objects;
+create policy "room-logos: owner insert raw"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'room-logos'
+    and (storage.foldername(name))[1] ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    and public.is_room_owner(((storage.foldername(name))[1])::uuid)
+    and (storage.foldername(name))[2] = 'raw'
+  );
 
 
 -- ============================================================
