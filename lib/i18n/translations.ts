@@ -118,6 +118,16 @@ const ja: Record<string, string> = {
   // 段階E-5-1bの見直し(2026-11-25)。入室前の左サイドバーの見出し用
   // (メンバーのルームを選んでいる時、管理者名で表示する)。
   "lobby.roomOfOwner": "{name}のルーム",
+  // ②-2(2026-11追加)。ロビーのロゴ差し替えのまとまり(standard・pro、
+  // 自分のルームでのみ表示)。
+  "lobby.logoSectionTitle": "ロゴ",
+  "lobby.logoNone": "ロゴなし",
+  "lobby.logoUploadButton": "ロゴ挿入",
+  "lobby.logoUploading": "アップロード中...",
+  "lobby.logoResetButton": "デフォルトに戻す",
+  "lobby.logoChangeNotice":
+    "ロゴの変更は、次にルームに入った時から反映されます",
+  "lobby.resetRoomLogoConfirm": "デフォルトのロゴに戻しますがよろしいですか?",
 
   "roomList.yourRoomBadge": "あなたのルーム",
   "roomList.createRoomButton": "ルームを作成する",
@@ -646,6 +656,14 @@ const en: Record<string, string> = {
   "lobby.checking": "Checking...",
   "lobby.enterRoom": "Enter",
   "lobby.roomOfOwner": "{name}'s room",
+  "lobby.logoSectionTitle": "Logo",
+  "lobby.logoNone": "No logo",
+  "lobby.logoUploadButton": "Upload logo",
+  "lobby.logoUploading": "Uploading...",
+  "lobby.logoResetButton": "Reset to default",
+  "lobby.logoChangeNotice":
+    "Logo changes take effect the next time you enter the room",
+  "lobby.resetRoomLogoConfirm": "Reset to the default logo?",
 
   "roomList.yourRoomBadge": "Your room",
   "roomList.createRoomButton": "Create a room",

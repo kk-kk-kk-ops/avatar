@@ -88,6 +88,8 @@ import {
   USER_ICON_ALLOWED_MIME_TYPES,
   USER_ICON_MAX_UPLOAD_BYTES,
   getAvatarDisplayMode,
+  PLANS,
+  type PlanId,
 } from "@/lib/types";
 import Avatar, { type AvatarHandle } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
@@ -115,7 +117,12 @@ import {
 import { deleteUserIconClient, uploadUserIconClient } from "./uploadUserIcon";
 import { DAILY_IMAGE_UPLOAD_LIMIT } from "@/lib/types";
 import { checkMemberRoomAccess } from "@/lib/checkMemberRoomAccess";
-import { getHasUnreadAnnouncements } from "@/app/admin/actions";
+import {
+  getHasUnreadAnnouncements,
+  replaceRoomLogo,
+  resetRoomLogo,
+} from "@/app/admin/actions";
+import { uploadRoomLogoRawImageClient } from "@/lib/uploadRoomLogo";
 import { performLogout } from "@/components/auth/LogoutButton";
 
 // 管理画面モーダル化 M-1(2026-11)。管理者がボタンを押すまでチャンクを
@@ -2022,6 +2029,16 @@ export default function AvatarSpace({
   const [defaultLogoImageUrl, setDefaultLogoImageUrl] = useState<
     string | null
   >(null);
+  // ②-2(2026-11追加)。会議室内の区画に表示するロゴの優先判定用。
+  // roomLogoImageUrlはget_room_logo_info(ルーム単位、rooms.logo_image_url)、
+  // roomPlanForLogoはそのアカウントのプラン。standard・proでロゴが設定
+  // されていればそれを、それ以外はdefaultLogoImageUrl(テンプレート標準の
+  // ロゴ)を表示する(effectiveLogoImageUrl参照)。rpc失敗時もnullのまま
+  // 残るため、自動的にテンプレートのロゴにフォールバックする。
+  const [roomLogoImageUrl, setRoomLogoImageUrl] = useState<string | null>(
+    null,
+  );
+  const [roomPlanForLogo, setRoomPlanForLogo] = useState<PlanId | null>(null);
   // ワープ直後、瞬間移動先の丸にも重なっているため、そのまま同じフレームで
   // 逆方向へワープし直してしまう(行ったり来たりの無限ループ)のを防ぐため、
   // 「現在重なっている(と扱っている)ワープ地点のID」を記録する。時間経過
@@ -5714,6 +5731,35 @@ export default function AvatarSpace({
               height: z.height ?? NEW_ITEM_SIZE,
             })),
           );
+        }
+
+        // ②-2(2026-11追加)。持ち主でもメンバーでも呼ぶ(get_room_logo_info
+        // 自身が入れる条件を持つ)。先にnullへ戻してから取得することで、
+        // 失敗時・ルーム切り替え時に前のルームのロゴが残らないようにする
+        // (失敗時はnullのままテンプレートのロゴにフォールバックするため、
+        // 入室自体は止めない)。
+        setRoomLogoImageUrl(null);
+        setRoomPlanForLogo(null);
+        try {
+          const { data: logoInfoRows, error: logoInfoError } =
+            await supabase.rpc("get_room_logo_info", { p_room_id: roomId });
+          if (logoInfoError) {
+            // eslint-disable-next-line no-console
+            console.error("ルームロゴ情報の取得に失敗しました", logoInfoError);
+          } else if (!cancelled) {
+            const logoInfo = (
+              logoInfoRows as
+                | Array<{ logo_image_url: string | null; plan: string | null }>
+                | null
+            )?.[0];
+            setRoomLogoImageUrl(logoInfo?.logo_image_url ?? null);
+            setRoomPlanForLogo(
+              (logoInfo?.plan as PlanId | undefined) ?? null,
+            );
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error("ルームロゴ情報の取得に失敗しました", err);
         }
 
         if (data.map_width && data.map_height) {
@@ -11070,6 +11116,89 @@ export default function AvatarSpace({
     setSelectedIconUrl(null);
   }, [applySelfStateUpdate, saveAvatarSettings]);
 
+  // ②-2(2026-11追加)。ロビーの「ロゴ」のまとまりの表示判定・プレビュー
+  // 用。lobbyLogoZonesCountはテンプレートの区画数(0なら編集画面でロゴを
+  // 登録できないため、ロビーのまとまり自体を出さない)、lobbyDefaultLogo
+  // ImageUrlはテンプレート標準のロゴ、lobbyRoomLogoImageUrl/lobbyRoomPlan
+  // はget_room_logo_info(ルーム単位、rooms.logo_image_url)の結果。
+  const [lobbyLogoZonesCount, setLobbyLogoZonesCount] = useState(0);
+  const [lobbyDefaultLogoImageUrl, setLobbyDefaultLogoImageUrl] = useState<
+    string | null
+  >(null);
+  const [lobbyRoomLogoImageUrl, setLobbyRoomLogoImageUrl] = useState<
+    string | null
+  >(null);
+  const [lobbyRoomPlan, setLobbyRoomPlan] = useState<PlanId | null>(null);
+  const [roomLogoUploading, setRoomLogoUploading] = useState(false);
+  const [roomLogoError, setRoomLogoError] = useState<string | null>(null);
+  const [showResetRoomLogoConfirm, setShowResetRoomLogoConfirm] =
+    useState(false);
+  const [resettingRoomLogo, setResettingRoomLogo] = useState(false);
+
+  // ②-2 ロビーでのロゴ差し替え(2026-11追加)。選択した時点でアップロード
+  // ・サーバー側の変換・保存までを一度に行う(アイコンアップロードと同じ
+  // 即時反映の方針)。成功したらプレビューをすぐ新しいロゴにする。
+  const handleRoomLogoFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // 同じファイルを連続で選び直せるよう、選択直後にクリアしておく。
+      e.target.value = "";
+      if (!file) return;
+      const room = rooms[0];
+      if (!room) return;
+      setRoomLogoError(null);
+      setRoomLogoUploading(true);
+      try {
+        const rawPath = await uploadRoomLogoRawImageClient(room.id, file);
+        const result = await replaceRoomLogo(room.id, rawPath);
+        if (!result.ok) {
+          setRoomLogoError(result.error);
+          return;
+        }
+        setLobbyRoomLogoImageUrl(result.url);
+      } catch (err) {
+        setRoomLogoError(
+          err instanceof Error
+            ? err.message
+            : "画像のアップロードに失敗しました",
+        );
+      } finally {
+        setRoomLogoUploading(false);
+      }
+    },
+    [rooms],
+  );
+
+  // ②-2。「デフォルトに戻す」確認ポップアップで「はい」が押されたときに
+  // 呼ぶ。成功したらプレビューをテンプレートのロゴに戻す。
+  const handleResetRoomLogoConfirm = useCallback(async () => {
+    const room = rooms[0];
+    if (!room) return;
+    setResettingRoomLogo(true);
+    setRoomLogoError(null);
+    const result = await resetRoomLogo(room.id);
+    setResettingRoomLogo(false);
+    if (!result.ok) {
+      setRoomLogoError(result.error);
+      return;
+    }
+    setLobbyRoomLogoImageUrl(null);
+    setShowResetRoomLogoConfirm(false);
+  }, [rooms]);
+
+  // ②-2。確認ポップアップをEscキーで閉じる(components/AvatarSpace.tsxの
+  // dmContextMenu用と同じ書き方)。解除処理中は閉じない。
+  useEffect(() => {
+    if (!showResetRoomLogoConfirm) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !resettingRoomLogo) {
+        setShowResetRoomLogoConfirm(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showResetRoomLogoConfirm, resettingRoomLogo]);
+
   // 入室の仕組みの作り替え 段階E-5-1(2026-11-24)。左のカード一覧の
   // 全カードの在室人数を出すため、roomsの1件だけでなくroomListResultの
   // 全カード(自分のルーム・古いゲストの特例カード・メンバーの全ルーム)
@@ -11133,6 +11262,13 @@ export default function AvatarSpace({
     if (joined) return;
     const room = rooms[0];
     if (!room) return;
+    // ②-2の追加指摘(2026-11-26)。カードを切り替えた時、前のルームの
+    // ロゴ関連の値が一瞬残らないよう、取得し直す前にリセットする。
+    setLobbyLogoZonesCount(0);
+    setLobbyDefaultLogoImageUrl(null);
+    setLobbyRoomLogoImageUrl(null);
+    setLobbyRoomPlan(null);
+    setRoomLogoError(null);
     let cancelled = false;
     (async () => {
       const { data } = isMemberEntry
@@ -11177,7 +11313,9 @@ export default function AvatarSpace({
       if (data.template_id) {
         const { data: template } = await supabase
           .from("templates")
-          .select("name, background_image_url, thumbnail_image_url")
+          .select(
+            "name, background_image_url, thumbnail_image_url, logo_zones, default_logo_image_url",
+          )
           .eq("id", data.template_id)
           .maybeSingle();
         if (!cancelled && template?.name) name = template.name;
@@ -11186,9 +11324,41 @@ export default function AvatarSpace({
             template?.thumbnail_image_url ?? template?.background_image_url;
           if (resolvedPreview) previewImage = resolvedPreview;
         }
+        if (!cancelled) {
+          setLobbyLogoZonesCount(
+            Array.isArray(template?.logo_zones)
+              ? template.logo_zones.length
+              : 0,
+          );
+          setLobbyDefaultLogoImageUrl(template?.default_logo_image_url ?? null);
+        }
       }
       if (cancelled) return;
       setLobbyRoomInfo({ name, previewImage });
+
+      // ②-2(2026-11追加)。持ち主でもメンバーでも呼んでよい
+      // (get_room_logo_info自身が入れる条件を持つ)。失敗してもロビーの
+      // 表示自体は止めない(ロゴのまとまりは出ない、またはテンプレートの
+      // ロゴのプレビューにならないだけ)。
+      try {
+        const { data: logoInfoRows, error: logoInfoError } =
+          await supabase.rpc("get_room_logo_info", { p_room_id: room.id });
+        if (logoInfoError) {
+          // eslint-disable-next-line no-console
+          console.error("ロビーのロゴ情報の取得に失敗しました", logoInfoError);
+        } else if (!cancelled) {
+          const logoInfo = (
+            logoInfoRows as
+              | Array<{ logo_image_url: string | null; plan: string | null }>
+              | null
+          )?.[0];
+          setLobbyRoomLogoImageUrl(logoInfo?.logo_image_url ?? null);
+          setLobbyRoomPlan((logoInfo?.plan as PlanId | undefined) ?? null);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("ロビーのロゴ情報の取得に失敗しました", err);
+      }
     })();
     return () => {
       cancelled = true;
@@ -11219,6 +11389,14 @@ export default function AvatarSpace({
     const maintenancePublished =
       isMaintenanceScheduled(maintenance) || isMaintenanceActive(maintenance);
     const maintenanceBlocking = isMaintenanceActive(maintenance) && !isMaster;
+    // ②-2(2026-11追加)。ロビーの「ロゴ」のまとまりを出す条件:自分の
+    // ルームであること・standard/proであること・テンプレートに区画が
+    // 1つ以上あること、の3つがそろった時だけ。
+    const roomLogoSectionEnabled =
+      matchedRoomCard?.kind === "own" &&
+      !!lobbyRoomPlan &&
+      !!PLANS[lobbyRoomPlan]?.roomLogoEnabled &&
+      lobbyLogoZonesCount > 0;
     return (
       <div className="flex h-full w-full flex-col overflow-hidden bg-slate-900">
         {/* 段階E-5-1b(2026-11-25)。ヘッダーの帯は画面の端から端まで
@@ -11266,6 +11444,15 @@ export default function AvatarSpace({
             isStoppingRecording={isStoppingRecording}
             onLogout={handleLogoutButtonClick}
             isLoggingOut={isLoggingOut}
+            roomLogoEnabled={roomLogoSectionEnabled}
+            roomLogoPreviewUrl={
+              lobbyRoomLogoImageUrl ?? lobbyDefaultLogoImageUrl
+            }
+            hasOwnRoomLogo={!!lobbyRoomLogoImageUrl}
+            roomLogoUploading={roomLogoUploading}
+            roomLogoError={roomLogoError}
+            onRoomLogoFileChange={handleRoomLogoFileChange}
+            onRequestResetRoomLogo={() => setShowResetRoomLogoConfirm(true)}
             t={t}
           />
           {/* 右(スマホでは上)の広い場所:ルームのカード一覧
@@ -11313,9 +11500,60 @@ export default function AvatarSpace({
             </div>
           </div>
         )}
+
+        {/* ②-2(2026-11追加)。「デフォルトに戻す」の確認ダイアログ。見た目は
+            components/RoomListSidebar.tsxの「一覧から外す」の確認ダイアログ
+            と同じにする。外側のクリックで閉じる(RoomListSidebar側には無い
+            挙動だが、今回の指示でこちらには追加する)。 */}
+        {showResetRoomLogoConfirm && (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4"
+            onClick={() => !resettingRoomLogo && setShowResetRoomLogoConfirm(false)}
+          >
+            <div
+              className="w-full max-w-xs rounded-xl bg-white p-5 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="mb-4 text-left text-sm font-semibold text-slate-800">
+                {t("lobby.resetRoomLogoConfirm")}
+              </p>
+              {roomLogoError && (
+                <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                  {roomLogoError}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowResetRoomLogoConfirm(false)}
+                  disabled={resettingRoomLogo}
+                  className="flex-1 rounded-lg bg-slate-200 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {t("common.no")}
+                </button>
+                <button
+                  onClick={handleResetRoomLogoConfirm}
+                  disabled={resettingRoomLogo}
+                  className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {t("common.yes")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
+
+  // ②-2(2026-11追加)。会議室の区画に実際に表示するロゴ。standard・pro
+  // でルームのロゴが設定されていればそれを優先、それ以外はテンプレート
+  // 標準のロゴ(defaultLogoImageUrl)。
+  const effectiveLogoImageUrl =
+    roomPlanForLogo &&
+    PLANS[roomPlanForLogo]?.roomLogoEnabled &&
+    roomLogoImageUrl
+      ? roomLogoImageUrl
+      : defaultLogoImageUrl;
 
   const playerList = Object.values(players);
 
@@ -12387,11 +12625,14 @@ export default function AvatarSpace({
             {/* ロゴ区画(2026-11追加)。マップの絵のすぐ後、ミーティングエリアより
                 前に描画し、アバター(z-10、Avatar.tsx)より奥にする(z-indexは
                 付けない=既定のz-autoのまま。机などのオブジェクト(z-20)や
-                アバターの重なり順はここでは変えない)。ロゴ画像(defaultLogo
-                ImageUrl)が無い間は何も描画しない(区画も枠も見えない)。
+                アバターの重なり順はここでは変えない)。表示するロゴ
+                (effectiveLogoImageUrl)が無い間は何も描画しない(区画も
+                枠も見えない)。②-2(2026-11追加)で、standard・proかつ
+                ルームのロゴが設定されていればそちらを優先し、それ以外は
+                テンプレート標準のロゴ(defaultLogoImageUrl)にする。
                 当たり判定(obstacles)には混ぜず、pointer-events-noneで
                 クリック・ドラッグの邪魔もしない。 */}
-            {defaultLogoImageUrl &&
+            {effectiveLogoImageUrl &&
               logoZones.map((zone) => (
                 <div
                   key={zone.id}
@@ -12405,7 +12646,7 @@ export default function AvatarSpace({
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={defaultLogoImageUrl}
+                    src={effectiveLogoImageUrl}
                     alt=""
                     className="h-full w-full object-contain"
                   />

@@ -414,6 +414,7 @@ export const PLANS: Record<
     // (DBはこの表示値を読まない。他の上限値と同じくコード側を唯一の情報源とする方針のため)
     recordingEnabled: boolean; // 会議室の画面録画・自動文字起こし機能が使えるか(Freeのみfalse)
     dailyImageBytesLimit: number; // 1人1日あたりのチャット画像送信量(圧縮後の本文画像+サムネイル合計、バイト)。毎日4:00にリセット
+    roomLogoEnabled: boolean; // ②-2(2026-11追加)。ロビーでルームごとのロゴ画像に差し替えられるか(standard・proのみtrue)
   }
 > = {
   free: {
@@ -430,6 +431,7 @@ export const PLANS: Record<
     historyRetentionLabel: "7日",
     recordingEnabled: false,
     dailyImageBytesLimit: 3 * 1024 * 1024,
+    roomLogoEnabled: false,
   },
   light: {
     label: "Light",
@@ -445,6 +447,7 @@ export const PLANS: Record<
     historyRetentionLabel: "1ヶ月",
     recordingEnabled: true,
     dailyImageBytesLimit: 10 * 1024 * 1024,
+    roomLogoEnabled: false,
   },
   standard: {
     label: "Standard",
@@ -460,6 +463,7 @@ export const PLANS: Record<
     historyRetentionLabel: "1ヶ月",
     recordingEnabled: true,
     dailyImageBytesLimit: 10 * 1024 * 1024,
+    roomLogoEnabled: true,
   },
   pro: {
     label: "Pro",
@@ -475,6 +479,7 @@ export const PLANS: Record<
     historyRetentionLabel: "3ヶ月",
     recordingEnabled: true,
     dailyImageBytesLimit: 20 * 1024 * 1024,
+    roomLogoEnabled: true,
   },
 };
 

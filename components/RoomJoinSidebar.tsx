@@ -49,6 +49,17 @@ export type RoomJoinSidebarProps = {
   isStoppingRecording: boolean;
   onLogout: () => void;
   isLoggingOut: boolean;
+  // ②-2(2026-11追加)。ロビーでのルームロゴ差し替え。アバター選択の上に
+  // 出す「ロゴ」のまとまり。roomLogoEnabledがtrueの時だけ表示する
+  // (roomCardKind==="own"・standard/pro・テンプレートに区画が1つ以上、の
+  // 3つがそろった時にのみtrueになる。判定はAvatarSpace.tsx側で行う)。
+  roomLogoEnabled: boolean;
+  roomLogoPreviewUrl: string | null;
+  hasOwnRoomLogo: boolean;
+  roomLogoUploading: boolean;
+  roomLogoError: string | null;
+  onRoomLogoFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onRequestResetRoomLogo: () => void;
   t: (key: string, params?: Record<string, string>) => string;
 };
 
@@ -83,6 +94,13 @@ export default function RoomJoinSidebar({
   isStoppingRecording,
   onLogout,
   isLoggingOut,
+  roomLogoEnabled,
+  roomLogoPreviewUrl,
+  hasOwnRoomLogo,
+  roomLogoUploading,
+  roomLogoError,
+  onRoomLogoFileChange,
+  onRequestResetRoomLogo,
   t,
 }: RoomJoinSidebarProps) {
   // 段階E-5-1bの追加指示a(2026-11-25)。カード切り替え中はサイドバー全体
@@ -149,6 +167,60 @@ export default function RoomJoinSidebar({
         <p className="mb-4 rounded-lg border border-blue-800 bg-blue-900/40 px-3 py-2 text-xs text-blue-200">
           {billingNotice}
         </p>
+      )}
+
+      {/* ②-2(2026-11追加)。standard・proの持ち主が自分のルームを見ている
+          時だけ、アバター選択の上に出す。 */}
+      {roomLogoEnabled && (
+        <div className="mb-4">
+          <p className="mb-2 text-xs font-semibold text-slate-400">
+            {t("lobby.logoSectionTitle")}
+          </p>
+          <div className="mb-2 flex h-20 w-full items-center justify-center overflow-hidden rounded-lg border border-slate-600 bg-slate-800">
+            {roomLogoPreviewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={roomLogoPreviewUrl}
+                alt=""
+                className="max-h-full max-w-full object-contain"
+              />
+            ) : (
+              <span className="text-xs text-slate-500">
+                {t("lobby.logoNone")}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="cursor-pointer rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+              {roomLogoUploading
+                ? t("lobby.logoUploading")
+                : t("lobby.logoUploadButton")}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                disabled={roomLogoUploading}
+                onChange={onRoomLogoFileChange}
+              />
+            </label>
+            {hasOwnRoomLogo && (
+              <button
+                type="button"
+                onClick={onRequestResetRoomLogo}
+                disabled={roomLogoUploading}
+                className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {t("lobby.logoResetButton")}
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[10px] text-slate-500">
+            {t("lobby.logoChangeNotice")}
+          </p>
+          {roomLogoError && (
+            <p className="mt-1 text-[10px] text-red-400">{roomLogoError}</p>
+          )}
+        </div>
       )}
 
       <div className="mb-4">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -102,6 +102,24 @@ export default function RoomListSidebar({
       router.refresh();
     }
   }, [removeTarget, supabase, router, highlightedRoomId, t]);
+
+  // 「…」メニュー・「一覧から外す」の確認ダイアログをEscキーで閉じる
+  // (components/AvatarSpace.tsxのdmContextMenu用と同じ書き方、2026-11-26
+  // 追加)。確認ダイアログの方が開いている時はそちらを優先して閉じる
+  // (handleCancelRemoveは削除処理中は何もしない)。
+  useEffect(() => {
+    if (!openMenuAccountId && !removeTarget) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (removeTarget) {
+        handleCancelRemove();
+      } else {
+        setOpenMenuAccountId(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openMenuAccountId, removeTarget, handleCancelRemove]);
 
   return (
     <div

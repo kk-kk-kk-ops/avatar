@@ -6,8 +6,9 @@ import { disconnectIndigoConnections } from "@/lib/broadcastIndigoDisconnect";
 import { disconnectLivekitParticipant } from "@/lib/disconnectLivekitParticipant";
 import { resolveLivekitParticipantUserId } from "@/lib/resolveLivekitParticipantUserId";
 import { requireVerifiedBillingAccount } from "@/lib/billingAccountGuard";
-import { type PlanId, type Announcement } from "@/lib/types";
+import { PLANS, type PlanId, type Announcement } from "@/lib/types";
 import { translate, type Locale } from "@/lib/i18n/translations";
+import sharp from "sharp";
 
 // Server Actionのエラーはproduction buildだと.messageが汎用文言に
 // 差し替えられてしまう(Next.jsの仕様)ため、throwではなく戻り値で
@@ -755,4 +756,214 @@ export async function unbanParticipantFromModal(
   }
 
   return performUnban(supabase, verified.account.id, userId, locale);
+}
+
+// ②-2(2026-11追加)。スタンダード・プロの持ち主がロビーで自分のルームの
+// ロゴ画像を差し替える。認可はrequireVerifiedBillingAccountではなく
+// is_room_owner(p_room_id)を使う(roomId単位の持ち主判定のため。
+// supabase/migrations/2026-11-26_room_logo.sql参照)。
+const ROOM_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type ReplaceRoomLogoResult =
+  | { ok: true; url: string | null }
+  | { ok: false; error: string };
+
+// rooms.logo_image_urlの公開URLから、room-logosバケット内のパスだけを
+// 取り出す(削除にはバケット内のパスが必要)。形が想定と違えばnullを返す。
+function roomLogoPathFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const marker = "/room-logos/";
+  const idx = url.indexOf(marker);
+  if (idx === -1) return null;
+  return url.slice(idx + marker.length);
+}
+
+// 前のロゴ画像を削除してよいパスかどうか。"{roomId}/"配下(変換済みの
+// ロゴ本体)だけを対象とし、"{roomId}/raw/"配下(持ち主が直接アップロード
+// した元画像、別の処理が別タイミングで参照・削除している可能性がある)は
+// 対象から外す(app/master/actions.tsのisDeletableOldLogoPathと同じ考え方)。
+function isDeletableRoomLogoPath(
+  roomId: string,
+  path: string | null,
+): path is string {
+  return (
+    !!path &&
+    path.startsWith(`${roomId}/`) &&
+    !path.startsWith(`${roomId}/raw/`)
+  );
+}
+
+async function removeOldRoomLogoIfAny(
+  serviceClient: ReturnType<typeof createServiceRoleClient>,
+  roomId: string,
+  oldUrl: string | null,
+  keepPath?: string,
+) {
+  const oldPath = roomLogoPathFromUrl(oldUrl);
+  if (isDeletableRoomLogoPath(roomId, oldPath) && oldPath !== keepPath) {
+    await serviceClient.storage.from("room-logos").remove([oldPath]);
+  }
+}
+
+type RoomLogoInfoRow = { logo_image_url: string | null; plan: string | null };
+
+// rawPath(uploadRoomLogoRawImageClientが"{roomId}/raw/"配下へ直接
+// アップロードした元画像)を、サービスロールで読み込み、sharpのmetadataで
+// 形式を確かめ(png/jpeg/webp以外、SVGを含めて拒否)、長い辺1600px以下に
+// 縮め(元が小さければ拡大しない)、WebP(quality 90、透明は保持)にして
+// "{roomId}/"配下へ保存し直し、元画像(raw)を削除する。standard・pro
+// プラン以外は断る(プランはget_room_logo_info経由で確認する。
+// PLANS[plan]?.roomLogoEnabled参照)。
+export async function replaceRoomLogo(
+  roomId: string,
+  rawPath: string,
+): Promise<ReplaceRoomLogoResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "ログインしてください" };
+
+  if (!ROOM_ID_PATTERN.test(roomId)) {
+    return { ok: false, error: "不正なルームIDです" };
+  }
+
+  const { data: isOwner } = await supabase.rpc("is_room_owner", {
+    p_room_id: roomId,
+  });
+  if (!isOwner) {
+    return { ok: false, error: "このルームの持ち主ではありません" };
+  }
+
+  if (!rawPath.startsWith(`${roomId}/raw/`) || rawPath.includes("..")) {
+    return { ok: false, error: "不正な画像パスです" };
+  }
+
+  const serviceClient = createServiceRoleClient();
+
+  const { data: logoInfoRows } = await supabase.rpc("get_room_logo_info", {
+    p_room_id: roomId,
+  });
+  const logoInfo = (logoInfoRows as RoomLogoInfoRow[] | null)?.[0];
+  const plan = (logoInfo?.plan ?? undefined) as PlanId | undefined;
+  if (!plan || !PLANS[plan]?.roomLogoEnabled) {
+    await serviceClient.storage.from("room-logos").remove([rawPath]);
+    return { ok: false, error: "このプランではロゴを設定できません" };
+  }
+
+  // 形式の確認・変換・保存・rooms.logo_image_urlの更新のどこで失敗しても、
+  // finallyでrawPathの元画像を必ず削除してから、分かりやすい日本語の
+  // エラーを返す。
+  let finalPath: string | null = null;
+  let publicUrl: string | null = null;
+  let errorMessage: string | null = null;
+  try {
+    const { data: rawBlob, error: downloadError } = await serviceClient.storage
+      .from("room-logos")
+      .download(rawPath);
+    if (downloadError || !rawBlob) {
+      throw new Error("DOWNLOAD_FAILED");
+    }
+
+    const inputBuffer = Buffer.from(await rawBlob.arrayBuffer());
+    const metadata = await sharp(inputBuffer).metadata();
+    // SVGもここで拒否される(png/jpeg/webp以外はすべて断るため)。
+    if (!metadata.format || !["png", "jpeg", "webp"].includes(metadata.format)) {
+      throw new Error("UNSUPPORTED_FORMAT");
+    }
+
+    const outputBuffer = await sharp(inputBuffer)
+      .rotate() // EXIFの回転情報を反映してから焼き込む
+      .resize({
+        width: 1600,
+        height: 1600,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 90 }) // 透明な部分はwebp変換後も保持される
+      .toBuffer();
+
+    finalPath = `${roomId}/${crypto.randomUUID()}.webp`;
+    const { error: uploadError } = await serviceClient.storage
+      .from("room-logos")
+      .upload(finalPath, outputBuffer, { contentType: "image/webp" });
+    if (uploadError) throw uploadError;
+
+    publicUrl = serviceClient.storage
+      .from("room-logos")
+      .getPublicUrl(finalPath).data.publicUrl;
+
+    const { error: updateError } = await serviceClient
+      .from("rooms")
+      .update({ logo_image_url: publicUrl })
+      .eq("id", roomId);
+    if (updateError) throw updateError;
+  } catch (err) {
+    console.error("ルームロゴ画像の変換・保存に失敗しました", err);
+    errorMessage =
+      err instanceof Error && err.message === "UNSUPPORTED_FORMAT"
+        ? "対応していない画像形式です(PNG/JPEG/WebPのみ、SVGは登録できません)"
+        : "画像の変換に失敗しました";
+  } finally {
+    await serviceClient.storage.from("room-logos").remove([rawPath]);
+  }
+
+  if (errorMessage) {
+    return { ok: false, error: errorMessage };
+  }
+
+  await removeOldRoomLogoIfAny(
+    serviceClient,
+    roomId,
+    logoInfo?.logo_image_url ?? null,
+    finalPath ?? undefined,
+  );
+
+  return { ok: true, url: publicUrl };
+}
+
+// ②-2。ルームのロゴをテンプレート標準のロゴへ戻す(rooms.logo_image_url
+// をnullにする)。replaceRoomLogoと異なり、プランに関係なく持ち主なら
+// 通す(ダウングレード後も「デフォルトに戻す」操作自体は行えてよい)。
+export async function resetRoomLogo(
+  roomId: string,
+): Promise<ReplaceRoomLogoResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "ログインしてください" };
+
+  if (!ROOM_ID_PATTERN.test(roomId)) {
+    return { ok: false, error: "不正なルームIDです" };
+  }
+
+  const { data: isOwner } = await supabase.rpc("is_room_owner", {
+    p_room_id: roomId,
+  });
+  if (!isOwner) {
+    return { ok: false, error: "このルームの持ち主ではありません" };
+  }
+
+  const serviceClient = createServiceRoleClient();
+
+  const { data: logoInfoRows } = await supabase.rpc("get_room_logo_info", {
+    p_room_id: roomId,
+  });
+  const logoInfo = (logoInfoRows as RoomLogoInfoRow[] | null)?.[0];
+
+  const { error } = await serviceClient
+    .from("rooms")
+    .update({ logo_image_url: null })
+    .eq("id", roomId);
+  if (error) return { ok: false, error: "ロゴ画像の解除に失敗しました" };
+
+  await removeOldRoomLogoIfAny(
+    serviceClient,
+    roomId,
+    logoInfo?.logo_image_url ?? null,
+  );
+
+  return { ok: true, url: null };
 }
