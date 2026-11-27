@@ -46,6 +46,10 @@ import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
 import { useSessionGuard } from "@/lib/useSessionGuard";
 import { SCREEN_SHARE_PUBLISH_OPTIONS } from "@/lib/screenShareProfiles";
 import {
+  CAMERA_CAPTURE_OPTIONS,
+  CAMERA_PUBLISH_OPTIONS,
+} from "@/lib/cameraSettings";
+import {
   PlayerState,
   PresenceStatus,
   PRESENCE_STATUS_COLORS,
@@ -106,6 +110,7 @@ import RemoteVideo from "./RemoteVideo";
 import VideoTile from "./VideoTile";
 import ScreenShareButton from "./ScreenShareButton";
 import ScreenShareStatsPanel from "./ScreenShareStatsPanel";
+import CameraStatsPanel from "./CameraStatsPanel";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
 import RoomListSidebar from "./RoomListSidebar";
@@ -1565,6 +1570,42 @@ export default function AvatarSpace({
     () => screenShareDisplayBoxRef.current,
     [],
   );
+  const getLocalCameraTrack = useCallback(
+    () => cameraLocalTrackRef.current,
+    [],
+  );
+  // カメラの計測パネル(CameraStatsPanel)用。画面共有のような
+  // 選択視聴の仕組みが無いカメラでは、参加者ごとのpublicationを保持する
+  // 専用のrefが無いため、livekitRoomRef.current.remoteParticipantsを
+  // その都度走査して集める(既存の仕組みの転用ではなく、ここで新規に
+  // 作る)。表示名はplayersRef(近接判定等で既に同期されている参照)から
+  // 引く(playersステート自体に依存すると、人が動くたびにgetter関数の
+  // 参照が変わり、計測パネル側のポーリングeffectが再起動して累積が
+  // リセットされてしまうため、ref経由で読む)。
+  const getRemoteCameraPublications = useCallback((): Array<{
+    identity: string;
+    name: string;
+    publication: RemoteTrackPublication;
+  }> => {
+    const room = livekitRoomRef.current;
+    if (!room) return [];
+    const result: Array<{
+      identity: string;
+      name: string;
+      publication: RemoteTrackPublication;
+    }> = [];
+    room.remoteParticipants.forEach((participant) => {
+      participant.videoTrackPublications.forEach((pub) => {
+        if (pub.source !== Track.Source.Camera) return;
+        result.push({
+          identity: participant.identity,
+          name: playersRef.current[participant.identity]?.name ?? participant.identity,
+          publication: pub,
+        });
+      });
+    });
+    return result;
+  }, []);
   // 運営者でなくても、アドレスに?ssdebug=1が付いている人には計測パネルを
   // 見せる(メンバーの別アカウントで受信側を測るため)。マウント時に一度
   // だけ読む。
@@ -2124,6 +2165,10 @@ export default function AvatarSpace({
   const [livekitConnected, setLivekitConnected] = useState(false);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  // 自分のカメラのトラック本体(LiveKitのLocalVideoTrack)。計測パネル
+  // (CameraStatsPanel)がRTCRtpSender.getStats()を直接読むために必要。
+  // 既存のcameraStreamRef(MediaStream)とは別に保持する。
+  const cameraLocalTrackRef = useRef<LocalVideoTrack | null>(null);
   const lastTrackedZoneId = useRef<string | null>(null);
   // pointZoneId算出のヒステリシス用(2026-11、下のPOINT_ZONE_HYSTERESIS_PX参照)。
   const lastPointZoneIdRef = useRef<string | null>(null);
@@ -5354,14 +5399,10 @@ export default function AvatarSpace({
         }
         if (inCallRef.current) {
           room.localParticipant
-            .setCameraEnabled(
-              true,
-              { resolution: { width: 160, height: 120, frameRate: 15 } },
-              {
-                videoEncoding: { maxBitrate: 150_000, maxFramerate: 15 },
-                simulcast: false,
-              },
-            )
+            .setCameraEnabled(true, CAMERA_CAPTURE_OPTIONS, CAMERA_PUBLISH_OPTIONS)
+            .then((pub) => {
+              cameraLocalTrackRef.current = (pub?.track as LocalVideoTrack) ?? null;
+            })
             .catch((err) =>
               console.warn("[livekit] カメラ再パブリッシュ失敗", err),
             );
@@ -6103,6 +6144,7 @@ export default function AvatarSpace({
   // MediaStreamを保持するだけに用途を変えた(自前メッシュへは送らない)。
   const stopVideoCall = useCallback(async () => {
     cameraStreamRef.current = null;
+    cameraLocalTrackRef.current = null;
     setInCall(false);
     if (selfState.current) {
       selfState.current.inCall = false;
@@ -6137,21 +6179,21 @@ export default function AvatarSpace({
       return;
     }
     try {
-      // ビデオ通話のプレビューは横幅128px程度の小窓でしか表示しないため、
-      // 発信側のキャプチャ・エンコード自体を低解像度・低ビットレートに
-      // 抑え、通信量とCPU負荷を削減する(画面共有は文字が読めることが
-      // 重要なため対象外。こちらはsetScreenShareEnabled側で従来通り)。
-      // 低解像度1層のみで十分なためsimulcastも無効化する。
+      // ビデオ通話のプレビューは常時表示プレビュー行(210x140px)程度の
+      // 枠でしか表示しないが、ブラウザの表示拡大率(例:1.25倍)がかかると
+      // 実際の点(デバイスピクセル)では約262x175点になるため、320x240
+      // (4:3、枠の比率と同じ)に抑える(2026-11-27見直し。画面共有は
+      // 文字が読めることが重要なため対象外。こちらはsetScreenShareEnabled
+      // 側で別に設定、lib/screenShareProfiles.ts参照)。低解像度1層のみで
+      // 十分なためsimulcastも無効化する(lib/cameraSettings.ts参照)。
       const publication = await room.localParticipant.setCameraEnabled(
         true,
-        { resolution: { width: 160, height: 120, frameRate: 15 } },
-        {
-          videoEncoding: { maxBitrate: 150_000, maxFramerate: 15 },
-          simulcast: false,
-        },
+        CAMERA_CAPTURE_OPTIONS,
+        CAMERA_PUBLISH_OPTIONS,
       );
       const track = publication?.track;
       if (!track) throw new Error(t("videoCall.trackUnavailable"));
+      cameraLocalTrackRef.current = track as LocalVideoTrack;
       cameraStreamRef.current = new MediaStream([track.mediaStreamTrack]);
       setInCall(true);
 
@@ -10042,6 +10084,7 @@ export default function AvatarSpace({
       screenStreamRef.current = null;
       screenShareLocalTrackRef.current = null;
       cameraStreamRef.current = null;
+      cameraLocalTrackRef.current = null;
     };
   }, [joined]);
 
@@ -15333,6 +15376,15 @@ export default function AvatarSpace({
         getLocalScreenTrack={getLocalScreenShareTrack}
         getRemoteScreenPublication={getActiveScreenSharePublication}
         getDisplayBoxElement={getScreenShareDisplayBoxElement}
+      />
+
+      {/* カメラ(ビデオ通話)の画質調査(2026-11-27)用の計測パネル。
+          運営者、または?ssdebug=1付きの人だけに見える。 */}
+      <CameraStatsPanel
+        visible={isMaster || ssDebugEnabled}
+        isInCall={inCall}
+        getLocalCameraTrack={getLocalCameraTrack}
+        getRemoteCameraPublications={getRemoteCameraPublications}
       />
     </div>
   );
