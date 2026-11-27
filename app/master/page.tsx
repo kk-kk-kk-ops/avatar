@@ -91,7 +91,7 @@ export default async function MasterPage() {
   };
   let subscriptionTotalYen = 0;
 
-  // トライアル中(無料30日間、plan='standard'・trial_ends_atが未来)の
+  // トライアル中(無料TRIAL_DAYS日間、plan='standard'・trial_ends_atが未来)の
   // アカウント数。トライアル中はplanが'standard'になるが実際の契約が
   // あるわけではない(app/plan/actions.ts参照)ため、下の有料プラン集計
   // には含めず別枠で数える。

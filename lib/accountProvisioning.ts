@@ -18,14 +18,15 @@ type ProvisionResult =
   | { ok: false; error: string };
 
 // ユーザーに紐づくaccounts行が無ければ作る共通処理。無料お試し
-// (app/plan/actions.tsのstartFreeTrial)と、有料プランを直接選んだ場合の
-// Checkout Session作成前(app/billing/checkout/actions.ts)の両方から
-// 呼ばれる。accounts.planは常に'free'で作成する(DBトリガーがINSERT時の
+// (app/plan/actions.tsのstartFreeTrial)からだけ呼ばれる(2026-11変更。
+// 有料プランを直接選んだ場合〈app/billing/checkout/actions.ts〉は、
+// 新規アカウントをここでは作らない方針になったため、ここは呼ばれない)。
+// accounts.planは常に'free'で作成する(DBトリガーがINSERT時の
 // free以外を拒否するため)。有料プランで契約する場合の実際のplan反映は、
 // Stripe Webhookがservice_roleクライアント経由で後から行う。
 // createdは「今回このアカウントを新規作成したか」を表す(既存ユーザーの
 // 再訪問時は早期returnするため常にfalse)。呼び出し元のstartFreeTrialは、
-// これを使って30日間無料トライアルを「初回のみ」付与する。
+// これを使って無料トライアル(TRIAL_DAYS日間)を「初回のみ」付与する。
 export async function provisionAccountForUser(
   supabase: SupabaseClient,
   user: { id: string },

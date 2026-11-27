@@ -10,7 +10,7 @@ import { TRIAL_DAYS } from "@/lib/types";
 // 成否とエラーメッセージを伝える(app/master/actions.tsと同じ方針)。
 type ActionResult = { ok: true } | { ok: false; error: string };
 
-// 30日間無料トライアル(standardプラン相当・カード登録不要)を開始する。
+// 無料トライアル(TRIAL_DAYS日間、standardプラン相当・カード登録不要)を開始する。
 // アカウント作成 → 自分をadminとして紐付け → 初期ルームを1つ作成、の実処理は
 // lib/accountProvisioning.tsに共通化されている(有料プランを直接選んだ場合の
 // Checkout Session作成前にも同じ処理が必要なため)。
@@ -24,12 +24,16 @@ export async function startFreeTrial(): Promise<ActionResult> {
   const provision = await provisionAccountForUser(supabase, user);
   if (!provision.ok) return provision;
 
-  // 新規作成された場合のみ30日間のトライアルを付与する(既存アカウント
+  // 新規作成された場合のみTRIAL_DAYS日間のトライアルを付与する(既存アカウント
   // なら何もしない=初回のみの保証)。/plan(このServer Actionを呼べる
   // 唯一の画面)は既にアカウントを持つユーザーを/へリダイレクトする
   // ため(app/plan/page.tsx)、実質「新規登録時は必ず1回だけ」トライアル
   // が始まる。
   if (provision.created) {
+    // 無料期間はルームを作成した時から数える。provisionAccountForUserが
+    // アカウント作成に続けて初期ルームを作成した直後にこの行が動くため、
+    // Date.now()の時点が実質「ルームを作成した時」と同じになる
+    // (lib/accountProvisioning.ts参照)。
     const trialEndsAt = new Date(
       Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();

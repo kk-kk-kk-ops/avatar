@@ -16,7 +16,7 @@ import CheckoutButton from "./CheckoutButton";
 //
 // Stripe Checkout Session(app/billing/checkout/actions.ts)は
 // trial_period_daysを指定していないため、決済完了と同時に即時課金される。
-// アカウントが既に30日間無料トライアル中(accounts.trial_ends_atが未来)
+// アカウントが既に無料トライアル中(TRIAL_DAYS日間、accounts.trial_ends_atが未来)
 // であっても、ここで有料プランへ申し込むとトライアルの残り日数に関わらず
 // 本日から課金が始まる点を、トライアル中のユーザーには明示する。
 export default async function CheckoutPage({

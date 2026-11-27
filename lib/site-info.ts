@@ -9,6 +9,8 @@
  * 該当箇所も揃えること。
  */
 
+import { TRIAL_DAYS } from './types';
+
 export const SITE = {
   serviceName: 'Globy',
   url: 'https://globy.grovina-studio.com',
@@ -104,8 +106,10 @@ export const PLANS: Plan[] = [
 ];
 
 /**
- * 無料トライアル。lib/types.tsのTRIAL_DAYS(30日)・app/plan/actions.tsの
- * startFreeTrial()の実際の挙動に合わせた文言(2026-10確認)。
+ * 無料トライアル。lib/types.tsのTRIAL_DAYS・app/plan/actions.tsの
+ * startFreeTrial()の実際の挙動に合わせた文言(2026-10確認、2026-11-27に
+ * 「ルームを作成した日から」に変更)。日数はTRIAL_DAYSを参照し、ここには
+ * 数字を直接書かない(日数を変える時にlib/types.tsの1か所で済むように)。
  * 重要:トライアル終了時にカードへ自動課金されることはない。期間中に
  * ユーザー自身が有料プランへお申し込み(決済)しない限り、終了後は自動的に
  * Freeプランの内容に切り替わるだけで、料金は一切発生しない。
@@ -115,7 +119,7 @@ export const PLANS: Plan[] = [
 export const TRIAL = {
   enabled: true,
   description:
-    'Standardプラン相当の内容を、初回登録から30日間、クレジットカードの登録なしで無料でお試しいただけます。トライアル期間中に有料プランへお申し込み(決済手続き)されなかった場合、料金が発生することは一切なく、トライアル終了後は自動的にFreeプランの内容に切り替わります。トライアル期間中に有料プランへお申し込みいただいた場合は、お申し込み時点から当該プランの料金が発生します。',
+    `Standardプラン相当の内容を、ルームを作成した日から${TRIAL_DAYS}日間、クレジットカードの登録なしで無料でお試しいただけます。トライアル期間中に有料プランへお申し込み(決済手続き)されなかった場合、料金が発生することは一切なく、トライアル終了後は自動的にFreeプランの内容に切り替わります。トライアル期間中に有料プランへお申し込みいただいた場合は、お申し込み時点から当該プランの料金が発生します。`,
 };
 
 export const BILLING = {

@@ -6,7 +6,7 @@ import { broadcastForceLeaveForAccount } from "@/lib/broadcastForceLeave";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// 30日間無料トライアル(standardプラン相当)の期限が切れたアカウントを
+// 無料トライアル(TRIAL_DAYS日間、standardプラン相当)の期限が切れたアカウントを
 // 自動的にfreeプランへ戻す。Vercel Cronから毎日4:00 JST(19:00 UTC。
 // vercel.json参照)に呼ばれる。trial_usedはtrueのまま維持する
 // (再付与防止)。

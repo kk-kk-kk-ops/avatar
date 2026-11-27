@@ -94,7 +94,7 @@ const ja: Record<string, string> = {
 
   "plan.createRoomTitle": "ルームを作成",
   "plan.createRoomDescription":
-    "30日間、Standardプラン相当の機能を無料でお試しいただけます(クレジットカードの登録は不要です)。31日目以降は無料プランに自動的に切り替わります。有料プランへのお申し込みは、ルームの作成後にいつでもできます。",
+    "14日間、Standardプラン相当の機能を無料でお試しいただけます(クレジットカードの登録は不要です)。15日目以降は無料プランに自動的に切り替わります。有料プランへのお申し込みは、ルームの作成後にいつでもできます。",
   "plan.createRoomButton": "ルームを作成して無料トライアルを始める",
   "plan.createRoomGenericError":
     "開始に失敗しました。時間をおいて再度お試しください。",
@@ -639,7 +639,7 @@ const en: Record<string, string> = {
 
   "plan.createRoomTitle": "Create your room",
   "plan.createRoomDescription":
-    "You can try Standard-plan features free for 30 days (no credit card required). From day 31 onward, you'll automatically switch to the Free plan. You can sign up for a paid plan anytime after creating your room.",
+    "You can try Standard-plan features free for 14 days (no credit card required). From day 15 onward, you'll automatically switch to the Free plan. You can sign up for a paid plan anytime after creating your room.",
   "plan.createRoomButton": "Create a room and start your free trial",
   "plan.createRoomGenericError": "Failed to start. Please try again later.",
 
