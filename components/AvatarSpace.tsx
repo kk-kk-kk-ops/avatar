@@ -17,6 +17,7 @@ import {
   RoomEvent,
   Track,
   TrackEvent,
+  type LocalVideoTrack,
   type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
@@ -43,6 +44,11 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { translate, type Locale } from "@/lib/i18n/translations";
 import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
 import { useSessionGuard } from "@/lib/useSessionGuard";
+import {
+  SCREEN_SHARE_PROFILES,
+  SCREEN_SHARE_PROFILE_ORDER,
+  type ScreenShareProfileId,
+} from "@/lib/screenShareProfiles";
 import {
   PlayerState,
   PresenceStatus,
@@ -103,6 +109,7 @@ import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import VideoTile from "./VideoTile";
 import ScreenShareButton from "./ScreenShareButton";
+import ScreenShareStatsPanel from "./ScreenShareStatsPanel";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
 import RoomListSidebar from "./RoomListSidebar";
@@ -1540,6 +1547,78 @@ export default function AvatarSpace({
   // (trackSid単位。キーとして使うのは、共有を一度止めて再開すると新しい
   // trackSidになるため「本当に新しい配信」だけを対象にできるため)。
   const kickedScreenShareTrackSidsRef = useRef<Set<string>>(new Set());
+  // 画面共有の画質調査(2026-11-27)用、運営者だけが切り替えられるテスト設定
+  // (lib/screenShareProfiles.ts参照)。運営者でない人は常にcurrent(現状と
+  // 全く同じ設定)を使う。選択値はlocalStorageに保存し、次回の画面共有開始時
+  // から効く(共有中に変えても今の共有には影響しない=startScreenShare内で
+  // refを読むタイミングのみ反映するため)。
+  const [screenShareProfileId, setScreenShareProfileId] =
+    useState<ScreenShareProfileId>("current");
+  const screenShareProfileIdRef = useRef<ScreenShareProfileId>("current");
+  useEffect(() => {
+    screenShareProfileIdRef.current = screenShareProfileId;
+  }, [screenShareProfileId]);
+  const SCREEN_SHARE_TEST_PROFILE_STORAGE_KEY = "globy_screen_share_test_profile";
+  useEffect(() => {
+    if (!isMaster) return;
+    try {
+      const saved = localStorage.getItem(SCREEN_SHARE_TEST_PROFILE_STORAGE_KEY);
+      if (saved && (SCREEN_SHARE_PROFILE_ORDER as string[]).includes(saved)) {
+        setScreenShareProfileId(saved as ScreenShareProfileId);
+      }
+    } catch {
+      // localStorageが使えない場合は既定値(current)のままにする
+    }
+  }, [isMaster]);
+  const handleScreenShareProfileChange = useCallback(
+    (id: ScreenShareProfileId) => {
+      setScreenShareProfileId(id);
+      try {
+        localStorage.setItem(SCREEN_SHARE_TEST_PROFILE_STORAGE_KEY, id);
+      } catch {
+        // 保存できなくても今回の選択自体は画面に反映される
+      }
+    },
+    [],
+  );
+  // 送信中の画面共有トラック本体(LiveKitのLocalVideoTrack)。計測パネル
+  // (ScreenShareStatsPanel)がRTCRtpSender.getStats()を直接読むために必要。
+  // 既存のscreenStreamRef(MediaStream)とは別に保持する。
+  const screenShareLocalTrackRef = useRef<LocalVideoTrack | null>(null);
+  // 現在進行中の共有が実際に使っている設定名(開始時点で確定し、共有中に
+  // 選択を変えても表示は変わらない)。
+  const screenShareActiveProfileLabelRef = useRef<string>(
+    SCREEN_SHARE_PROFILES.current.label,
+  );
+  // 会議画面モーダル内、共有映像を表示している枠(zoom適用後のdiv)。
+  // 計測パネルが「共有画面の表示の大きさ」を測るために参照する。
+  const screenShareDisplayBoxRef = useRef<HTMLDivElement | null>(null);
+  const getLocalScreenShareTrack = useCallback(
+    () => screenShareLocalTrackRef.current,
+    [],
+  );
+  const getActiveScreenSharePublication = useCallback(():
+    | RemoteTrackPublication
+    | undefined => {
+    const id = selectedScreenSharerIdRef.current;
+    if (!id) return undefined;
+    return screenSharePublicationsRef.current[id];
+  }, []);
+  const getScreenShareDisplayBoxElement = useCallback(
+    () => screenShareDisplayBoxRef.current,
+    [],
+  );
+  // 運営者でなくても、アドレスに?ssdebug=1が付いている人には計測パネルを
+  // 見せる(メンバーの別アカウントで受信側を測るため)。マウント時に一度
+  // だけ読む。
+  const [ssDebugEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return new URLSearchParams(window.location.search).get("ssdebug") === "1";
+    } catch {
+      return false;
+    }
+  });
   // 共有開始時点の最初の1フレームを静止画にしたプレビュー(dataURL)。
   // 選択して視聴を始めるまではこちらを表示し、選択後はライブ映像に切り替える。
   const [screenPreviewImages, setScreenPreviewImages] = useState<
@@ -5257,6 +5336,7 @@ export default function AvatarSpace({
         // 状態だけ倒し、再開はユーザーの再操作に委ねる。
         if (screenSharingRef.current) {
           screenStreamRef.current = null;
+          screenShareLocalTrackRef.current = null;
           setScreenSharing(false);
           if (selfState.current) {
             selfState.current.sharingScreen = false;
@@ -5900,6 +5980,7 @@ export default function AvatarSpace({
   // プレビュー表示専用(LiveKitトラックをラップしたMediaStream)。
   const stopScreenShare = useCallback(async () => {
     screenStreamRef.current = null;
+    screenShareLocalTrackRef.current = null;
     setScreenSharing(false);
     if (selfState.current) {
       selfState.current.sharingScreen = false;
@@ -5972,24 +6053,22 @@ export default function AvatarSpace({
     }
 
     try {
-      // 画質(ビットレート)は指定しない場合LiveKit SDKの初期値
-      // (ScreenSharePresets.h1080fps15、maxBitrate 2.5Mbps)が使われる。
-      // 2026-09、ユーザー指示によりビットレート上限を3Mbpsへ引き上げる
-      // (解像度1920x1080・フレームレート15fps・コーデックVP8は初期値のまま
-      // 変更しない)。
+      // 画質調査(2026-11-27)用のテスト設定。運営者でない人・運営者でも
+      // 選択していない場合は必ずcurrent(現状と全く同じ設定、以前からの
+      // 挙動そのまま)を使う。設定は共有を開始するこの瞬間に一度だけ確定し、
+      // 共有中に選択を変えても今の共有には影響しない(refを読むのがこの
+      // タイミングだけのため)。
+      const profileId = isMaster ? screenShareProfileIdRef.current : "current";
+      const profile = SCREEN_SHARE_PROFILES[profileId];
+      screenShareActiveProfileLabelRef.current = profile.label;
       const publication = await room.localParticipant.setScreenShareEnabled(
         true,
-        undefined,
-        {
-          screenShareEncoding: {
-            maxBitrate: 3_000_000,
-            maxFramerate: 15,
-            priority: "medium",
-          },
-        },
+        profile.captureOptions,
+        profile.publishOptions,
       );
       const track = publication?.track;
       if (!track) throw new Error(t("screenShare.trackUnavailable"));
+      screenShareLocalTrackRef.current = track as LocalVideoTrack;
       screenStreamRef.current = new MediaStream([track.mediaStreamTrack]);
       setScreenSharing(true);
 
@@ -10006,6 +10085,7 @@ export default function AvatarSpace({
     if (!joined) return;
     return () => {
       screenStreamRef.current = null;
+      screenShareLocalTrackRef.current = null;
       cameraStreamRef.current = null;
     };
   }, [joined]);
@@ -11822,6 +11902,31 @@ export default function AvatarSpace({
                 </span>
               )}
             </div>
+            {isMaster && (
+              <div className="flex shrink-0 flex-col items-center">
+                <label className="text-[9px] leading-none text-slate-400">
+                  画面共有テスト設定
+                </label>
+                <select
+                  value={screenShareProfileId}
+                  onChange={(e) =>
+                    handleScreenShareProfileChange(
+                      e.target.value as ScreenShareProfileId,
+                    )
+                  }
+                  className="mt-0.5 rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px] text-slate-700"
+                >
+                  {SCREEN_SHARE_PROFILE_ORDER.map((id) => (
+                    <option key={id} value={id}>
+                      {SCREEN_SHARE_PROFILES[id].label}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-0.5 max-w-[90px] text-center text-[8px] leading-tight text-slate-400">
+                  次に共有を始めた時から反映(今の共有には影響しません)
+                </span>
+              </div>
+            )}
             <div className="flex shrink-0 flex-col items-center">
               <VideoCallButton
                 enabled={inCall}
@@ -12461,6 +12566,7 @@ export default function AvatarSpace({
                           どちらにもスクロールできる)。 */}
                       <div className="absolute inset-0 flex overflow-auto">
                         <div
+                          ref={screenShareDisplayBoxRef}
                           className="m-auto flex shrink-0 items-center justify-center"
                           style={{
                             width: `${screenAreaZoom * 100}%`,
@@ -15288,6 +15394,16 @@ export default function AvatarSpace({
         </div>
       )}
 
+      {/* 画面共有の画質調査(2026-11-27)用の計測パネル。運営者、または
+          ?ssdebug=1付きの人だけに見える。 */}
+      <ScreenShareStatsPanel
+        visible={isMaster || ssDebugEnabled}
+        isSharingSelf={screenSharing}
+        activeProfileLabel={screenShareActiveProfileLabelRef.current}
+        getLocalScreenTrack={getLocalScreenShareTrack}
+        getRemoteScreenPublication={getActiveScreenSharePublication}
+        getDisplayBoxElement={getScreenShareDisplayBoxElement}
+      />
     </div>
   );
 }
