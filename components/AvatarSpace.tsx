@@ -44,11 +44,7 @@ import { useLocale } from "@/lib/i18n/LocaleContext";
 import { translate, type Locale } from "@/lib/i18n/translations";
 import { applyNoiseFilterProcessor } from "@/lib/audio/noiseFilterProcessor";
 import { useSessionGuard } from "@/lib/useSessionGuard";
-import {
-  SCREEN_SHARE_PROFILES,
-  SCREEN_SHARE_PROFILE_ORDER,
-  type ScreenShareProfileId,
-} from "@/lib/screenShareProfiles";
+import { SCREEN_SHARE_PUBLISH_OPTIONS } from "@/lib/screenShareProfiles";
 import {
   PlayerState,
   PresenceStatus,
@@ -1547,49 +1543,10 @@ export default function AvatarSpace({
   // (trackSid単位。キーとして使うのは、共有を一度止めて再開すると新しい
   // trackSidになるため「本当に新しい配信」だけを対象にできるため)。
   const kickedScreenShareTrackSidsRef = useRef<Set<string>>(new Set());
-  // 画面共有の画質調査(2026-11-27)用、運営者だけが切り替えられるテスト設定
-  // (lib/screenShareProfiles.ts参照)。運営者でない人は常にcurrent(現状と
-  // 全く同じ設定)を使う。選択値はlocalStorageに保存し、次回の画面共有開始時
-  // から効く(共有中に変えても今の共有には影響しない=startScreenShare内で
-  // refを読むタイミングのみ反映するため)。
-  const [screenShareProfileId, setScreenShareProfileId] =
-    useState<ScreenShareProfileId>("current");
-  const screenShareProfileIdRef = useRef<ScreenShareProfileId>("current");
-  useEffect(() => {
-    screenShareProfileIdRef.current = screenShareProfileId;
-  }, [screenShareProfileId]);
-  const SCREEN_SHARE_TEST_PROFILE_STORAGE_KEY = "globy_screen_share_test_profile";
-  useEffect(() => {
-    if (!isMaster) return;
-    try {
-      const saved = localStorage.getItem(SCREEN_SHARE_TEST_PROFILE_STORAGE_KEY);
-      if (saved && (SCREEN_SHARE_PROFILE_ORDER as string[]).includes(saved)) {
-        setScreenShareProfileId(saved as ScreenShareProfileId);
-      }
-    } catch {
-      // localStorageが使えない場合は既定値(current)のままにする
-    }
-  }, [isMaster]);
-  const handleScreenShareProfileChange = useCallback(
-    (id: ScreenShareProfileId) => {
-      setScreenShareProfileId(id);
-      try {
-        localStorage.setItem(SCREEN_SHARE_TEST_PROFILE_STORAGE_KEY, id);
-      } catch {
-        // 保存できなくても今回の選択自体は画面に反映される
-      }
-    },
-    [],
-  );
   // 送信中の画面共有トラック本体(LiveKitのLocalVideoTrack)。計測パネル
   // (ScreenShareStatsPanel)がRTCRtpSender.getStats()を直接読むために必要。
   // 既存のscreenStreamRef(MediaStream)とは別に保持する。
   const screenShareLocalTrackRef = useRef<LocalVideoTrack | null>(null);
-  // 現在進行中の共有が実際に使っている設定名(開始時点で確定し、共有中に
-  // 選択を変えても表示は変わらない)。
-  const screenShareActiveProfileLabelRef = useRef<string>(
-    SCREEN_SHARE_PROFILES.current.label,
-  );
   // 会議画面モーダル内、共有映像を表示している枠(zoom適用後のdiv)。
   // 計測パネルが「共有画面の表示の大きさ」を測るために参照する。
   const screenShareDisplayBoxRef = useRef<HTMLDivElement | null>(null);
@@ -6053,18 +6010,16 @@ export default function AvatarSpace({
     }
 
     try {
-      // 画質調査(2026-11-27)用のテスト設定。運営者でない人・運営者でも
-      // 選択していない場合は必ずcurrent(現状と全く同じ設定、以前からの
-      // 挙動そのまま)を使う。設定は共有を開始するこの瞬間に一度だけ確定し、
-      // 共有中に選択を変えても今の共有には影響しない(refを読むのがこの
-      // タイミングだけのため)。
-      const profileId = isMaster ? screenShareProfileIdRef.current : "current";
-      const profile = SCREEN_SHARE_PROFILES[profileId];
-      screenShareActiveProfileLabelRef.current = profile.label;
+      // 画質調査(2026-11-27)の結果に基づく設定(VP9・最大1920x1080・
+      // 10fps・2Mbps・maintain-resolution・simulcast無効・VP8バックアップ)。
+      // 全員(運営者かどうかに関係なく)この設定を使う
+      // (lib/screenShareProfiles.ts参照)。キャプチャの指定(第2引数)は
+      // undefinedのままにし、LiveKitの既定の挙動に任せる(Safari 17で
+      // 解像度を明示すると低画質になる既知の不具合を避けるため)。
       const publication = await room.localParticipant.setScreenShareEnabled(
         true,
-        profile.captureOptions,
-        profile.publishOptions,
+        undefined,
+        SCREEN_SHARE_PUBLISH_OPTIONS,
       );
       const track = publication?.track;
       if (!track) throw new Error(t("screenShare.trackUnavailable"));
@@ -11902,31 +11857,6 @@ export default function AvatarSpace({
                 </span>
               )}
             </div>
-            {isMaster && (
-              <div className="flex shrink-0 flex-col items-center">
-                <label className="text-[9px] leading-none text-slate-400">
-                  画面共有テスト設定
-                </label>
-                <select
-                  value={screenShareProfileId}
-                  onChange={(e) =>
-                    handleScreenShareProfileChange(
-                      e.target.value as ScreenShareProfileId,
-                    )
-                  }
-                  className="mt-0.5 rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px] text-slate-700"
-                >
-                  {SCREEN_SHARE_PROFILE_ORDER.map((id) => (
-                    <option key={id} value={id}>
-                      {SCREEN_SHARE_PROFILES[id].label}
-                    </option>
-                  ))}
-                </select>
-                <span className="mt-0.5 max-w-[90px] text-center text-[8px] leading-tight text-slate-400">
-                  次に共有を始めた時から反映(今の共有には影響しません)
-                </span>
-              </div>
-            )}
             <div className="flex shrink-0 flex-col items-center">
               <VideoCallButton
                 enabled={inCall}
@@ -15399,7 +15329,7 @@ export default function AvatarSpace({
       <ScreenShareStatsPanel
         visible={isMaster || ssDebugEnabled}
         isSharingSelf={screenSharing}
-        activeProfileLabel={screenShareActiveProfileLabelRef.current}
+        activeProfileLabel="VP9・1080p・10fps・2Mbps"
         getLocalScreenTrack={getLocalScreenShareTrack}
         getRemoteScreenPublication={getActiveScreenSharePublication}
         getDisplayBoxElement={getScreenShareDisplayBoxElement}

@@ -1,167 +1,56 @@
-import type { ScreenShareCaptureOptions, TrackPublishOptions } from "livekit-client";
+import type { TrackPublishOptions } from "livekit-client";
 
-// 画面共有の画質調査(2026-11-27)用、運営者だけが切り替えられるテスト設定の一覧。
-// setScreenShareEnabled(true, captureOptions, publishOptions) の
-// 第2引数(captureOptions)・第3引数(publishOptions)にそのまま渡す値を持つ。
+// 画面共有の画質調査(2026-11-27)の結果、全員の画面共有をこの設定に統一する。
+// 以前はcurrent・A〜Eの6設定を運営者だけが切り替えられるテストの仕組み
+// だったが、設定が決まったためこの1つだけに統一した。
 //
-// 調査でnode_modules内のlivekit-client(2.21.0)のコードを確認した結果:
-// - VP9・AV1(isSVCCodec)を画面共有(Track.Source.ScreenShare)で使う場合、
-//   LocalParticipant.publish()内で scalabilityMode は常に "L1T3"
-//   (1つの解像度レイヤー・3つの時間階層)に強制的に上書きされ、
-//   simulcast・screenShareSimulcastLayers の指定は一切使われない
-//   (node_modules/livekit-client/src/room/participant/LocalParticipant.ts
-//   1137-1158行目。この分岐はcomputeVideoEncodings内のsimulcast分岐より
-//   前に判定されるため、simulcastをtrue/falseどちらにしても結果は同じ)。
-//   options.ts 82行目のコメントにも「for svc codecs, simulcast is
-//   disabled」と明記されている。
-// - 同じ分岐で、画面共有かつVP9/AV1の場合は contentHint が
-//   自動的に "motion" に書き換えられる(同ファイル1148-1153行目、
-//   Chromeのスクリーンキャプチャ用SVCエンコードパスの既知の不具合を
-//   回避するための、SDK側のワークアラウンド)。VP8(current・A・B・D)
-//   では、この自動書き換えは発生しない(contentHintは常に未指定のまま)。
-//   そのため、このファイルではcontentHintをどの設定にも追加していない。
-export type ScreenShareProfileId = "current" | "A" | "B" | "C" | "D" | "E";
-
-export type ScreenShareProfile = {
-  id: ScreenShareProfileId;
-  label: string;
-  note: string;
-  captureOptions: ScreenShareCaptureOptions | undefined;
-  publishOptions: TrackPublishOptions;
-};
-
-export const SCREEN_SHARE_PROFILE_ORDER: ScreenShareProfileId[] = [
-  "current",
-  "A",
-  "B",
-  "C",
-  "D",
-  "E",
-];
-
-export const SCREEN_SHARE_PROFILES: Record<ScreenShareProfileId, ScreenShareProfile> = {
-  // 現状:components/AvatarSpace.tsxのstartScreenShareが今まで渡していた
-  // ものと全く同じ(キャプチャの指定なし、maxBitrateのみ3Mbpsへ変更)。
-  // simulcast・videoCodec・backupCodec等はすべて指定なし=SDK既定値
-  // (simulcast: true, videoCodec: "vp8", backupCodec: true)が使われる。
-  current: {
-    id: "current",
-    label: "現状",
-    note: "今の本番と同じ設定(VP8・1080p・15fps・3Mbps、simulcast等は既定値のtrueのまま)。",
-    captureOptions: undefined,
-    publishOptions: {
-      screenShareEncoding: {
-        maxBitrate: 3_000_000,
-        maxFramerate: 15,
-        priority: "medium",
-      },
-    },
-  },
-  // A: VP8、1080p、15fps、2Mbps。simulcastは指定しない(既定のtrueのまま
-  // =低解像度レイヤーとフル解像度レイヤーの2層で送信される)。
-  A: {
-    id: "A",
-    label: "A",
-    note: "VP8・1080p・15fps・2Mbps。simulcastは指定しない(既定trueのまま、2層で送信)。",
-    captureOptions: {
-      resolution: { width: 1920, height: 1080, frameRate: 15 },
-    },
-    publishOptions: {
-      videoCodec: "vp8",
-      screenShareEncoding: {
-        maxBitrate: 2_000_000,
-        maxFramerate: 15,
-        priority: "medium",
-      },
-    },
-  },
-  // B: VP8、1080p、10fps、2Mbps、degradationPreference明示。simulcastは
-  // 指定しない(既定trueのまま)。
-  B: {
-    id: "B",
-    label: "B",
-    note: "VP8・1080p・10fps・2Mbps・maintain-resolution明示。simulcastは指定しない(既定trueのまま)。",
-    captureOptions: {
-      resolution: { width: 1920, height: 1080, frameRate: 10 },
-    },
-    publishOptions: {
-      videoCodec: "vp8",
-      degradationPreference: "maintain-resolution",
-      screenShareEncoding: {
-        maxBitrate: 2_000_000,
-        maxFramerate: 10,
-        priority: "medium",
-      },
-    },
-  },
-  // C: VP9、1080p、10fps、2Mbps、degradationPreference明示。simulcastは
-  // 指定しない。上記の通りVP9はSVCコーデックのため、simulcastの指定に
-  // 関係なくscalabilityMode "L1T3"(1空間層・3時間層)の単一エンコーディング
-  // として送信される(SDKが自動でそう上書きする)。contentHintも
-  // SDKによって自動的に"motion"へ書き換わる。
-  C: {
-    id: "C",
-    label: "C",
-    note: "VP9・1080p・10fps・2Mbps・maintain-resolution明示。VP9はSVCのためsimulcast指定は無視され、scalabilityModeは\"L1T3\"に自動で上書きされる(SDKの既定動作)。contentHintも自動で\"motion\"になる。",
-    captureOptions: {
-      resolution: { width: 1920, height: 1080, frameRate: 10 },
-    },
-    publishOptions: {
-      videoCodec: "vp9",
-      degradationPreference: "maintain-resolution",
-      screenShareEncoding: {
-        maxBitrate: 2_000_000,
-        maxFramerate: 10,
-        priority: "medium",
-      },
-    },
-  },
-  // D: Bと同じで、simulcast: falseを明示(1層だけ送る)。VP8はSVCコーデック
-  // ではないため、この指定はそのまま有効になる(Cのように無視されない)。
-  D: {
-    id: "D",
-    label: "D",
-    note: "Bと同じ(VP8・1080p・10fps・2Mbps・maintain-resolution)。simulcast: falseを明示し、1層だけ送る。",
-    captureOptions: {
-      resolution: { width: 1920, height: 1080, frameRate: 10 },
-    },
-    publishOptions: {
-      videoCodec: "vp8",
-      degradationPreference: "maintain-resolution",
-      simulcast: false,
-      screenShareEncoding: {
-        maxBitrate: 2_000_000,
-        maxFramerate: 10,
-        priority: "medium",
-      },
-    },
-  },
-  // E: AV1、1080p、10fps、2Mbps、degradationPreference明示、
-  // simulcast: false、backupCodec: vp8。AV1もSVCコーデードのため、Cと同じく
-  // simulcastの指定(ここではfalse)はscalabilityModeの決定には使われない
-  // (無視される)が、backupCodecの仕組み自体はSVC判定と別ロジック
-  // (LocalParticipant.publish内のreq.simulcastCodecs)で処理されるため、
-  // そのまま有効になる=AV1非対応の相手にはVP8が代わりに送られる。
-  // 送信側ブラウザがAV1に対応していない場合、SDKが自動でvideoCodecを
-  // "vp8"にフォールバックする(supportsAV1()のチェック、
-  // node_modules/livekit-client/src/room/utils.ts 68-78行目)。
-  E: {
-    id: "E",
-    label: "E",
-    note: "AV1・1080p・10fps・2Mbps・maintain-resolution明示・simulcast: false・backupCodec: vp8。AV1もSVCのためsimulcast指定はscalabilityModeの決定には使われない(無視される)。送信側がAV1非対応ならSDKが自動でVP8にフォールバックする。",
-    captureOptions: {
-      resolution: { width: 1920, height: 1080, frameRate: 10 },
-    },
-    publishOptions: {
-      videoCodec: "av1",
-      degradationPreference: "maintain-resolution",
-      simulcast: false,
-      backupCodec: { codec: "vp8" },
-      screenShareEncoding: {
-        maxBitrate: 2_000_000,
-        maxFramerate: 10,
-        priority: "medium",
-      },
-    },
+// 実測の結果(運営者向けテスト設定current・A〜Eでの比較、2026-11-27):
+// - 現状・A・B(VP8・simulcastの指定なし=既定true)は、送信側で高い層
+//   (h、フル解像度)が「無効(inactive)」になり、低い層(960x540)だけが
+//   実際に送られていた。受信側の表示枠が458x481と小さく、adaptiveStream
+//   が低い層で足りると判断し、dynacast(Room作成時にtrue)がフル解像度
+//   レイヤーの送信そのものを止めていたため(受信側の要求に送信側が
+//   追従する仕組み)。
+// - C(VP9)・D(VP8・simulcast: false)・E(AV1)は、低い層が無い(1層だけ)
+//   ため、受信側も常に1920x1080で受け取れた。
+// - 動きのある画面(カーソル移動・スクロール等)での比較: Cは送信
+//   1920x1080・9fps・約2.0Mbps、受信decode 0.60ms/フレーム、送信側CPU
+//   使用率全体16%。Dは送信約2.2Mbps、受信decode 6.21ms、CPU使用率21%。
+//   CPU・decode時間ともにVP9の方が軽かったため、Cをもとにした設定を
+//   採用する。
+//
+// VP9はSVCコーデックのため、simulcastの指定に関係なくLiveKit側が自動で
+// scalabilityMode "L1T3"(1空間層・3時間層)に上書きし、contentHintも
+// 自動で"motion"に書き換える(node_modules/livekit-client/src/room/
+// participant/LocalParticipant.ts 1137-1158行目)。そのためここで
+// simulcast: falseを明示しているのは「VP9が使えない環境でVP8にフォール
+// バックした場合」のための指定で、VP9が実際に使われている間は効果が無い
+// (SVC分岐がsimulcast判定より先に評価されるため)。送信側ブラウザがVP9に
+// 対応していない場合、SDKが自動でvideoCodecを"vp8"にフォールバックする
+// (supportsVP9()のチェック、node_modules/livekit-client/src/room/utils.ts
+// 90-100行目付近)。その際backupCodec: { codec: "vp8" }により、受信側が
+// VP9非対応でも(SFU側が相手に合わせてVP8のレイヤーを配ることで)視聴できる。
+//
+// Safari 17(およびiOS 17以上)では、解像度(resolution)を明示すると
+// getDisplayMediaが低画質な捕捉になる既知の不具合がある
+// (node_modules/livekit-client/src/room/track/options.ts 233-238行目の
+// コメント、https://bugs.webkit.org/show_bug.cgi?id=263015 )。これを
+// 避けるため、キャプチャの指定(setScreenShareEnabledの第2引数)は
+// undefined(=指定なし)のままにし、LiveKitの既定の挙動に任せる
+// (components/AvatarSpace.tsx参照)。Safari 17以外では、livekit-client
+// が自動で解像度を1920x1080(ScreenSharePresets.h1080fps30の解像度、
+// node_modules/livekit-client/src/room/participant/LocalParticipant.ts
+// 731-736行目)に抑える。取り込み(キャプチャ)自体は最大30fpsの要求に
+// なるが、送信は下のscreenShareEncoding.maxFramerate: 10で10fpsに
+// 抑えられるため、実際に送られる映像は変わらない。
+export const SCREEN_SHARE_PUBLISH_OPTIONS: TrackPublishOptions = {
+  videoCodec: "vp9",
+  degradationPreference: "maintain-resolution",
+  simulcast: false,
+  backupCodec: { codec: "vp8" },
+  screenShareEncoding: {
+    maxBitrate: 2_000_000,
+    maxFramerate: 10,
+    priority: "medium",
   },
 };

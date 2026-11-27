@@ -1,13 +1,14 @@
 "use client";
 
 // 画面共有の画質調査(2026-11-27)用、運営者(または?ssdebug=1を付けた人)
-// だけに見える計測パネル。送信中は自分のLocalVideoTrack(画面共有)の
-// RTCRtpSender.getStats()を、受信中は相手のRemoteVideoTrack(画面共有)の
-// RTCRtpReceiver.getStats()を2秒ごとに読み、層ごとの解像度・fps・
-// ビットレート・コーデック等を表示する。livekit-clientのgetSenderStats/
-// getReceiverStatsは一部の項目(encoderImplementation・層のactive・
-// totalDecodeTime)を持たないため、ここではRTCRtpSender/RTCRtpReceiverの
-// 生のgetStats()を直接読む。
+// だけに見える計測パネル。最初は閉じた状態で、開いている間だけ2秒ごとに
+// 統計を取得する(閉じている間はgetStatsを呼ばない)。送信中は自分の
+// LocalVideoTrack(画面共有)のRTCRtpSender.getStats()を、受信中は相手の
+// RemoteVideoTrack(画面共有)のRTCRtpReceiver.getStats()を読み、層ごとの
+// 解像度・fps・ビットレート・コーデック等を表示する。livekit-clientの
+// getSenderStats/getReceiverStatsは一部の項目(encoderImplementation・
+// 層のactive・totalDecodeTime)を持たないため、ここではRTCRtpSender/
+// RTCRtpReceiverの生のgetStats()を直接読む。
 import { useEffect, useRef, useState } from "react";
 import {
   type LocalVideoTrack,
@@ -65,7 +66,7 @@ export default function ScreenShareStatsPanel({
   getRemoteScreenPublication,
   getDisplayBoxElement,
 }: Props) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [senderLayers, setSenderLayers] = useState<SenderLayerStat[]>([]);
   const [receiverStat, setReceiverStat] = useState<ReceiverStat | null>(null);
   const [displayBox, setDisplayBox] = useState<{ width: number; height: number } | null>(
@@ -90,7 +91,7 @@ export default function ScreenShareStatsPanel({
   const kbpsSamplesRef = useRef<number[]>([]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !open) return;
     let cancelled = false;
 
     const resetAccumulationIfNeeded = (key: string, totalBytesNow: number) => {
@@ -234,6 +235,7 @@ export default function ScreenShareStatsPanel({
     };
   }, [
     visible,
+    open,
     isSharingSelf,
     getLocalScreenTrack,
     getRemoteScreenPublication,
