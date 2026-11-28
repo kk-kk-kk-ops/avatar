@@ -3,7 +3,7 @@ import { Article, Items, LegalLayout } from '@/components/site/SiteChrome';
 import { SITE } from '@/lib/site-info';
 
 export const metadata: Metadata = {
-  title: `プライバシーポリシー | ${SITE.serviceName}`,
+  title: 'プライバシーポリシー',
 };
 
 const S = SITE.serviceName;

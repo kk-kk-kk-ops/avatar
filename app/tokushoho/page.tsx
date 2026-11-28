@@ -4,7 +4,7 @@ import { LegalLayout } from '@/components/site/SiteChrome';
 import { BILLING, PLANS, SITE, TRIAL, yen } from '@/lib/site-info';
 
 export const metadata: Metadata = {
-  title: `特定商取引法に基づく表記 | ${SITE.serviceName}`,
+  title: '特定商取引法に基づく表記',
 };
 
 export default function TokushohoPage() {

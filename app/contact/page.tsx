@@ -3,8 +3,10 @@ import { SiteFooter, SiteHeader } from '@/components/site/SiteChrome';
 import { ContactForm } from '@/components/contact/ContactForm';
 import { BRAND, SITE } from '@/lib/site-info';
 
+// titleは文字列のみ指定し、ルート(app/layout.tsx)のtitle.templateにより
+// 「｜Globy」が自動で付く(2026-11-28、SEO設定)。
 export const metadata: Metadata = {
-  title: `お問い合わせ | ${SITE.serviceName}`,
+  title: 'お問い合わせ',
   description: 'Globy（グロビー）へのお問い合わせはこちらのフォームから受け付けています。',
 };
 

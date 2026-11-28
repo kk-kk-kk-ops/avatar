@@ -1,9 +1,12 @@
 import type { Metadata } from 'next';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteChrome';
-import { BRAND, FEATURES, SITE } from '@/lib/site-info';
+import { BRAND, FEATURES } from '@/lib/site-info';
 
+// titleは文字列のみ指定し、ルート(app/layout.tsx)のtitle.templateにより
+// 「｜Globy」が自動で付く(2026-11-28、SEO設定)。
 export const metadata: Metadata = {
-  title: `機能・特徴 | ${SITE.serviceName}`,
+  title: '機能・特徴',
+  description: '音声通話・ビデオ通話・画面共有・チャットなど、Globyの機能をご紹介します。',
 };
 
 // FEATURES の最後の1項目(「守られたログイン」)はセキュリティに関する内容なので、

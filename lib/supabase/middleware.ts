@@ -10,7 +10,10 @@ import { SESSION_MAX_AGE } from "./constants";
 // 基づく表記(2026-10追加)。"/login"・"/signup"はログイン・新規登録
 // 専用URL、"/contact"はお問い合わせページ(いずれも2026-10末追加)。
 // "/features"・"/pricing"・"/security"・"/operator"はLPのヘッダー・
-// フッターから飛ぶ別ページ(2026-11-27〜28追加)。未ログインでも
+// フッターから飛ぶ別ページ(2026-11-27〜28追加)。"/robots.txt"・
+// "/sitemap.xml"は検索エンジン向けのファイル(2026-11-28追加。未ログインの
+// クローラーからのアクセスがここで弾かれ"/"へ転送されてしまい、
+// 検索エンジンが一切読めなくなる不具合があったため追加)。未ログインでも
 // 見られる必要がある)
 const PUBLIC_PATHS = [
   "/",
@@ -27,6 +30,8 @@ const PUBLIC_PATHS = [
   "/pricing",
   "/security",
   "/operator",
+  "/robots.txt",
+  "/sitemap.xml",
 ];
 
 function isPublicPath(pathname: string) {

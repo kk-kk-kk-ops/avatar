@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteChrome';
 import { CONTAINER } from '@/components/lp/lp-ui';
 import { SoftBackdrop, TrialCta } from '@/components/lp/LowerSections';
-import { BRAND, SITE } from '@/lib/site-info';
+import { BRAND } from '@/lib/site-info';
 import { TRIAL_DAYS } from '@/lib/types';
 
+// titleは文字列のみ指定し、ルート(app/layout.tsx)のtitle.templateにより
+// 「｜Globy」が自動で付く(2026-11-28、SEO設定)。descriptionは変更なし。
 export const metadata: Metadata = {
-  title: `セキュリティ | ${SITE.serviceName}`,
+  title: 'セキュリティ',
   description: '通信の暗号化、不正ログイン対策、組織ごとのアクセス制限など、Globyのセキュリティへの取り組みをご紹介します。',
 };
 

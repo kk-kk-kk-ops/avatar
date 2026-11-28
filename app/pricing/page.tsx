@@ -2,9 +2,15 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteChrome';
 import { BILLING, BRAND, PLANS, SITE, TRIAL, yen } from '@/lib/site-info';
+import { TRIAL_DAYS } from '@/lib/types';
 
+// titleは文字列のみ指定し、ルート(app/layout.tsx)のtitle.templateにより
+// 「｜Globy」が自動で付く(2026-11-28、SEO設定)。日数は指示文では「30日間」
+// だったが、TRIAL_DAYS(14日、2026-11-27変更)と食い違うため、他の画面と
+// 同じくTRIAL_DAYSから作る文言にした。
 export const metadata: Metadata = {
-  title: `料金プラン | ${SITE.serviceName}`,
+  title: '料金プラン',
+  description: `Globyの料金プランです。月2,980円(税込)から。まずは${TRIAL_DAYS}日間、スタンダードプランを無料で試せます。`,
 };
 
 // 「使い方(3ステップ)」「よくある質問」「最後の呼びかけ」は、カンプの新しい

@@ -3,8 +3,12 @@ import Link from 'next/link';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteChrome';
 import { BRAND, OPERATOR_TEAM, SITE } from '@/lib/site-info';
 
+// titleは文字列のみ指定し、ルート(app/layout.tsx)のtitle.templateにより
+// 「｜Globy」が自動で付く(2026-11-28、SEO設定。指示文の一覧には無い
+// ページだが、他の公開ページと同じ扱いにそろえた)。
 export const metadata: Metadata = {
-  title: `運営者情報 | ${SITE.serviceName}`,
+  title: '運営者情報',
+  description: `${SITE.serviceName}の運営チームについてご紹介します。`,
 };
 
 const ROWS: { label: string; value: React.ReactNode }[] = [

@@ -1,8 +1,16 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { translateAuthError } from "@/lib/i18n/translations";
 import { getServerLocale } from "@/lib/i18n/getServerLocale";
 import LoginCard from "@/components/auth/LoginCard";
+
+// 検索結果に出す必要が無いページのため、検索エンジンにはindexしないよう
+// 伝える(2026-11-28、SEO設定)。
+export const metadata: Metadata = {
+  title: "ログイン",
+  robots: { index: false },
+};
 
 // ログイン専用の入口(2026-10末)。TOPページ(/)は未ログイン時にLP(/lp)へ
 // 転送するようになったため、LPの「ログイン」リンク等はこちらへ向ける。

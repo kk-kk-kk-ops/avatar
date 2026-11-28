@@ -3,8 +3,10 @@ import Link from 'next/link';
 import { Article, Items, LegalLayout } from '@/components/site/SiteChrome';
 import { BILLING, SITE, TRIAL } from '@/lib/site-info';
 
+// titleは文字列のみ指定し、ルート(app/layout.tsx)のtitle.templateにより
+// 「｜Globy」が自動で付く(2026-11-28、SEO設定)。
 export const metadata: Metadata = {
-  title: `利用規約 | ${SITE.serviceName}`,
+  title: '利用規約',
 };
 
 const S = SITE.serviceName;
