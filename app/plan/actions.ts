@@ -12,8 +12,9 @@ type ActionResult = { ok: true } | { ok: false; error: string };
 
 // 無料トライアル(TRIAL_DAYS日間、standardプラン相当・カード登録不要)を開始する。
 // アカウント作成 → 自分をadminとして紐付け → 初期ルームを1つ作成、の実処理は
-// lib/accountProvisioning.tsに共通化されている(有料プランを直接選んだ場合の
-// Checkout Session作成前にも同じ処理が必要なため)。
+// lib/accountProvisioning.tsに共通化されているが、呼び出し元はこの
+// startFreeTrialのみ(有料プランへのCheckout Session作成はこの処理を
+// 経由しない、app/billing/checkout/actions.ts参照)。
 export async function startFreeTrial(): Promise<ActionResult> {
   const supabase = createClient();
   const {

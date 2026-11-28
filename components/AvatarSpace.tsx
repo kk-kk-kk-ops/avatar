@@ -17,7 +17,6 @@ import {
   RoomEvent,
   Track,
   TrackEvent,
-  type LocalVideoTrack,
   type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
@@ -109,8 +108,6 @@ import RemoteAudio from "./RemoteAudio";
 import RemoteVideo from "./RemoteVideo";
 import VideoTile from "./VideoTile";
 import ScreenShareButton from "./ScreenShareButton";
-import ScreenShareStatsPanel from "./ScreenShareStatsPanel";
-import CameraStatsPanel from "./CameraStatsPanel";
 import VideoCallButton from "./VideoCallButton";
 import LeaveRoomButton from "./LeaveRoomButton";
 import RoomListSidebar from "./RoomListSidebar";
@@ -1548,75 +1545,6 @@ export default function AvatarSpace({
   // (trackSid単位。キーとして使うのは、共有を一度止めて再開すると新しい
   // trackSidになるため「本当に新しい配信」だけを対象にできるため)。
   const kickedScreenShareTrackSidsRef = useRef<Set<string>>(new Set());
-  // 送信中の画面共有トラック本体(LiveKitのLocalVideoTrack)。計測パネル
-  // (ScreenShareStatsPanel)がRTCRtpSender.getStats()を直接読むために必要。
-  // 既存のscreenStreamRef(MediaStream)とは別に保持する。
-  const screenShareLocalTrackRef = useRef<LocalVideoTrack | null>(null);
-  // 会議画面モーダル内、共有映像を表示している枠(zoom適用後のdiv)。
-  // 計測パネルが「共有画面の表示の大きさ」を測るために参照する。
-  const screenShareDisplayBoxRef = useRef<HTMLDivElement | null>(null);
-  const getLocalScreenShareTrack = useCallback(
-    () => screenShareLocalTrackRef.current,
-    [],
-  );
-  const getActiveScreenSharePublication = useCallback(():
-    | RemoteTrackPublication
-    | undefined => {
-    const id = selectedScreenSharerIdRef.current;
-    if (!id) return undefined;
-    return screenSharePublicationsRef.current[id];
-  }, []);
-  const getScreenShareDisplayBoxElement = useCallback(
-    () => screenShareDisplayBoxRef.current,
-    [],
-  );
-  const getLocalCameraTrack = useCallback(
-    () => cameraLocalTrackRef.current,
-    [],
-  );
-  // カメラの計測パネル(CameraStatsPanel)用。画面共有のような
-  // 選択視聴の仕組みが無いカメラでは、参加者ごとのpublicationを保持する
-  // 専用のrefが無いため、livekitRoomRef.current.remoteParticipantsを
-  // その都度走査して集める(既存の仕組みの転用ではなく、ここで新規に
-  // 作る)。表示名はplayersRef(近接判定等で既に同期されている参照)から
-  // 引く(playersステート自体に依存すると、人が動くたびにgetter関数の
-  // 参照が変わり、計測パネル側のポーリングeffectが再起動して累積が
-  // リセットされてしまうため、ref経由で読む)。
-  const getRemoteCameraPublications = useCallback((): Array<{
-    identity: string;
-    name: string;
-    publication: RemoteTrackPublication;
-  }> => {
-    const room = livekitRoomRef.current;
-    if (!room) return [];
-    const result: Array<{
-      identity: string;
-      name: string;
-      publication: RemoteTrackPublication;
-    }> = [];
-    room.remoteParticipants.forEach((participant) => {
-      participant.videoTrackPublications.forEach((pub) => {
-        if (pub.source !== Track.Source.Camera) return;
-        result.push({
-          identity: participant.identity,
-          name: playersRef.current[participant.identity]?.name ?? participant.identity,
-          publication: pub,
-        });
-      });
-    });
-    return result;
-  }, []);
-  // 運営者でなくても、アドレスに?ssdebug=1が付いている人には計測パネルを
-  // 見せる(メンバーの別アカウントで受信側を測るため)。マウント時に一度
-  // だけ読む。
-  const [ssDebugEnabled] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return new URLSearchParams(window.location.search).get("ssdebug") === "1";
-    } catch {
-      return false;
-    }
-  });
   // 共有開始時点の最初の1フレームを静止画にしたプレビュー(dataURL)。
   // 選択して視聴を始めるまではこちらを表示し、選択後はライブ映像に切り替える。
   const [screenPreviewImages, setScreenPreviewImages] = useState<
@@ -2165,10 +2093,6 @@ export default function AvatarSpace({
   const [livekitConnected, setLivekitConnected] = useState(false);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
-  // 自分のカメラのトラック本体(LiveKitのLocalVideoTrack)。計測パネル
-  // (CameraStatsPanel)がRTCRtpSender.getStats()を直接読むために必要。
-  // 既存のcameraStreamRef(MediaStream)とは別に保持する。
-  const cameraLocalTrackRef = useRef<LocalVideoTrack | null>(null);
   const lastTrackedZoneId = useRef<string | null>(null);
   // pointZoneId算出のヒステリシス用(2026-11、下のPOINT_ZONE_HYSTERESIS_PX参照)。
   const lastPointZoneIdRef = useRef<string | null>(null);
@@ -5338,7 +5262,6 @@ export default function AvatarSpace({
         // 状態だけ倒し、再開はユーザーの再操作に委ねる。
         if (screenSharingRef.current) {
           screenStreamRef.current = null;
-          screenShareLocalTrackRef.current = null;
           setScreenSharing(false);
           if (selfState.current) {
             selfState.current.sharingScreen = false;
@@ -5400,9 +5323,6 @@ export default function AvatarSpace({
         if (inCallRef.current) {
           room.localParticipant
             .setCameraEnabled(true, CAMERA_CAPTURE_OPTIONS, CAMERA_PUBLISH_OPTIONS)
-            .then((pub) => {
-              cameraLocalTrackRef.current = (pub?.track as LocalVideoTrack) ?? null;
-            })
             .catch((err) =>
               console.warn("[livekit] カメラ再パブリッシュ失敗", err),
             );
@@ -5978,7 +5898,6 @@ export default function AvatarSpace({
   // プレビュー表示専用(LiveKitトラックをラップしたMediaStream)。
   const stopScreenShare = useCallback(async () => {
     screenStreamRef.current = null;
-    screenShareLocalTrackRef.current = null;
     setScreenSharing(false);
     if (selfState.current) {
       selfState.current.sharingScreen = false;
@@ -6064,7 +5983,6 @@ export default function AvatarSpace({
       );
       const track = publication?.track;
       if (!track) throw new Error(t("screenShare.trackUnavailable"));
-      screenShareLocalTrackRef.current = track as LocalVideoTrack;
       screenStreamRef.current = new MediaStream([track.mediaStreamTrack]);
       setScreenSharing(true);
 
@@ -6144,7 +6062,6 @@ export default function AvatarSpace({
   // MediaStreamを保持するだけに用途を変えた(自前メッシュへは送らない)。
   const stopVideoCall = useCallback(async () => {
     cameraStreamRef.current = null;
-    cameraLocalTrackRef.current = null;
     setInCall(false);
     if (selfState.current) {
       selfState.current.inCall = false;
@@ -6193,7 +6110,6 @@ export default function AvatarSpace({
       );
       const track = publication?.track;
       if (!track) throw new Error(t("videoCall.trackUnavailable"));
-      cameraLocalTrackRef.current = track as LocalVideoTrack;
       cameraStreamRef.current = new MediaStream([track.mediaStreamTrack]);
       setInCall(true);
 
@@ -10082,9 +9998,7 @@ export default function AvatarSpace({
     if (!joined) return;
     return () => {
       screenStreamRef.current = null;
-      screenShareLocalTrackRef.current = null;
       cameraStreamRef.current = null;
-      cameraLocalTrackRef.current = null;
     };
   }, [joined]);
 
@@ -12539,7 +12453,6 @@ export default function AvatarSpace({
                           どちらにもスクロールできる)。 */}
                       <div className="absolute inset-0 flex overflow-auto">
                         <div
-                          ref={screenShareDisplayBoxRef}
                           className="m-auto flex shrink-0 items-center justify-center"
                           style={{
                             width: `${screenAreaZoom * 100}%`,
@@ -15366,26 +15279,6 @@ export default function AvatarSpace({
           </div>
         </div>
       )}
-
-      {/* 画面共有の画質調査(2026-11-27)用の計測パネル。運営者、または
-          ?ssdebug=1付きの人だけに見える。 */}
-      <ScreenShareStatsPanel
-        visible={isMaster || ssDebugEnabled}
-        isSharingSelf={screenSharing}
-        activeProfileLabel="VP9・1080p・10fps・2Mbps"
-        getLocalScreenTrack={getLocalScreenShareTrack}
-        getRemoteScreenPublication={getActiveScreenSharePublication}
-        getDisplayBoxElement={getScreenShareDisplayBoxElement}
-      />
-
-      {/* カメラ(ビデオ通話)の画質調査(2026-11-27)用の計測パネル。
-          運営者、または?ssdebug=1付きの人だけに見える。 */}
-      <CameraStatsPanel
-        visible={isMaster || ssDebugEnabled}
-        isInCall={inCall}
-        getLocalCameraTrack={getLocalCameraTrack}
-        getRemoteCameraPublications={getRemoteCameraPublications}
-      />
     </div>
   );
 }
