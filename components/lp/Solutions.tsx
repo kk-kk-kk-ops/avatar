@@ -1,4 +1,4 @@
-import { CONTAINER, RED } from './lp-ui';
+import { CONTAINER } from './lp-ui';
 
 /**
  * 「Globyなら解決できます」セクション(デザインカンプ準拠)
@@ -32,14 +32,17 @@ const ITEMS = [
   },
 ];
 
-/** 見出し左右の赤い集中線 */
-function Accent({ flip = false }: { flip?: boolean }) {
+/** 見出し左右の赤い集中線(2026-11-28、デザイン提供の画像に差し替え) */
+function Accent({ side }: { side: 'left' | 'right' }) {
   return (
-    <svg aria-hidden="true" viewBox="0 0 40 44" className={`h-[0.85em] w-auto shrink-0 ${flip ? '-scale-x-100' : ''}`}>
-      <path d="M6 8 L24 30 L14 34 Z" fill={RED} />
-      <path d="M26 2 L30 30 L22 30 Z" fill={RED} />
-      <path d="M2 30 L22 36 L18 42 Z" fill={RED} />
-    </svg>
+    <img
+      src={`/lp/top/accent-${side}.png`}
+      alt=""
+      aria-hidden="true"
+      width={101}
+      height={122}
+      className="h-[0.85em] w-auto shrink-0"
+    />
   );
 }
 
@@ -52,9 +55,9 @@ export function Solutions() {
             id="solutions-title"
             className="flex items-center justify-center gap-[0.5em] text-center text-[clamp(1.5rem,3vw,2.6rem)] font-bold text-[#111]"
           >
-            <Accent />
+            <Accent side="left" />
             Globyなら解決できます
-            <Accent flip />
+            <Accent side="right" />
           </h2>
 
           <ul className="mt-12 grid gap-x-12 gap-y-10 lg:mt-[110px] lg:grid-cols-2 lg:gap-y-[36px]">
