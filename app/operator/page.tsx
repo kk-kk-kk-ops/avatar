@@ -30,10 +30,7 @@ export default function OperatorPage() {
         <SiteHeader />
       </div>
       <main className="mx-auto max-w-3xl px-5 py-20">
-        <p className="text-sm font-semibold tracking-[0.2em] text-[#999]">- ABOUT US -</p>
-        <h1 className="mt-3 text-2xl font-bold sm:text-3xl">私たちについて</h1>
-
-        <h2 className="mt-14 text-xl font-bold sm:text-2xl">運営者情報</h2>
+        <h1 className="text-2xl font-bold sm:text-3xl">運営者情報</h1>
         <p className="mt-3 text-slate-600">
           {SITE.serviceName}は、{OPERATOR_TEAM.teamName}がオンラインで連携して開発・運営するサービスです。
         </p>
