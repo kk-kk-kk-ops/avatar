@@ -6,6 +6,7 @@ import { BRAND } from '@/lib/site-info';
 import { LP_LINKS, RED } from '@/components/lp/lp-ui';
 
 const NAV = [
+  { href: LP_LINKS.home, label: 'ホーム' },
   { href: LP_LINKS.features, label: '機能・特徴' },
   { href: LP_LINKS.pricing, label: '料金プラン' },
   { href: LP_LINKS.security, label: 'セキュリティ' },
@@ -28,14 +29,16 @@ const RED_BUTTON_STYLE = { backgroundColor: RED, outlineColor: RED, color: '#fff
  * LP・規約ページ共通のヘッダー(デザインカンプ準拠)
  * 薄いグレーの背景・左に Globy ロゴ・右にメニュー(区切り線あり)と赤い「無料で試してみる」ボタン
  * 1024px 未満はハンバーガーメニュー
+ * スクロールしても追従する(sticky)。幅は 1440px に制限せず、画面幅いっぱいに
+ * 広がり、ロゴ・メニューは左右の余白(padding)だけで両端に寄せている。
  */
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
 
   return (
-    <header className="relative z-20 w-full bg-[#EFEFEF]" style={{ fontFamily: BRAND.font }}>
-      <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between gap-8 px-5 lg:h-[96px] lg:px-[4.6%] xl:px-[124px]">
+    <header className="sticky top-0 z-30 w-full bg-[#EFEFEF]" style={{ fontFamily: BRAND.font }}>
+      <div className="flex h-[72px] w-full items-center justify-between gap-8 px-5 lg:h-[96px] lg:px-[4.6%] xl:px-[124px]">
         <Link href={LP_LINKS.home} className="shrink-0" onClick={close}>
           <img src="/lp/logo-globy.png" alt="Globy" width={480} height={150} className="h-auto w-[100px] lg:w-[148px]" />
         </Link>

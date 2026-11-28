@@ -13,7 +13,9 @@ export const LP_LINKS = {
   features: '/features',
   pricing: '/pricing',
   security: '/security',
-  operator: 'https://grovina-studio.com/about',
+  // 以前はgrovina-studio.com側の運営者情報ページへの外部リンクだったが、
+  // サイト内で完結するよう内部ページ化した(2026-11-28、app/operator/page.tsx)。
+  operator: '/operator',
   contact: SITE.contactUrl,
   start: SITE.loginPath,
   tokushoho: '/tokushoho',

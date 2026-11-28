@@ -38,6 +38,19 @@ export const SITE = {
   updatedAt: '2026年10月21日',
 } as const;
 
+/**
+ * 運営者情報(app/operator/page.tsx専用)。Globyを作っているデザインチーム
+ * 「Grovina Studio」の紹介で、特定商取引法上の事業者情報(SITE.address等)
+ * とは別の内容(2026-11-28、grovina-studio.com/aboutの内容を内部ページ化)。
+ */
+export const OPERATOR_TEAM = {
+  teamName: 'Grovina Studio(グロビナスタジオ)',
+  representative: SITE.operatorLegalName,
+  activityType: 'デザイナー(個人事業主)による制作チーム',
+  activityBase: '広島県福山市 / オンラインを中心に全国対応',
+  businessContent: 'Webサイト制作 / LP制作 / バナー制作 / グラフィックデザイン など',
+} as const;
+
 export type Plan = {
   id: 'free' | 'light' | 'standard' | 'pro';
   name: string;

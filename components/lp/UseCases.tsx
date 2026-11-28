@@ -108,19 +108,26 @@ export function UseCases() {
           </SectionTitle>
         </div>
 
-        {/* 1280px 以上:カンプどおりの配置 */}
+        {/* 1280px 以上:カンプどおりの配置。中央のイラストは最前面(z-20)に
+            し、カードと重ならない大きさ・位置に調整している(カードは
+            z-10のまま、四隅 0%/100% 固定)。4隅のカードは上下・左右とも
+            対称(同じ大きさ・0%/100%固定)のため、イラストをこの配置
+            エリア自体の中央(50% - 自身の幅・高さの半分)に置けば、
+            カードの実際の高さに関わらず常にカードとの隙間が均等になる。
+            大きさ(17%)は、カードの高さがどれだけ変動しても重ならない
+            よう、実機確認はできていないため余裕を持たせた値。 */}
         <div className="relative mt-[60px] hidden aspect-[1264/660] w-full xl:block">
+          {CASES.map((c) => (
+            <Card key={c.key} c={c} className="absolute z-10 w-[35.8%]" style={c.pos} />
+          ))}
           <img
             src="/lp/top/usecase-town.png"
             alt="会議室・作業スペース・休憩スペースが広場を囲む街のイラスト"
             width={952}
             height={636}
-            className="absolute"
-            style={{ left: '29.1%', top: '20%', width: '40.3%' }}
+            className="absolute z-20"
+            style={{ left: '41.5%', top: '39%', width: '17%' }}
           />
-          {CASES.map((c) => (
-            <Card key={c.key} c={c} className="absolute z-10 w-[35.8%]" style={c.pos} />
-          ))}
         </div>
 
         {/* 1280px 未満 */}
