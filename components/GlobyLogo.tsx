@@ -6,23 +6,29 @@
 // だと窮屈なため、今回のSEO対応で作成した「G」マークのみの画像
 // (public/icon-g.png。app/icon.pngと同じ内容)を、白い丸の背景の上に表示する
 // (以前の白丸+アイコンの見た目を踏襲)。
+// 2026-11-28追加修正: どちらのロゴも濃い色のマークのため、暗いヘッダーの
+// 上では白い背景を敷かないと見えにくい。PCは四角い白背景+余白、SPは
+// 丸の白背景を大きくして余白を増やした(アイコン自体の大きさは変えない)。
 export default function GlobyLogo() {
   return (
     <div className="flex shrink-0 items-center">
-      {/* SP:Gマークのみ */}
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white sm:hidden">
+      {/* SP:Gマークのみ。丸の白背景を大きくし、中のアイコンは同じ大きさの
+          まま余白を増やしている */}
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white sm:hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/icon-g.png" alt="Globy" className="h-full w-full object-cover" />
+        <img src="/icon-g.png" alt="Globy" className="h-6 w-6 object-contain" />
       </div>
-      {/* PC:ホームページと同じ「Globy」ロゴ */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/lp/logo-globy.png"
-        alt="Globy"
-        width={480}
-        height={150}
-        className="hidden h-7 w-auto object-contain sm:block"
-      />
+      {/* PC:ホームページと同じ「Globy」ロゴ。四角い白背景+余白を敷く */}
+      <div className="hidden items-center rounded-md bg-white px-3 py-2 sm:flex">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/lp/logo-globy.png"
+          alt="Globy"
+          width={480}
+          height={150}
+          className="h-6 w-auto object-contain"
+        />
+      </div>
     </div>
   );
 }
